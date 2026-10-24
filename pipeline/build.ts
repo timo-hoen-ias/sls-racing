@@ -24,7 +24,7 @@ import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
-import { buildRoads } from './lib/roads.ts';
+import { buildRoads, type Railing } from './lib/roads.ts';
 import { terrariumSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
@@ -67,15 +67,17 @@ function main() {
   roadHeights(osm.ways, regions, height, console.log);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const carve = new RoadCarve(TERRAIN_STEP);
-  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
+  // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
+  const real = regions.some((r) => r.boundary.type !== 'fixture');
+  const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
+  const railings: Railing[] = [];
+  const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
+  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings });
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
   const lod2Dir = regions.some((r) => r.lod2?.length) ? paths.lod2 : undefined;
   if (lod2Dir && !lod2TileCount(lod2Dir)) throw missing('LoD2', lod2Dir, regions);
-  // Landmark models replace the generic buildings on their footprints (real regions only).
-  const real = regions.some((r) => r.boundary.type !== 'fixture');
-  const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
   const landmarkFoot = landmarkArea(landmarks);
   const centre = (r: [number, number][]) => r.reduce(([a, b], [e, n]) => [a + e / r.length, b + n / r.length], [0, 0]);
   const footprints = new Footprints();
@@ -146,7 +148,7 @@ function main() {
     push(bushesByTile, e, n, x, height(e, n), z, s, kind);
   };
   for (const [e, n, tags] of osm.trees) if (!onRoad.has(e, n)) addTree(e, n, 0.8 + rand(e, n) * 0.5, treeKindOf(tags, rand(e, n, 31)));
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary });
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary, railings });
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });

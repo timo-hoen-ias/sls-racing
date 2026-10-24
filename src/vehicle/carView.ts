@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { CarPhysics } from './carPhysics.ts';
+import { Cockpit } from './cockpit.ts';
+import { CarDamage } from './damage.ts';
 import { buildSportsCar } from './sportsCarModel.ts';
 import { CAR } from './tuning.ts';
 
@@ -18,12 +20,21 @@ export class CarView {
   private headLights: THREE.MeshStandardMaterial;
   private night = 0;
   private paint: THREE.MeshPhysicalMaterial;
+  /** Interior, shown only in the cockpit view. */
+  readonly cockpit = new Cockpit();
+  /** Body group in model space (ground at y = 0). */
+  readonly model: THREE.Group;
+  readonly damage: CarDamage;
 
   constructor(color?: string) {
     const model = buildSportsCar(color);
     // The model is built from the ground up; shift it to the physics body origin.
     model.body.position.y = -RIDE_HEIGHT;
     this.root.add(model.body);
+    this.model = model.body;
+    this.damage = new CarDamage(model.body, model.materials.paint);
+    this.cockpit.group.visible = false;
+    model.body.add(this.cockpit.group);
     this.brakeLights = model.materials.brake;
     this.headLights = model.materials.head;
     this.paint = model.materials.paint;
@@ -71,6 +82,7 @@ export class CarView {
 
   setColor(color: string) {
     this.paint.color.set(color);
+    this.damage.rebase();
   }
 
   /** 0 by day .. 1 at night: brightens the light lenses so they bloom. */
@@ -80,22 +92,34 @@ export class CarView {
 
   /** Copies the physics state onto the model. pos/quat may be interpolated. */
   sync(car: CarPhysics, pos: THREE.Vector3, quat: THREE.Quaternion, braking: boolean, time: number) {
+    const vc = car.controller;
+    for (let i = 0; i < 4; i++) {
+      this.lengths[i] = vc.wheelSuspensionLength(i) ?? CAR.wheel.rest;
+      this.rot[i] = vc.wheelRotation(i) ?? 0;
+    }
+    this.pose(car, pos, quat, -(vc.wheelSteering(0) ?? 0), this.lengths, this.rot, braking, car.boosting, time);
+  }
+
+  /** Places the model from recorded values (replay): steering (rad, + = right), spring lengths and wheel rotation. */
+  pose(car: CarPhysics, pos: THREE.Vector3, quat: THREE.Quaternion, steer: number, lengths: readonly number[], rot: readonly number[], braking: boolean, boosting: boolean, time: number) {
     this.root.position.copy(pos);
     this.root.quaternion.copy(quat);
     const vc = car.controller;
     for (let i = 0; i < 4; i++) {
       const c = vc.wheelChassisConnectionPointCs(i)!;
-      const len = vc.wheelSuspensionLength(i) ?? CAR.wheel.rest;
       const w = this.wheels[i];
-      w.pivot.position.set(c.x, c.y - len, c.z);
-      w.pivot.rotation.y = vc.wheelSteering(i) ?? 0;
-      w.spin.rotation.x = vc.wheelRotation(i) ?? 0;
+      w.pivot.position.set(c.x, c.y - lengths[i], c.z);
+      w.pivot.rotation.y = i < 2 ? -steer : 0;
+      w.spin.rotation.x = rot[i];
     }
     this.headLights.emissiveIntensity = THREE.MathUtils.lerp(2.4, 40, this.night);
     this.brakeLights.emissiveIntensity = (braking ? 3.5 : 0.7) * THREE.MathUtils.lerp(1, 6, this.night);
     for (const f of this.flames) {
-      f.visible = car.boosting;
-      if (car.boosting) f.scale.set(1, 1, 0.8 + Math.sin(time * 60 + f.position.x * 10) * 0.25 + Math.random() * 0.2);
+      f.visible = boosting;
+      if (boosting) f.scale.set(1, 1, 0.8 + Math.sin(time * 60 + f.position.x * 10) * 0.25 + Math.random() * 0.2);
     }
   }
+
+  private lengths = [0, 0, 0, 0];
+  private rot = [0, 0, 0, 0];
 }

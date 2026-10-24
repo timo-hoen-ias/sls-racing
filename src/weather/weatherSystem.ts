@@ -25,6 +25,8 @@ export class WeatherSystem {
   /** 0..1 how much of the car is in a puddle, and the aquaplaning grip factor. */
   puddle = 0;
   aqua = 1;
+  /** Aquaplaning grip factor under each wheel (1 = dry patch). */
+  readonly wheelAqua = [1, 1, 1, 1];
   sound?: WeatherSound;
   /** Toast on a weather change. */
   onChange?: (text: string) => void;
@@ -73,20 +75,19 @@ export class WeatherSystem {
 
     // Grip: the road for the whole car, puddles under the wheels on top.
     w.surface(this.grip);
+    // Puddles act per wheel (car.wheelGrip via RoadSurface); one wheel in deep water already pulls the steering.
     let puddle = 0;
     let n = 0;
-    if (w.puddles > 0) {
-      for (const wh of car.wheels) {
-        if (!wh.contact) continue;
-        puddle += puddleAt(wh.p.x, wh.p.z) * w.puddles;
-        n++;
-      }
+    let aqua = 1;
+    for (let i = 0; i < 4; i++) {
+      const wh = car.wheels[i];
+      const p = wh.contact && w.puddles > 0 ? puddleAt(wh.p.x, wh.p.z) * w.puddles : 0;
+      this.wheelAqua[i] = w.aquaplaning(p, car.speed);
+      aqua = Math.min(aqua, this.wheelAqua[i]);
+      if (wh.contact) { puddle += p; n++; }
     }
     this.puddle = n ? puddle / n : 0;
-    this.aqua = w.aquaplaning(this.puddle, car.speed);
-    this.grip.grip *= this.aqua;
-    this.grip.side *= this.aqua;
-    this.grip.traction *= this.aqua;
+    this.aqua = aqua;
     this.grip.steer *= 0.5 + 0.5 * this.aqua;
     Object.assign(car.surface, this.grip);
 

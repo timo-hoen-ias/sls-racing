@@ -135,3 +135,48 @@ describe('Steering', () => {
     expect(Math.abs(Math.atan2(Math.sin(travel - h), Math.cos(travel - h)))).toBeLessThan(0.2);
   });
 });
+
+describe('Vehicle dynamics', () => {
+  it('moves load to the outside wheels in a corner and to the front under braking', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    drive({ throttle: 1 }, 3);
+    drive({ brake: 1 }, 0.4);
+    expect(car.wheels[0].load).toBeGreaterThan(car.wheels[2].load * 1.4);
+    drive({ throttle: 1 }, 2);
+    drive({ throttle: 0.4, steer: 0.6 }, 2);
+    // Steering right: the left wheels (0, 2) are on the outside.
+    expect(car.wheels[0].load).toBeGreaterThan(car.wheels[1].load * 1.5);
+    expect(car.wheels[2].load).toBeGreaterThan(car.wheels[3].load * 1.2);
+  });
+
+  it('corners at about 1 g', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    while (car.speed < 100 / 3.6) drive({ throttle: 1 }, 1 / 60);
+    drive({ throttle: 0.5, steer: 1 }, 3);
+    expect(Math.abs(car.accel.x) / 9.81).toBeGreaterThan(0.85);
+    expect(Math.abs(car.accel.x) / 9.81).toBeLessThan(1.3);
+  });
+
+  it('stops from 100 km/h in a realistic distance with ABS', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    while (car.speed < 100 / 3.6) drive({ throttle: 1 }, 1 / 60);
+    const z0 = car.body.translation().z;
+    while (car.speed > 0.5) drive({ brake: 1 }, 1 / 60);
+    const d = Math.abs(car.body.translation().z - z0);
+    expect(d).toBeGreaterThan(30);
+    expect(d).toBeLessThan(40);
+  });
+
+  it('spins the rear wheels on a wet road without traction control', () => {
+    const { car, drive } = setup();
+    car.assists.tcs = 0;
+    car.surface.grip = 0.5;
+    drive({}, 1);
+    let spin = 0;
+    for (let i = 0; i < 60; i++) { drive({ throttle: 1 }, 1 / 60); spin = Math.max(spin, car.wheels[2].long); }
+    expect(spin).toBeGreaterThan(0.3);
+  });
+});

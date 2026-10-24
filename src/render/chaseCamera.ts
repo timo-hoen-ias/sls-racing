@@ -1,11 +1,20 @@
 import * as THREE from 'three';
 
-type Mode = 'chase' | 'far' | 'hood';
-const MODES: Mode[] = ['chase', 'far', 'hood'];
+export type CamMode = 'chase' | 'far' | 'hood' | 'cockpit';
+const MODES: CamMode[] = ['chase', 'far', 'hood', 'cockpit'];
+/** Driver's eye in body space (left-hand drive: +x is left). */
+const EYE = new THREE.Vector3(0.37, 0.69, -0.46);
+const UP = new THREE.Vector3(0, 1, 0);
 
 /** Third-person camera with speed feel: wider FOV and a little shake when fast or boosting. */
 export class ChaseCamera {
-  mode: Mode = 'chase';
+  mode: CamMode = 'chase';
+  /** Cockpit head movement from g-forces, 0..1. */
+  headbob = 1;
+  /** Body-frame acceleration (m/s², x = left, z = forward) and steering, set each frame for the cockpit view. */
+  motion = { ax: 0, az: 0, steer: 0 };
+  private head = new THREE.Vector3();
+  private headVel = new THREE.Vector3();
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
   private initialised = false;
@@ -27,6 +36,8 @@ export class ChaseCamera {
    * lookBack: held button, snaps to a rear view at once.
    */
   update(carPos: THREE.Vector3, carQuat: THREE.Quaternion, speed: number, boosting: boolean, dt: number, reversing = false, lookBack = false) {
+    this.camera.near = this.mode === 'cockpit' ? 0.04 : 0.3;
+    if (this.mode === 'cockpit') { this.cockpit(carPos, carQuat, speed, dt, lookBack); return; }
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuat);
     fwd.y *= 0.3;
     fwd.normalize();
@@ -68,5 +79,28 @@ export class ChaseCamera {
     const fov = 62 + Math.min(kmh, 220) * 0.07 + (boosting ? 8 : 0);
     this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Driver's view: the head sways against the g-forces on a soft spring and looks a little into corners. */
+  private cockpit(carPos: THREE.Vector3, carQuat: THREE.Quaternion, speed: number, dt: number, lookBack: boolean) {
+    const k = this.headbob;
+    const m = this.motion;
+    // Target offset: pushed outwards in corners, forwards under braking, back under acceleration (≈ 1.2 cm per m/s²).
+    const target = new THREE.Vector3(-m.ax * 0.012 * k, 0, -m.az * 0.01 * k).clampLength(0, 0.12);
+    // Spring-damper (≈ 2.5 Hz, slightly underdamped) so the head lags and settles like a neck.
+    const w = 16, z = 0.7;
+    const h = Math.min(dt, 0.05);
+    this.headVel.addScaledVector(new THREE.Vector3().subVectors(target, this.head), w * w * h).multiplyScalar(Math.max(0, 1 - 2 * z * w * h));
+    this.head.addScaledVector(this.headVel, h);
+    const eye = EYE.clone().add(this.head).applyQuaternion(carQuat).add(carPos);
+    this.camera.position.copy(eye);
+    // Camera looks down -z; the car's forward is +z: turn round, then look into the corner and tilt with the head.
+    const look = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI + (lookBack ? Math.PI : 0) + m.steer * 0.35 * k);
+    const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(-this.head.z * 0.6, 0, this.head.x * 1.2));
+    this.camera.quaternion.copy(carQuat).multiply(look).multiply(tilt);
+    const fov = 68 + Math.min(Math.abs(speed) * 3.6, 250) * 0.02;
+    this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
+    this.camera.updateProjectionMatrix();
+    this.initialised = false;
   }
 }

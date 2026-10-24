@@ -20,6 +20,12 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; col
 #tacho .tacho-speed span { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; min-width: 3ch; text-align: right; line-height: 1; }
 #tacho .tacho-speed small { font-size: 11px; opacity: .75; }
 #tacho .tacho-halo { position: absolute; inset: -14px; border-radius: 50%; background: radial-gradient(circle, #39c6ff66 0%, #39c6ff00 70%); opacity: var(--burn); pointer-events: none; }
+/* Road grip warning above the rev counter */
+#grip { position: absolute; right: calc(20px + env(safe-area-inset-right, 0px)); bottom: calc(240px + env(safe-area-inset-bottom, 0px)); width: 210px; text-align: center; font-size: 15px; font-weight: 800; letter-spacing: .12em; padding: 4px 0; border-radius: 4px; background: #0b1520c0; border: 1px solid #38b6ff88; color: #9fdcff; text-shadow: 0 1px 3px #000; }
+#grip.glatt { border-color: #d8eaffaa; color: #fff; }
+#grip.aquaplaning { border-color: #ff9f2e; color: #ffc46b; animation: grip-blink .5s steps(2) infinite; }
+@keyframes grip-blink { 50% { opacity: .45; } }
+body.touch #grip { display: none; }
 #info { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); top: calc(12px + env(safe-area-inset-top, 0px)); font: 12px/1.5 ui-monospace, Menlo, monospace; opacity: .75; white-space: pre; text-shadow: 0 1px 3px #000; }
 #attribution { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); font-size: 11px; opacity: .7; }
 #help { position: absolute; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); font-size: 13px; opacity: .75; text-align: center; max-width: 90vw; }
@@ -63,3 +69,14 @@ body.touch #street { font-size: 13px; max-width: 160px; }
 body.touch #nav { top: auto; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); min-width: 0; padding: 6px 12px; }
 body.touch #nav-dist { font-size: 18px; }
 body.touch #nav-arrow { width: 30px; height: 30px; }
+
+/* Debug console (^ / F1) */
+#console { position: fixed; left: 0; right: 0; top: 0; height: min(46vh, 420px); display: flex; flex-direction: column; background: #070a0fe8; border-bottom: 1px solid #3d8bff66; box-shadow: 0 8px 30px #000a; font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace; z-index: 50; user-select: text; -webkit-user-select: text; }
+#console .console-log { flex: 1; overflow-y: auto; padding: 8px 14px; white-space: pre-wrap; word-break: break-word; }
+#console .console-cmd { color: #8fb8ff; margin-top: 4px; }
+#console .console-out { color: #dfe6f0; }
+#console .console-error { color: #ff7a6e; }
+#console .console-info { color: #8b97a8; }
+#console .console-hint { min-height: 1.45em; padding: 0 14px 2px 32px; color: #8b97a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#console .console-line { display: flex; gap: 8px; align-items: center; padding: 6px 14px 10px; border-top: 1px solid #ffffff14; color: var(--accent); }
+#console input { flex: 1; background: transparent; border: 0; outline: 0; color: #fff; font: inherit; caret-color: var(--accent); }

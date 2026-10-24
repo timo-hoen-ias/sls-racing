@@ -3,8 +3,11 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sls-racing",
   "compatibility_date": "2026-10-01",
-  // Real Saarlouis tiles are not in the repo yet (later: R2), so the deploy ships the
-  // synthetic fixture world; vite copies public/tiles into dist.
-  "build": { "command": "npm run world:fixture && npm run build" },
-  "assets": { "directory": "./dist" }
+  // The deploy builds the real Saarlouis tiles (Geofabrik OSM + terrain, ~2 min) and vite copies
+  // public/tiles into dist, so they are served as static assets next to the game (about 2500 files;
+  // unchanged files are not uploaded again). Move them to R2 once the world outgrows asset limits.
+  "build": { "command": "npm run world:fetch && npm run world:build && npm run build" },
+  "assets": { "directory": "./dist" },
+  // Required by `wrangler preview`, which Workers Builds runs for non-main branches.
+  "previews": {}
 }

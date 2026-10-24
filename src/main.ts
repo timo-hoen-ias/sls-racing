@@ -1,6 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { EngineSound } from './audio/engineSound.ts';
+import { DebugConsole } from './debug/debugConsole.ts';
+import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
@@ -18,12 +20,15 @@ import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
 import { ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
-import { runCommand } from './debug/registry.ts';
+import { registerCommand, runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { weatherCommands } from './weather/commands.ts';
+import { patchWorldMaterials } from './weather/weatherMaterials.ts';
+import { WeatherSystem } from './weather/weatherSystem.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
 
@@ -48,8 +53,9 @@ async function boot() {
   const view = createScene($('game') as HTMLCanvasElement, quality, index.spawn.y);
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
-  const mats = createMaterials();
-  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
+  const materials = createMaterials();
+  patchWorldMaterials(materials);
+  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, materials, quality);
   view.scene.add(streamer.root);
 
   const spawn = index.spawn;
@@ -58,7 +64,7 @@ async function boot() {
   view.scene.add(carView.root);
   if (view.post) markCar(carView.root);
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
-  const lampLights = new LampLights(quality, mats.lampHead);
+  const lampLights = new LampLights(quality, materials.lampHead);
   view.scene.add(lampLights.root);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
   let boostFx = 0;
@@ -76,6 +82,9 @@ async function boot() {
   const bigMap = new BigMap($('bigmap'), graph, nav);
   bigMap.onClose = () => (input.mapOpen = false);
   $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
+  const weather = new WeatherSystem(quality, view);
+  weather.onChange = (text) => navHud.toast(text);
+  for (const c of weatherCommands(weather)) registerCommand(c);
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);
   view.scene.add(routeLine.mesh);
   let streetTimer = 0;
@@ -88,6 +97,7 @@ async function boot() {
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     await sound.resume().catch(() => {});
+    await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
   });
 
@@ -95,6 +105,14 @@ async function boot() {
   let safe = { x: spawn.x, y: spawn.y, z: spawn.z, heading: spawn.heading };
   let safeTimer = 0;
   let worldReady = false;
+  // The car waits here until the ground under it exists (start and teleports). Without y, it drops onto the ground.
+  let hold: { x: number; y?: number; z: number; heading: number; frames: number } | null = { ...spawn, frames: 0 };
+  const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+  const groundAt = (x: number, z: number) => {
+    groundRay.origin = { x, y: 2000, z };
+    const hit = world.castRay(groundRay, 4000, true, undefined, undefined, undefined, car.body);
+    return hit ? 2000 - hit.timeOfImpact : undefined;
+  };
 
   const prev = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
   const curr = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
@@ -137,6 +155,22 @@ async function boot() {
   const iq = new THREE.Quaternion();
   const fwd = new THREE.Vector3();
 
+  const debugState: DebugState = { timeScale: 1, infiniteNitro: false, frozen: false };
+  let frozenAt: { p: { x: number; y: number; z: number }; q: { x: number; y: number; z: number; w: number } } | null = null;
+  const debug = new DebugConsole();
+  debug.onToggle = () => input.releaseAll();
+  registerGameCommands({
+    R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar,
+    teleport: (x, z, heading = car.heading()) => {
+      if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
+      hold = { x, z, heading, frames: 0 };
+      worldReady = false;
+    },
+  }, debugState);
+  // ?cmd=day;nitro.infinite runs commands at startup.
+  const bootCmd = new URLSearchParams(location.search).get('cmd');
+  if (bootCmd) debug.exec(bootCmd);
+
   const frame = (now: number) => {
     // The first rAF timestamp can predate performance.now() at boot.
     const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
@@ -145,7 +179,7 @@ async function boot() {
     for (const e of input.takeEvents()) {
       if (e === 'reset') resetCar();
       if (e === 'camera') cam.next();
-      if (e === 'mute') sound?.toggleMute();
+      if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
       if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
       if (e === 'gearbox') setManual(!car.drivetrain.manual);
       if (e === 'shiftUp' || e === 'shiftDown') {
@@ -156,22 +190,44 @@ async function boot() {
       if (e === 'time') view.daylight.nextPreset();
     }
 
-    const t = car.body.translation();
-    streamer.update(t.x, t.z);
     // Hold the car until the ground under it exists.
-    if (!worldReady) {
-      worldReady = streamer.isLoadedAround(spawn.x, spawn.z);
-      car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      car.body.setTranslation(spawn, true);
+    if (hold) {
+      const h = hold;
+      streamer.update(h.x, h.z);
+      // Give fresh colliders a couple of physics steps before casting against them.
+      if (streamer.isLoadedAround(h.x, h.z)) h.frames++;
+      if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
+      car.reset({ x: h.x, y: h.y ?? car.body.translation().y, z: h.z }, h.heading);
+      if (h.frames > 2 && h.y !== undefined) {
+        hold = null;
+        worldReady = true;
+        safe = { x: h.x, y: h.y, z: h.z, heading: h.heading };
+        prevVel.x = prevVel.y = prevVel.z = 0;
+        capture(curr);
+        prev.p.copy(curr.p);
+        prev.q.copy(curr.q);
+      }
       $('loading').hidden = worldReady;
+    } else {
+      const t = car.body.translation();
+      streamer.update(t.x, t.z);
     }
 
     vehicleDebug.update();
-    const drive = startBtn.hidden && worldReady && !bigMap.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
-    acc += dt;
+    weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
+    const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
+    if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
+    else frozenAt = null;
+    acc += dt * debugState.timeScale;
     while (acc >= STEP) {
       prev.p.copy(curr.p);
       prev.q.copy(curr.q);
+      if (frozenAt) {
+        car.body.setTranslation(frozenAt.p, true);
+        car.body.setRotation(frozenAt.q, true);
+        car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      }
       car.update(drive, STEP);
       world.step();
       capture(curr);
@@ -182,6 +238,7 @@ async function boot() {
       prevVel.x = lv.x; prevVel.y = lv.y; prevVel.z = lv.z;
       acc -= STEP;
     }
+    if (debugState.infiniteNitro) car.nitro = 1;
     const alpha = acc / STEP;
     ip.lerpVectors(prev.p, curr.p, alpha);
     iq.slerpQuaternions(prev.q, curr.q, alpha);
@@ -209,6 +266,9 @@ async function boot() {
       hitCooldown = 0.25;
     }
     hit = 0;
+    effects.road.wet = weather.weather.wet;
+    effects.road.snow = weather.weather.snowCover;
+    effects.road.puddle = weather.puddle;
     effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
     cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     view.follow(ip);
@@ -253,6 +313,8 @@ async function boot() {
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
+      run: (line: string) => debug.exec(line),
+      weather: weather.weather,
     };
     requestAnimationFrame(frame);
   };

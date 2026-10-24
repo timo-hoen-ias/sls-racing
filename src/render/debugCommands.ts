@@ -23,10 +23,9 @@ function parseNum(s: string, min: number, max: number) {
   return v;
 }
 
-/** Registers a command plus German/English alias names that run the same thing. */
+/** Registers a command with German/English alias names. */
 function reg(cmd: DebugCommand, aliases: string[] = []) {
-  registerCommand(cmd);
-  for (const a of aliases) registerCommand({ ...cmd, name: a, help: `= ${cmd.name}` });
+  registerCommand({ ...cmd, aliases });
 }
 
 const isOn = (s: string) => ['on', 'an', 'ein', '1', 'true'].includes(s.toLowerCase());

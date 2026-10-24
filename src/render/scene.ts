@@ -8,6 +8,8 @@ export interface SceneSetup {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   daylight: Daylight;
+  /** Main shadow-casting light (sun by day, moon by night). */
+  sun: THREE.DirectionalLight;
   /** Post-processing chain; absent on low quality. */
   post?: PostFX;
   /** Keeps the shadow camera centred on the car. */
@@ -62,7 +64,7 @@ export function createScene(canvas: HTMLCanvasElement, q: Quality, ground: numbe
   resize();
 
   return {
-    renderer, scene, camera, daylight, post, resize,
+    renderer, scene, camera, daylight, sun, post, resize,
     render(dt, speed01, boost) {
       daylight.update(dt);
       if (post) post.render(dt, speed01, boost);

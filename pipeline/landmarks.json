@@ -2,8 +2,8 @@
  {
   "id": "ludwigskirche",
   "glb": "models/landmarks/ludwigskirche.glb",
-  "e": 336589.11,
-  "n": 5465030.98,
+  "e": 336589.12,
+  "n": 5465031.09,
   "heading": 0,
   "footprint": [
    [
@@ -66,8 +66,8 @@
  {
   "id": "rathaus",
   "glb": "models/landmarks/rathaus.glb",
-  "e": 336481.37,
-  "n": 5465073.5,
+  "e": 336481.38,
+  "n": 5465073.69,
   "heading": 0,
   "footprint": [
    [
@@ -206,8 +206,8 @@
  {
   "id": "kommandantur",
   "glb": "models/landmarks/kommandantur.glb",
-  "e": 336459.62,
-  "n": 5464917.45,
+  "e": 336459.61,
+  "n": 5464917.34,
   "heading": 0,
   "footprint": [
    [
@@ -268,42 +268,10 @@
   ]
  },
  {
-  "id": "altes-rathaus",
-  "glb": "models/landmarks/altes-rathaus.glb",
-  "e": 340496.16,
-  "n": 5468554.57,
-  "heading": 0,
-  "footprint": [
-   [
-    340504.53,
-    5468558.32
-   ],
-   [
-    340499.8,
-    5468545.04
-   ],
-   [
-    340487.71,
-    5468549.33
-   ],
-   [
-    340492.43,
-    5468562.59
-   ],
-   [
-    340500.85,
-    5468559.56
-   ]
-  ],
-  "osm": [
-   318150393
-  ]
- },
- {
   "id": "st-marien",
   "glb": "models/landmarks/st-marien.glb",
   "e": 338550.9,
-  "n": 5463949.43,
+  "n": 5463949.5,
   "heading": 0,
   "footprint": [
    [
@@ -431,7 +399,7 @@
   "id": "kasematten-sw",
   "glb": "models/landmarks/kasematten-sw.glb",
   "e": 336329.97,
-  "n": 5465074,
+  "n": 5465073.98,
   "heading": 0,
   "footprint": [
    [
@@ -506,8 +474,8 @@
  {
   "id": "kasematten-no",
   "glb": "models/landmarks/kasematten-no.glb",
-  "e": 336436.86,
-  "n": 5465167.45,
+  "e": 336436.85,
+  "n": 5465167.31,
   "heading": 0,
   "footprint": [
    [
@@ -575,7 +543,7 @@
   "id": "festung-vauban-insel",
   "glb": "models/landmarks/festung-vauban-insel.glb",
   "e": 336059.47,
-  "n": 5464969.54,
+  "n": 5464969.53,
   "heading": 0,
   "footprint": [
    [
@@ -645,6 +613,94 @@
   ],
   "osm": [
    71892595
+  ]
+ },
+ {
+  "id": "marienbrunnen",
+  "glb": "models/landmarks/marienbrunnen.glb",
+  "e": 336550.59,
+  "n": 5464998.84,
+  "heading": 0,
+  "footprint": [
+   [
+    336553.52,
+    5465001.49
+   ],
+   [
+    336551.8,
+    5465002.6
+   ],
+   [
+    336549.75,
+    5465002.69
+   ],
+   [
+    336547.93,
+    5465001.77
+   ],
+   [
+    336546.82,
+    5465000.04
+   ],
+   [
+    336546.73,
+    5464998.01
+   ],
+   [
+    336547.66,
+    5464996.19
+   ],
+   [
+    336549.38,
+    5464995.08
+   ],
+   [
+    336551.43,
+    5464994.98
+   ],
+   [
+    336553.25,
+    5464995.91
+   ],
+   [
+    336554.36,
+    5464997.64
+   ],
+   [
+    336554.46,
+    5464999.67
+   ]
+  ],
+  "osm": [
+   26305739
+  ]
+ },
+ {
+  "id": "kaserne-1",
+  "glb": "models/landmarks/kaserne-1.glb",
+  "e": 336491.58,
+  "n": 5465167.66,
+  "heading": 0,
+  "footprint": [
+   [
+    336519.28,
+    5465201.29
+   ],
+   [
+    336454.49,
+    5465144.71
+   ],
+   [
+    336463.87,
+    5465134.03
+   ],
+   [
+    336528.66,
+    5465190.61
+   ]
+  ],
+  "osm": [
+   222138704
   ]
  }
 ]

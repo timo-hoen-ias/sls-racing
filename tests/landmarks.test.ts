@@ -29,12 +29,14 @@ describe('landmarks', () => {
       expect(l.n).toBeGreaterThan(5460000);
       // (e, n) is the area centroid of the footprint.
       let a = 0, cx = 0, cy = 0;
-      l.footprint.forEach(([x0, y0], i) => {
-        const [x1, y1] = l.footprint[(i + 1) % l.footprint.length];
+      const [ox, oy] = l.footprint[0];
+      const rel = l.footprint.map(([x, y]) => [x - ox, y - oy]);
+      rel.forEach(([x0, y0], i) => {
+        const [x1, y1] = rel[(i + 1) % rel.length];
         const c = x0 * y1 - x1 * y0;
         a += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;
       });
-      expect(Math.hypot(cx / (3 * a) - l.e, cy / (3 * a) - l.n)).toBeLessThan(1);
+      expect(Math.hypot(ox + cx / (3 * a) - l.e, oy + cy / (3 * a) - l.n)).toBeLessThan(0.05);
     }
   });
 

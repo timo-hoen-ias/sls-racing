@@ -107,7 +107,7 @@ describe('Weather grip in the car physics', () => {
     );
     const car = new CarPhysics(RAPIER, world, { x: 0, y: 1, z: 0 }, 0);
     const drive = (input: Partial<DriveInput>, seconds: number) => {
-      const full: DriveInput = { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, ...input };
+      const full: DriveInput = { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false, ...input };
       for (let i = 0; i < seconds * 60; i++) {
         car.update(full, 1 / 60);
         world.step();

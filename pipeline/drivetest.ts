@@ -13,6 +13,7 @@ import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.t
 import { terrainHeights } from '../src/world/tileBuild.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { readOsm } from './lib/osm.ts';
+import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
 import { densify, isDrivable, roadSurfaceHeights, ROAD_CLASSES } from './lib/roads.ts';
@@ -167,6 +168,7 @@ async function main() {
   // Road heights as the build computes them, so the car starts on its road (which may be lifted).
   const regions = [loadRegion(region)];
   const height = terrainHeight(regions, unproject(cfg.zone));
+  applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
   roadHeights(osm.ways, regions, height);
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));

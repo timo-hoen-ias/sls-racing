@@ -554,7 +554,7 @@ async function boot() {
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
-    shops.update(view.camera);
+    shops.update(view.camera, view.daylight.daylight);
     vegetation.update(dt, view.camera, weather.weather);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);

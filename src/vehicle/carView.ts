@@ -5,6 +5,7 @@ import { CarDamage } from './damage.ts';
 import type { CarModelKind } from './sportsCarGlb.ts';
 import { buildSportsCar, type SportsCarModel } from './sportsCarModel.ts';
 import { CAR } from './tuning.ts';
+import { WheelInstances } from './wheelInstances.ts';
 
 /** Height of the physics body origin above the ground with the car at rest (m). */
 export const RIDE_HEIGHT = 0.284;
@@ -31,6 +32,7 @@ export class CarView {
 
   /** model: a prepared body (the Blender GLB from loadSportsCar); without it the procedural car is built. */
   constructor(color?: string, model?: SportsCarModel) {
+    this.root.name = 'playercar';
     if (model) this.kind = 'glb';
     model ??= buildSportsCar(color);
     // The model is built from the ground up; shift it to the physics body origin.
@@ -86,7 +88,15 @@ export class CarView {
       this.root.add(w.pivot);
       this.wheels.push(w);
     }
+    const enabled = this.wheelSet?.enabled ?? true;
+    this.wheelSet?.dispose();
+    this.wheelSet = new WheelInstances(this.wheels.map((w) => w.pivot));
+    this.wheelSet.enabled = enabled;
+    this.root.add(this.wheelSet.group);
   }
+
+  /** The four wheels, drawn instanced. */
+  wheelSet!: WheelInstances;
 
   /** Swaps the body and wheels (car.model). Damage is repaired; lights and effects keep their anchors. */
   setModel(model: SportsCarModel, kind: CarModelKind) {
@@ -113,6 +123,7 @@ export class CarView {
     const mask = this.root.layers.mask;
     model.body.traverse((o) => (o.layers.mask = mask));
     for (const w of this.wheels) w.pivot.traverse((o) => (o.layers.mask = mask));
+    this.wheelSet.group.traverse((o) => (o.layers.mask = mask));
     this.setLod(this.forcedLod);
   }
 
@@ -173,6 +184,7 @@ export class CarView {
       w.pivot.rotation.y = i < 2 ? -steer : 0;
       w.spin.rotation.x = rot[i];
     }
+    this.wheelSet.update(this.lodLevel);
     this.headLights.emissiveIntensity = THREE.MathUtils.lerp(2.4, 40, this.night);
     this.brakeLights.emissiveIntensity = (braking ? 3.5 : 0.7) * THREE.MathUtils.lerp(1, 6, this.night);
     for (const f of this.flames) {

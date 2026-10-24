@@ -1,5 +1,5 @@
 import type { EngineSound } from '../audio/engineSound.ts';
-import { registerCommand } from '../debug/registry.ts';
+import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { ChaseCamera } from '../render/chaseCamera.ts';
 import { type CarPhysics, maxSteerAngle } from './carPhysics.ts';
 import type { CarView } from './carView.ts';
@@ -96,6 +96,7 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
       return 'lade GLB …';
     },
   });
+  registerToggle('car.wheelinst', 'Räder instanziert zeichnen (weniger Draw-Calls); aus = jedes Radteil einzeln', () => c.view.wheelSet.enabled, (v) => { c.view.wheelSet.enabled = v; });
   registerCommand({
     name: 'car.lod',
     help: 'Detailstufe von Karosserie und Rädern erzwingen (0 = voll) oder auto',

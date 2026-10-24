@@ -74,19 +74,20 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
   });
   registerCommand({
     name: 'car.model',
-    help: 'Automodell: Blender-GLB oder prozedurales Coupé',
-    args: '[glb|procedural]',
-    complete: () => ['glb', 'procedural'],
+    help: 'Automodell: Blender-Coupé (glb), Hot Hatch (hothatch, nur Optik, gleiche Fahrphysik) oder prozedurales Coupé',
+    args: '[glb|hothatch|procedural]',
+    complete: () => ['glb', 'hothatch', 'procedural'],
     run: ([m]) => {
       const v = c.view;
       if (m === undefined) return `${v.kind} · ${triangleCount(v.model)} Dreiecke (volle Detailstufe)`;
-      if (m !== 'glb' && m !== 'procedural') throw new Error('glb oder procedural');
+      if (m !== 'glb' && m !== 'hothatch' && m !== 'procedural') throw new Error('glb, hothatch oder procedural');
       const color = '#' + v.paintColor.getHexString();
       if (m === 'procedural') {
         v.setModel(buildSportsCar(color), 'procedural');
         return 'prozedurales Coupé';
       }
-      loadSportsCar(color).then(
+      const url = m === 'hothatch' ? `${import.meta.env.BASE_URL}models/cars/hothatch.glb` : undefined;
+      loadSportsCar(color, url).then(
         (model) => { v.setModel(model, 'glb'); console.info('[car] GLB geladen'); },
         (e) => console.warn('[car] GLB nicht geladen', e),
       );

@@ -8,6 +8,8 @@ import { isDrivable, roadProfile, roadWidth } from './roads.ts';
 
 /** Height difference from which two touching roads are separate levels, not a junction (m). */
 const LEVEL = 0.6;
+/** The same for roads that share no node: they never meet, so a smaller step is already a ledge. */
+const LEVEL_APART = 0.25;
 /** Beyond this the other surface is out of the car's way (a deck overhead, a road far below). */
 const APART = 3;
 /** Narrowest half width a road keeps. */
@@ -36,6 +38,8 @@ export function halfWidths(ways: Way[], height: (e: number, n: number) => number
         }
     }
   }
+  const nodes = new Map(roads.map((w) => [w, new Set(w.ids)]));
+  const linked = (a: Way, b: Way) => b.ids.some((id) => nodes.get(a)!.has(id));
   const out = new Map<Way, HalfWidths>();
   for (const [way, ring] of rings) {
     const hw = roadWidth(way.tags)! / 2;
@@ -52,7 +56,7 @@ export function halfWidths(ways: Way[], height: (e: number, n: number) => number
             const qe = s.e0 + dx * t - p.e, qn = s.n0 + dy * t - p.n;
             if (Math.hypot(qe, qn) > hw + s.hw + 0.3) continue;
             const dyH = Math.abs(s.y0 + (s.y1 - s.y0) * t - p.y);
-            if (dyH < LEVEL || dyH > APART) continue;
+            if (dyH > APART || dyH < (linked(way, s.way) ? LEVEL : LEVEL_APART)) continue;
             // Across the road (left positive), as the road geometry offsets.
             const lateral = -qe * p.dy + qn * p.dx;
             const share = Math.max(MIN_HALF, Math.abs(lateral) * (hw / (hw + s.hw)) - 0.1);

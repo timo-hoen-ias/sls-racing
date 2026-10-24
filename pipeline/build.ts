@@ -10,6 +10,7 @@ import {
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
+import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps } from './lib/props.ts';
 import { RoadMask } from './lib/clearance.ts';
@@ -213,6 +214,7 @@ function main() {
     idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, out: paths.out }) };
   }
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
+  writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);

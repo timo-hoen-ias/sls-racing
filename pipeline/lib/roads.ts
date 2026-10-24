@@ -166,6 +166,33 @@ class JunctionIndex {
   }
 }
 
+/** Carriageways of all roads, to keep sidewalks off other roads where they meet at an angle. */
+class CarriagewayIndex {
+  private cells = new Map<string, { way: Way; x0: number; z0: number; x1: number; z1: number; hw: number }[]>();
+  add(way: Way, ring: { x: number; z: number }[], hw: number) {
+    for (let i = 1; i < ring.length; i++) {
+      const [a, b] = [ring[i - 1], ring[i]];
+      const s = { way, x0: a.x, z0: a.z, x1: b.x, z1: b.z, hw };
+      for (let cx = Math.floor((Math.min(a.x, b.x) - hw) / 16); cx <= Math.floor((Math.max(a.x, b.x) + hw) / 16); cx++)
+        for (let cz = Math.floor((Math.min(a.z, b.z) - hw) / 16); cz <= Math.floor((Math.max(a.z, b.z) + hw) / 16); cz++) {
+          const k = `${cx}_${cz}`;
+          if (!this.cells.has(k)) this.cells.set(k, []);
+          this.cells.get(k)!.push(s);
+        }
+    }
+  }
+  /** Whether (x, z) lies on the carriageway of a road other than `self` (plus a margin). */
+  onOther(self: Way, x: number, z: number, margin: number) {
+    for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
+      if (s.way === self) continue;
+      const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+      const t = Math.min(1, Math.max(0, ((x - s.x0) * dx + (z - s.z0) * dz) / (dx * dx + dz * dz || 1)));
+      if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw + margin) return true;
+    }
+    return false;
+  }
+}
+
 /**
  * Emits road ribbons, dashed centre lines, sidewalks and street lamps into the tiles they cross.
  * Returns all centreline samples so callers can pick a spawn point.
@@ -176,6 +203,9 @@ export function buildRoads(
 ): RoadSample[] {
   const samples: RoadSample[] = [];
   const jIndex = new JunctionIndex(junctions);
+  const rings = new Map(ways.filter((w) => isDrivable(w.tags)).map((w) => [w, roadProfile(w, height, world)]));
+  const carriageways = new CarriagewayIndex();
+  for (const [w, r] of rings) carriageways.add(w, r, roadWidth(w.tags)! / 2);
   for (const way of ways) {
     if (!isDrivable(way.tags)) continue;
     const section = roadSection(way.tags)!;
@@ -183,7 +213,7 @@ export function buildRoads(
     const cls = ROAD_CLASSES[way.tags.highway];
     // Lane lines: long dashes on motorways (6 m line, 12 m gap), short ones elsewhere (3 m, 6 m).
     const dash = cls.rank >= 8 ? { period: 18, on: 6 } : { period: 9, on: 3 };
-    const ring = roadProfile(way, height, world);
+    const ring = rings.get(way)!;
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
     const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
@@ -270,6 +300,9 @@ export function buildRoads(
           if (!full(a) || !full(b)) continue;
           const inner = side * hw;
           const outer = side * (hw + sw);
+          // Nor where it would reach onto another road (roads meeting at a shallow angle).
+          const corners = [off(a, outer), off(b, outer), off(a, side * (hw + sw / 2)), off(b, side * (hw + sw / 2))];
+          if (corners.some(([x, z]) => carriageways.onOther(way, x, z, 0.3))) continue;
           const [i0, i1] = side > 0 ? [inner, outer] : [outer, inner];
           // Top surface.
           strip(tile.sidewalks, i0, i1, [top(a), top(a)], [top(b), top(b)], tuv);

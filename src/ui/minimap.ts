@@ -21,6 +21,8 @@ export class Minimap {
     const c = this.canvas;
     const dpr = Math.min(2, devicePixelRatio || 1);
     const size = c.clientWidth;
+    // Hidden (e.g. "hud off"): nothing to draw, and a negative clip radius would throw.
+    if (size < 4) return;
     if (c.width !== Math.round(size * dpr)) { c.width = c.height = Math.round(size * dpr); }
     const ctx = this.ctx;
     const target = 140 + Math.min(Math.abs(speed), 60) * 4;

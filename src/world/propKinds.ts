@@ -8,6 +8,10 @@ export const PROP_STRIDE = 6;
 export const Prop = {
   busStop: 1, sign: 2, stopSign: 3, giveWay: 4, bollard: 5, block: 6, bench: 7, bin: 8, postBox: 9, recycling: 10,
   hydrant: 11, bikeStand: 12, column: 13, parkedCar: 14, fence: 15, wall: 16, hedge: 17, guardRail: 18, cityLimit: 19, railing: 20,
+  /** Leitpfosten (roadside.ts): faces the traffic on its side; rectangle reflector in front, two dots behind. */
+  delineator: 21,
+  /** Richtungstafel (Z 625) in sharp rural curves, arrows pointing left or right; faces the approaching traffic. */
+  chevronLeft: 22, chevronRight: 23,
 } as const;
 export type PropKind = (typeof Prop)[keyof typeof Prop];
 
@@ -32,7 +36,7 @@ export const isDetected = (kind: PropKind, size: number) => size < 0 && DETECTED
 export const PROP_NAMES: Record<PropKind, string> = {
   1: 'bushaltestelle', 2: 'schild', 3: 'stoppschild', 4: 'vorfahrt-achten', 5: 'poller', 6: 'betonblock', 7: 'bank', 8: 'muelleimer',
   9: 'briefkasten', 10: 'container', 11: 'hydrant', 12: 'fahrradstaender', 13: 'litfasssaeule', 14: 'parker', 15: 'zaun', 16: 'mauer',
-  17: 'hecke', 18: 'leitplanke', 19: 'ortsschild', 20: 'gelaender',
+  17: 'hecke', 18: 'leitplanke', 19: 'ortsschild', 20: 'gelaender', 21: 'leitpfosten', 22: 'richtungstafel-links', 23: 'richtungstafel-rechts',
 };
 
 /** Groups for props.toggle. */
@@ -41,4 +45,5 @@ export const PROP_GROUPS: Record<string, PropKind[]> = {
   moebel: [5, 6, 7, 8, 9, 10, 11, 12, 13],
   parker: [14],
   zaeune: [15, 16, 17, 18, 20],
+  leit: [21, 22, 23],
 };

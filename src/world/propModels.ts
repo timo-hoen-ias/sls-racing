@@ -68,6 +68,35 @@ function busStop(shelter: boolean) {
   return merge(parts);
 }
 
+/** Leitpfosten: white post 1 m above the ground with a black band at the top, 0.25 m below ground. */
+function delineator() {
+  return merge([box(0.1, 1.25, 0.12, 0, 0.375, 0, WHITE), box(0.104, 0.25, 0.124, 0, 0.87, 0, 0x16171a), box(0.104, 0.05, 0.124, 0, 0.98, -0.01, 0x16171a)]);
+}
+
+/** Richtungstafel (Z 625): white board 1 × 0.3 m with three red chevrons, on two posts; arrows point to -x (left) or +x. */
+function chevron(dir: 1 | -1) {
+  const parts = [pole(1.35, -0.38, -0.04), pole(1.35, 0.38, -0.04), box(1.0, 0.3, 0.03, 0, 1.15, 0, WHITE)];
+  const a = Math.atan2(0.13, 0.11);
+  for (const x of [-0.3, 0, 0.3]) {
+    for (const s of [1, -1]) {
+      const bar = new THREE.BoxGeometry(0.075, 0.18, 0.01).rotateZ(s * a * dir).translate(x + 0.04 * dir, 1.15 + s * 0.065, 0.02).toNonIndexed();
+      parts.push(tint(bar, RED));
+    }
+  }
+  return merge(parts);
+}
+
+/** Retroreflectors, drawn with their own (glowing) material: kind → geometry in the same model space. */
+export function buildReflectorGeometries(): Partial<Record<PropKind, Geo>> {
+  return {
+    // Rectangle towards the traffic on the post's side, two round ones on the back for the oncoming lane.
+    [Prop.delineator]: merge([
+      box(0.045, 0.16, 0.01, 0, 0.87, 0.066, WHITE),
+      plate(0.024, 10, 0, 0, 0.92, -0.066, WHITE, 0.01), plate(0.024, 10, 0, 0, 0.83, -0.066, WHITE, 0.01),
+    ]),
+  };
+}
+
 export function buildPropGeometries(): Partial<Record<PropKind | 'busShelter', Geo>> {
   return {
     [Prop.busStop]: busStop(false),
@@ -95,6 +124,9 @@ export function buildPropGeometries(): Partial<Record<PropKind | 'busShelter', G
     [Prop.wall]: merge([box(0.3, 1.6, 1, 0, 0.8, 0, 0xb3a58e), box(0.36, 0.08, 1, 0, 1.64, 0, 0x9a8e7a)]),
     [Prop.hedge]: merge([box(0.9, 1.3, 1, 0, 0.65, 0, 0x34572a), box(0.7, 0.2, 1, 0, 1.4, 0, 0x3d6431)]),
     [Prop.guardRail]: merge([box(0.05, 0.32, 1, 0, 0.6, 0, 0xb4b9bd), box(0.12, 0.75, 0.12, 0.06, 0.375, 0, 0x8f969c)]),
+    [Prop.delineator]: delineator(),
+    [Prop.chevronLeft]: chevron(-1),
+    [Prop.chevronRight]: chevron(1),
     // Bridge railing: handrail, knee rail and bottom rail on a post, galvanised steel.
     [Prop.railing]: merge([
       box(0.07, 0.05, 1, 0, 1.08, 0, 0x9aa1a6), box(0.04, 0.04, 1, 0, 0.6, 0, 0x8a9196), box(0.04, 0.04, 1, 0, 0.14, 0, 0x8a9196),

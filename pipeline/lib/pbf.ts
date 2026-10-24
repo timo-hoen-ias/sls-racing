@@ -244,7 +244,7 @@ export function wantedNode(tags: Tags | undefined): boolean {
   if (!tags) return false;
   return !!(
     tags.natural === 'tree' ||
-    /^(traffic_signals|stop|give_way|bus_stop|street_lamp|motorway_junction)$/.test(tags.highway ?? '') ||
+    /^(traffic_signals|stop|give_way|bus_stop|street_lamp|crossing|motorway_junction)$/.test(tags.highway ?? '') || !!tags.kerb ||
     /^(city|town|village|suburb|quarter|hamlet)$/.test(tags.place ?? '') ||
     /^(bollard|block)$/.test(tags.barrier ?? '') ||
     /^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling)$/.test(tags.amenity ?? '') ||

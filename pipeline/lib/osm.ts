@@ -21,6 +21,12 @@ export interface Way {
   deck?: number[];
   /** Roads: smoothed terrain height along the way (see profiles.ts), by distance from the first node. */
   profile?: { dist: Float32Array; y: Float32Array };
+  /** Roads: pavement with a raised kerb on each side (kerbs.ts); unset means the old default by class. */
+  sidewalks?: { left: boolean; right: boolean };
+  /** Roads: inside a built-up area (kerbs.ts). */
+  urban?: boolean;
+  /** Roads: distances from the first node of crossings with a lowered kerb (kerbs.ts). */
+  lowered?: number[];
   closed: boolean;
 }
 

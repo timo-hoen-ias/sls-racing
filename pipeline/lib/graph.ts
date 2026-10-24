@@ -53,7 +53,9 @@ export function buildGraph(ways: Way[], world: WorldInfo, height: (e: number, n:
     const c = ROAD_CLASSES[w.tags.highway].rank;
     const oneway = w.tags.oneway === 'yes' || w.tags.junction === 'roundabout';
     const section = roadSection(w.tags)!;
-    const dims = { w: r1(section.width), l: section.lanes, r: r1(section.rightLane) };
+    // Pavement sides (kerbs.ts): 1 right, 2 left of a → b.
+    const k = w.sidewalks ? (w.sidewalks.right ? 1 : 0) | (w.sidewalks.left ? 2 : 0) : undefined;
+    const dims = { w: r1(section.width), l: section.lanes, r: r1(section.rightLane), ...(k !== undefined ? { k } : {}) };
     let start = 0;
     let p: number[] = [];
     for (let i = 0; i < w.ids.length; i++) {

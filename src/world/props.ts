@@ -9,7 +9,7 @@ import { patchMaterial } from '../weather/weatherMaterials.ts';
 import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, isDetected, signTypeOf } from './propKinds.ts';
 import { PROP_LOD_DISTANCE, type PropSet } from './propGlb.ts';
 import { LINEAR, addPropColliders } from './propColliders.ts';
-import { buildPropGeometries } from './propModels.ts';
+import { buildPropGeometries, buildReflectorGeometries } from './propModels.ts';
 import { type WorldInfo, utmToLocal } from './format.ts';
 import { registerTileLayer } from './tileHooks.ts';
 
@@ -35,7 +35,7 @@ export interface PropHit {
   breakable: boolean;
 }
 
-const BREAKABLE = new Set<PropKind>([Prop.busStop, Prop.sign, Prop.stopSign, Prop.giveWay, Prop.cityLimit, Prop.bollard, Prop.bench, Prop.bin, Prop.postBox, Prop.hydrant, Prop.bikeStand, Prop.fence, Prop.hedge]);
+const BREAKABLE = new Set<PropKind>([Prop.busStop, Prop.sign, Prop.stopSign, Prop.giveWay, Prop.cityLimit, Prop.bollard, Prop.bench, Prop.bin, Prop.postBox, Prop.hydrant, Prop.bikeStand, Prop.fence, Prop.hedge, Prop.delineator, Prop.chevronLeft, Prop.chevronRight]);
 
 interface TileProps { key: string; cx: number; cz: number; data: Float32Array }
 
@@ -94,11 +94,23 @@ export class PropLayer {
     const detail = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 });
     this.shadows = opts.shadows;
     this.carMats = { paint, detail };
-    for (const [k, g] of Object.entries(buildPropGeometries())) this.addModel((k === 'busShelter' ? k : Number(k)) as ModelKey, [[g, mat]]);
+    // Retroreflectors glow a little at night as if caught by headlights (setNight).
+    this.reflectorMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0, emissive: '#fff4d6', emissiveIntensity: 0.05 });
+    const reflectors = buildReflectorGeometries();
+    for (const [k, g] of Object.entries(buildPropGeometries())) {
+      const key = (k === 'busShelter' ? k : Number(k)) as ModelKey;
+      const r = typeof key === 'number' ? reflectors[key as PropKind] : undefined;
+      this.addModel(key, r ? [[g, mat], [r, this.reflectorMat]] : [[g, mat]]);
+    }
     this.setVehicles(proceduralVehicleSet());
   }
   private info: WorldInfo;
   private shadows: boolean;
+  /** Reflectors on delineators: glow at night (0..1 from setNight, scaled by reflectorGlow). */
+  readonly reflectorMat: THREE.MeshStandardMaterial;
+  reflectorGlow = 1.2;
+  private night = 0;
+  get nightLevel() { return this.night; }
   private propMat: THREE.Material;
   private carMats: { paint: THREE.Material; detail: THREE.Material };
   private carVariants = { car: 1, van: 1 };
@@ -116,6 +128,12 @@ export class PropLayer {
       return im;
     });
     this.meshes.set(key, list);
+  }
+
+  /** Darkness 0 (day) … 1 (night): reflectors light up. */
+  setNight(n: number) {
+    this.night = n;
+    this.reflectorMat.emissiveIntensity = 0.05 + this.reflectorGlow * n * n;
   }
 
   /** Replaces the geometry of a prop kind (e.g. the Blender hedge). */
@@ -323,12 +341,12 @@ export class PropLayer {
 
   /** Props within `r` metres of (x, z), nearest first. */
   near(x: number, z: number, r: number) {
-    const out: { name: string; d: number; size: number; kind: PropKind }[] = [];
+    const out: { name: string; d: number; size: number; kind: PropKind; x: number; z: number }[] = [];
     for (const t of this.tiles.values())
       for (let i = 0; i * PROP_STRIDE < t.data.length; i++) {
         const o = i * PROP_STRIDE;
         const d = Math.hypot(t.data[o + 1] - x, t.data[o + 3] - z);
-        if (d < r && !this.removedProps.has(`${t.key}:${i}`)) out.push({ kind: t.data[o] as PropKind, name: PROP_NAMES[t.data[o] as PropKind], d, size: t.data[o + 5] });
+        if (d < r && !this.removedProps.has(`${t.key}:${i}`)) out.push({ kind: t.data[o] as PropKind, name: PROP_NAMES[t.data[o] as PropKind], d, size: t.data[o + 5], x: t.data[o + 1], z: t.data[o + 3] });
       }
     return out.sort((a, b) => a.d - b.d);
   }

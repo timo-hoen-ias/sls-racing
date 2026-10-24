@@ -6,6 +6,7 @@ import type { HalfWidths } from './overlap.ts';
 import { roadSection } from '../../src/world/roadSpec.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
+import { KERB } from './kerbs.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
 
 interface RoadClass {
@@ -39,7 +40,7 @@ const STEP = 4; // metres between road samples
 export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
 /** Road collision lies this far under the drawn surface. */
 const STRIP_DROP = 0.05;
-const SIDEWALK = { width: 2.2, height: 0.14 };
+const SIDEWALK = { width: KERB.width, height: KERB.height };
 /**
  * Bridges without a landmark model get a raised walkway (cap) on both sides with a pedestrian railing at its
  * outer edge. On fast roads the cap starts behind the guard rail (props.ts), else right at the carriageway.
@@ -228,7 +229,9 @@ export function buildRoads(
     const ring = rings.get(way)!;
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
-    const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
+    // Pavement sides as kerbs.ts planned them (left = positive offsets), else the old default for streets.
+    const sides = way.sidewalks ?? (cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk) ? { left: true, right: true } : { left: false, right: false });
+    const sidewalk = !bridge && (sides.left || sides.right);
     // Bridges dressed by a landmark model bring their own railings.
     const walkway = bridge && !bridges.dressed?.has(way.id);
     const capFrom = FAST.test(way.tags.highway) ? BRIDGE_CAP.behindRail : 0;
@@ -240,6 +243,36 @@ export function buildRoads(
     const R = new Map(ring.map((p, i) => [p, half?.right[i] ?? width / 2]));
 
     for (const r of ring) samples.push({ x: r.x, z: r.z, y: r.y, heading: Math.atan2(r.dx, r.dy) });
+
+    // Pavement segments per side (segment i runs from sample i - 1 to i), decided first so the kerb can be
+    // lowered where a stretch ends (junctions, driveways) and at mapped crossings.
+    const hw0 = width / 2, sw0 = SIDEWALK.width;
+    const paved = new Map<number, boolean[]>();
+    for (const side of [1, -1] as const) {
+      const on: boolean[] = new Array(ring.length).fill(false);
+      if (sidewalk && (side > 0 ? sides.left : sides.right))
+        for (let i = 1; i < ring.length; i++) {
+          const a = ring[i - 1], b = ring[i];
+          if (jIndex.near(a.x, a.z, 2.8) || jIndex.near(b.x, b.z, 2.8)) continue;
+          // No sidewalk where the road had to give way to another road alongside.
+          const full = (p: typeof a) => (side > 0 ? L : R).get(p)! >= hw0 - 0.05;
+          if (!full(a) || !full(b)) continue;
+          // Nor where it would reach onto another road (roads meeting at a shallow angle).
+          const o = (p: typeof a, d: number) => utmToLocal(world, p.e - p.dy * d, p.n + p.dx * d);
+          const corners = [o(a, side * (hw0 + sw0)), o(b, side * (hw0 + sw0)), o(a, side * (hw0 + sw0 / 2)), o(b, side * (hw0 + sw0 / 2))];
+          if (corners.some(([x, z]) => carriageways.onOther(way, x, z, 0.3))) continue;
+          on[i] = true;
+        }
+      paved.set(side, on);
+    }
+    const crossings = way.lowered ?? [];
+    /** Kerb height at sample j on one side: lowered at the ends of a pavement stretch and at crossings. */
+    const kerbAt = (side: number, j: number) => {
+      const on = paved.get(side)!;
+      const end = (j > 0 && on[j]) !== (j + 1 < on.length && on[j + 1]);
+      const d = ring[j].dist;
+      return end || crossings.some((c) => Math.abs(c - d) <= KERB.crossing) ? KERB.lowered : SIDEWALK.height;
+    };
 
     for (let i = 1; i < ring.length; i++) {
       const a = ring[i - 1];
@@ -305,10 +338,9 @@ export function buildRoads(
       }
 
       // Bridge caps run through the nodes where the road continues; a road branching off stops them below.
-      if (walkway || (sidewalk && !jIndex.near(a.x, a.z, 2.8) && !jIndex.near(b.x, b.z, 2.8))) {
+      if (walkway || sidewalk) {
         const sw = walkway ? BRIDGE_CAP.width : SIDEWALK.width;
         const from = walkway ? capFrom : 0;
-        const top = (p: typeof a) => p.y + SIDEWALK.height;
         const ground = (p: typeof a, o: number) => {
           // On a bridge the skirt ends at the underside of the deck slab.
           if (walkway) return p.y - 1;
@@ -317,26 +349,34 @@ export function buildRoads(
         };
         const tuv = (p: typeof a, s: 0 | 1) => [p.dist / 2, s * (sw / 2)] as [number, number];
         for (const side of [1, -1]) {
-          // No sidewalk where the road had to give way to another road alongside.
-          const full = (p: typeof a) => (side > 0 ? L : R).get(p)! >= hw - 0.05;
-          if (!full(a) || !full(b)) continue;
+          let ka: number, kb: number;
+          if (walkway) {
+            // No cap where the road had to give way to another road alongside.
+            const full = (p: typeof a) => (side > 0 ? L : R).get(p)! >= hw - 0.05;
+            if (!full(a) || !full(b)) continue;
+            // A bridge cap may pass over a road below, not onto one at its own height.
+            const corners = [off(a, side * (hw + from + sw)), off(b, side * (hw + from + sw)), off(a, side * (hw + from + sw / 2)), off(b, side * (hw + from + sw / 2))];
+            if (corners.some(([x, z], i) => carriageways.onOther(way, x, z, 0.3, i % 2 ? b.y : a.y))) continue;
+            ka = a.y + SIDEWALK.height;
+            kb = b.y + SIDEWALK.height;
+          } else {
+            if (!paved.get(side)![i]) continue;
+            ka = a.y + kerbAt(side, i - 1);
+            kb = b.y + kerbAt(side, i);
+          }
           const inner = side * (hw + from);
           const outer = side * (hw + from + sw);
-          // Nor where it would reach onto another road (roads meeting at a shallow angle).
-          const corners = [off(a, outer), off(b, outer), off(a, side * (hw + from + sw / 2)), off(b, side * (hw + from + sw / 2))];
-          // A bridge cap may pass over a road below, not onto one at its own height.
-          if (corners.some(([x, z], i) => carriageways.onOther(way, x, z, 0.3, walkway ? (i % 2 ? b.y : a.y) : undefined))) continue;
           const [i0, i1] = side > 0 ? [inner, outer] : [outer, inner];
           // Top surface.
-          strip(tile.sidewalks, i0, i1, [top(a), top(a)], [top(b), top(b)], tuv);
+          strip(tile.sidewalks, i0, i1, [ka, ka], [kb, kb], tuv);
           // Kerb face towards the road and skirt on the outer edge, as narrow vertical strips.
-          wall(tile.sidewalks, off(a, inner), off(b, inner), a.y - 0.05, top(a), b.y - 0.05, top(b), side < 0);
-          wall(tile.sidewalks, off(a, outer), off(b, outer), ground(a, outer), top(a), ground(b, outer), top(b), side > 0);
+          wall(tile.sidewalks, off(a, inner), off(b, inner), a.y - 0.05, ka, b.y - 0.05, kb, side < 0);
+          wall(tile.sidewalks, off(a, outer), off(b, outer), ground(a, outer), ka, ground(b, outer), kb, side > 0);
           if (walkway && bridges.railings) {
             const o = side * (hw + from + sw - BRIDGE_CAP.railInset);
             const pa = [a.e - a.dy * o, a.n + a.dx * o], pb = [b.e - b.dy * o, b.n + b.dx * o];
             const de = pb[0] - pa[0], dn = pb[1] - pa[1];
-            bridges.railings.push({ e: (pa[0] + pb[0]) / 2, n: (pa[1] + pb[1]) / 2, de, dn, len: Math.hypot(de, dn), y: (top(a) + top(b)) / 2 });
+            bridges.railings.push({ e: (pa[0] + pb[0]) / 2, n: (pa[1] + pb[1]) / 2, de, dn, len: Math.hypot(de, dn), y: (ka + kb) / 2 });
           }
         }
       }
@@ -362,7 +402,7 @@ export function buildRoads(
       }
 
     // Street lamps, alternating sides.
-    if (cls.street && cls.rank >= 3 && !bridge) {
+    if (cls.street && cls.rank >= 3 && !bridge && way.urban !== false) {
       let next = LAMP_SPACING / 2;
       let side = 1;
       for (const r of ring) {
@@ -370,13 +410,14 @@ export function buildRoads(
         next += LAMP_SPACING;
         side = -side;
         if ((side > 0 ? L : R).get(r)! < width / 2 - 0.05) continue;
-        const o = side * (width / 2 + (sidewalk ? SIDEWALK.width - 0.5 : 0.8));
+        const pav = sidewalk && (side > 0 ? sides.left : sides.right);
+        const o = side * (width / 2 + (pav ? SIDEWALK.width - 0.5 : 0.8));
         const [x, z] = utmToLocal(world, r.e - r.dy * o, r.n + r.dx * o);
         if (jIndex.near(x, z, 4)) continue;
         // Heading of the lamp arm: towards the road centre.
         const heading = Math.atan2(r.dx, r.dy) + (side > 0 ? Math.PI / 2 : -Math.PI / 2);
         const t = tiles.at(r.e - r.dy * o, r.n + r.dx * o);
-        t.lamps.push(x, r.y + (sidewalk ? SIDEWALK.height : 0), z, heading);
+        t.lamps.push(x, r.y + (pav ? SIDEWALK.height : 0), z, heading);
       }
     }
   }

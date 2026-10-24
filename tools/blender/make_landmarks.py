@@ -35,6 +35,8 @@ def materials():
     pbr('wood', 0x5a3d26, 0.0, 0.8)
     pbr('stone.red', 0x9a4a3a, 0.0, 0.85)       # red sandstone (Kommandantur)
     pbr('roof.grass', 0x5f7a3a, 0.0, 0.95)     # grassed rampart (Kasematten)
+    pbr('copper.bronze', 0x3d3a2e, 0.8, 0.45)  # dark bronze (fountain, statues)
+    pbr('glass.water', 0x3c5a5a, 0.2, 0.05)    # fountain water
 
 
 class Frame:
@@ -162,7 +164,7 @@ def local_footprint(entry):
     return [(e - entry['e'], n - entry['n']) for e, n in entry['footprint']]
 
 
-ALL_MATS = ['stone', 'stone.dark', 'stone.light', 'stone.red', 'plaster', 'plaster.white', 'roof', 'roof.grass', 'slate', 'copper', 'glass', 'wood']
+ALL_MATS = ['stone', 'stone.dark', 'stone.light', 'stone.red', 'plaster', 'plaster.white', 'roof', 'roof.grass', 'slate', 'copper', 'copper.bronze', 'glass', 'glass.water', 'wood']
 
 
 # ---------------------------------------------------------------- St. Ludwig
@@ -422,26 +424,6 @@ def kommandantur(entry, root, lod):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
-def altes_rathaus(entry, root, lod):
-    """Small sandstone town hall (about 1900): two storeys, hipped slate roof."""
-    f = Frame(0, ALL_MATS, detail=lod == 0)
-    fp = ccw(local_footprint(entry))
-    H = 8.5
-    walls(f, 'stone', fp, -1.0, H)
-    if f.detail:
-        f.prism('stone.dark', offset(fp, 0.05), -1.0, 0.8)
-        f.prism('stone.light', offset(fp, 0.1), H - 0.4, H)
-    quoins(f, fp, 0.8, H - 0.4, mat='stone.light')
-    facade(f, fp, [1.3, 5.0], w=1.1, h=2.1, spacing=2.8, frame='stone.light', min_len=3.0)
-    roof(f, 'slate', offset(fp, 0.35), H, [(3.0, 3.6), (1.6, 1.4)])
-    ob = f.finish(f"{entry['id']}_lod{lod}", root)
-    if lod:
-        return ob, None
-    c = Frame(0, ['stone'])
-    c.prism('stone', fp, -1.0, H + 4.0)
-    return ob, c.finish(f"{entry['id']}_collider", root)
-
-
 def st_marien(entry, root, lod):
     """Plain rendered parish church (Picard): tall nave and chancel under hipped/gabled roofs, west front with
     a bell gable and round-arched windows, small porch."""
@@ -566,10 +548,80 @@ def vauban_insel(entry, root, lod):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
+def marienbrunnen(entry, root, lod):
+    """Marian fountain in front of St. Ludwig: round sandstone basin, two bronze bowls on a stem, a stone pedestal
+    and the bronze Madonna on top."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    seg = 24 if f.detail else 10
+    # Basin rim (ring), water, and a low step around it.
+    rim_out, rim_in = fp, offset(fp, -0.45)
+    bm = f.bm
+    for lo_, hi_, outer, inner, mat in ((-1.0, 0.6, rim_out, rim_in, 'stone.light'),):
+        o0 = [bm.verts.new((x, y, lo_)) for x, y in outer]
+        o1 = [bm.verts.new((x, y, hi_)) for x, y in outer]
+        i1 = [bm.verts.new((x, y, hi_)) for x, y in inner]
+        i0 = [bm.verts.new((x, y, 0.1)) for x, y in inner]
+        n = len(outer)
+        fs = []
+        for i in range(n):
+            j = (i + 1) % n
+            fs += [bm.faces.new((o0[i], o0[j], o1[j], o1[i])), bm.faces.new((o1[i], o1[j], i1[j], i1[i])),
+                   bm.faces.new((i1[i], i1[j], i0[j], i0[i]))]
+        for fc in fs:
+            fc.material_index = f.mats.index(mat)
+    f.prism('glass.water', rim_in, 0.1, 0.42)
+    if f.detail:
+        f.prism('stone.light', offset(fp, 0.7), -1.0, 0.12)                                   # step
+    f.spire('stone', 0, 0, 0.1, 1.1, 0.45, seg=seg, r_top=0.4)                                 # stem
+    f.spire('copper.bronze', 0, 0, 1.0, 1.45, 0.5, seg=seg, r_top=2.3)                         # lower bowl
+    f.spire('glass.water', 0, 0, 1.38, 1.42, 2.2, seg=seg, r_top=2.2)
+    f.spire('copper.bronze', 0, 0, 1.45, 2.1, 0.32, seg=seg, r_top=0.3)
+    f.spire('copper.bronze', 0, 0, 2.05, 2.35, 0.35, seg=seg, r_top=1.35)                      # upper bowl
+    f.spire('stone.light', 0, 0, 2.35, 3.9, 0.55, seg=seg, r_top=0.55)                         # pedestal
+    f.spire('stone.light', 0, 0, 3.9, 4.05, 0.65, seg=seg, r_top=0.65)
+    # Madonna with child: robe, shoulders, head, child on the left arm, crown.
+    f.spire('copper.bronze', 0, 0, 4.05, 5.45, 0.42, seg=12 if f.detail else 6, r_top=0.2)
+    f.spire('copper.bronze', 0, 0, 5.4, 5.6, 0.22, seg=10 if f.detail else 6, r_top=0.12)
+    f.spire('copper.bronze', 0, 0, 5.6, 5.9, 0.12, seg=8 if f.detail else 5, r_top=0.11)
+    if f.detail:
+        f.spire('copper.bronze', 0.15, -0.22, 4.9, 5.45, 0.13, seg=6, r_top=0.09)
+        f.spire('copper.bronze', 0, 0, 5.9, 6.05, 0.12, seg=8, r_top=0.14)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, 0.6)
+    c.spire('stone', 0, 0, 0.6, 4.0, 0.6, seg=6, r_top=0.6)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def kaserne(entry, root, lod):
+    """Vauban-era barracks: long two-storey sandstone ashlar block with a deep cornice, quoins, framed windows
+    with segmental heads and a low hipped slate roof."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    H = 9.0
+    walls(f, 'stone', fp, -1.0, H)
+    if f.detail:
+        f.prism('stone.dark', offset(fp, 0.05), -1.0, 0.7)
+        f.prism('stone.light', offset(fp, 0.12), 3.9, 4.1)                                  # string course
+        f.prism('stone.light', offset(fp, 0.3), H - 0.6, H)                                 # cornice
+    quoins(f, fp, 0.7, H - 0.6, mat='stone.light', s=0.7)
+    facade(f, fp, [1.3, 5.0], w=1.1, h=2.0, spacing=3.6, frame='stone.light', arch=True, min_len=6.0)
+    roof(f, 'slate', offset(fp, 0.4), H, [(5.8, 4.2)])
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, H + 3.0)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
 BUILDERS = {
-    'ludwigskirche': ludwigskirche, 'rathaus': rathaus, 'kommandantur': kommandantur, 'altes-rathaus': altes_rathaus,
+    'ludwigskirche': ludwigskirche, 'rathaus': rathaus, 'kommandantur': kommandantur,
     'st-marien': st_marien, 'kasematten-sw': lambda e, r, l: kasematten(e, r, l, gate=True), 'kasematten-no': kasematten,
-    'festung-vauban-insel': vauban_insel,
+    'festung-vauban-insel': vauban_insel, 'marienbrunnen': marienbrunnen, 'kaserne-1': kaserne,
 }
 
 

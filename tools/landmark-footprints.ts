@@ -9,11 +9,12 @@ const LANDMARKS: { id: string; ways: number[] }[] = [
   { id: 'ludwigskirche', ways: [72077603] },
   { id: 'rathaus', ways: [185464136] },
   { id: 'kommandantur', ways: [73205872] },
-  { id: 'altes-rathaus', ways: [318150393] },
   { id: 'st-marien', ways: [292276921] },
   { id: 'kasematten-sw', ways: [71891987] },
   { id: 'kasematten-no', ways: [71891988] },
   { id: 'festung-vauban-insel', ways: [71892595] },
+  { id: 'marienbrunnen', ways: [26305739] },
+  { id: 'kaserne-1', ways: [222138704] },
 ];
 
 const UTM = '+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs';
@@ -30,15 +31,17 @@ async function wayOutline(id: number): Promise<[number, number][]> {
   return pts;
 }
 
-/** Area centroid of a simple polygon. */
+/** Area centroid of a simple polygon (relative to its first corner: UTM values are too large for the products). */
 function centroid(pts: [number, number][]): [number, number] {
+  const [ox, oy] = pts[0];
   let a = 0, cx = 0, cy = 0;
   for (let i = 0; i < pts.length; i++) {
-    const [x0, y0] = pts[i], [x1, y1] = pts[(i + 1) % pts.length];
+    const x0 = pts[i][0] - ox, y0 = pts[i][1] - oy;
+    const x1 = pts[(i + 1) % pts.length][0] - ox, y1 = pts[(i + 1) % pts.length][1] - oy;
     const c = x0 * y1 - x1 * y0;
     a += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;
   }
-  return [cx / (3 * a), cy / (3 * a)];
+  return [ox + cx / (3 * a), oy + cy / (3 * a)];
 }
 
 const out = [];

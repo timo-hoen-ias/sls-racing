@@ -2,6 +2,7 @@
 // Sections are timed with perf.begin('name') / perf.end('name') around the work in the game loop.
 
 import type * as THREE from 'three';
+import { DrawStats, type DrawRow, formatDrawStats } from './drawStats.ts';
 import { parseNum, registerCommand, registerToggle } from './registry.ts';
 
 /** Rolling window of samples (ms). */
@@ -109,6 +110,7 @@ export class PerfMonitor {
   constructor(el: HTMLElement, renderer: THREE.WebGLRenderer) {
     this.el = el;
     this.renderer = renderer;
+    this.drawStats = new DrawStats(renderer);
     const gl = renderer.getContext();
     this.gpuTimer = 'beginQuery' in gl ? createGpuTimer(gl as WebGL2RenderingContext) : undefined;
     this.graph = document.createElement('canvas');
@@ -139,8 +141,22 @@ export class PerfMonitor {
     if (this.recording) (this.recording.sections[name] ??= []).push(ms);
   }
 
-  gpuBegin() { if (this.visible || this.recording) this.gpuTimer?.begin(); }
-  gpuEnd() { this.gpuTimer?.end(); }
+  gpuBegin() {
+    if (this.visible || this.recording) this.gpuTimer?.begin();
+    if (this.breakdown) this.drawStats.begin();
+  }
+  gpuEnd() {
+    this.gpuTimer?.end();
+    const done = this.breakdown;
+    if (done) { this.breakdown = undefined; done(this.drawStats.end()); }
+  }
+
+  /** Breaks the next rendered frame down by layer (perf.scene). */
+  captureDraws(done: (rows: DrawRow[]) => void) { this.breakdown = done; }
+  /** The player's camera, to tell its draws from reflection and post passes. */
+  set camera(c: THREE.Camera) { this.drawStats.camera = c; }
+  private breakdown?: (rows: DrawRow[]) => void;
+  private drawStats: DrawStats;
 
   /** Records frame times for a while and calls done with a summary. */
   record(seconds: number, done: (summary: string) => void) {
@@ -221,6 +237,19 @@ export function registerPerfCommands(perf: PerfMonitor, ctx: {
         console.info(`[perf.log ${s} s]\n${summary}`);
       });
       return `Nehme ${s} s auf …`;
+    },
+  });
+  registerCommand({
+    name: 'perf.scene', help: 'Draw-Calls und Dreiecke des nächsten Bildes nach Ebene (Bäume, Kacheln, Props …), Schatten getrennt', args: '[zeilen]',
+    run([v]) {
+      const top = v === undefined ? 18 : parseNum(v, 'Zeilen', 1, 200);
+      perf.captureDraws((rows) => {
+        const text = formatDrawStats(rows, top);
+        ctx.print(`perf.scene:\n${text}`);
+        console.info(`[perf.scene]\n${text}`);
+        (globalThis as { __slsDraws?: DrawRow[] }).__slsDraws = rows;
+      });
+      return 'Zerlege das nächste Bild …';
     },
   });
   registerCommand({ name: 'perf.gpu', help: 'Ob GPU-Zeitmessung verfügbar ist', run: () => (perf.gpuSupported ? `GPU-Zeit: ${perf.gpu.count ? perf.gpu.avg().toFixed(2) + ' ms' : 'misst …'}` : 'GPU-Zeitmessung nicht verfügbar (EXT_disjoint_timer_query_webgl2 fehlt)') });

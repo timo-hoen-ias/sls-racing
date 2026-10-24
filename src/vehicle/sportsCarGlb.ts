@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { SportsCarModel } from './sportsCarModel.ts';
+import type { CarGeometry, SportsCarModel } from './sportsCarModel.ts';
 
 // The sports coupé built in Blender (tools/blender/make_sportscar.py), as a drop-in for the procedural
 // model: same model space (ground at y = 0, +z forward, +x left), same materials and hooks.
@@ -10,6 +10,9 @@ export const SPORTS_CAR_URL = `${import.meta.env.BASE_URL}models/sportscar.glb`;
 
 /** Camera distance (m) from which the body and wheels switch to the next level of detail. */
 export const CAR_LOD_DISTANCES = [0, 30, 80];
+
+/** GLB materials whose meshes cast shadows. */
+const SHADOW_CASTERS = new Set(['paint', 'black', 'carbon', 'tyre']);
 
 export type CarModelKind = 'glb' | 'procedural';
 
@@ -53,11 +56,14 @@ export function sportsCarFromScene(scene: THREE.Object3D, color = '#c0141c'): Sp
   car.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
+    const name = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material).name;
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(fix) : fix(mesh.material);
     // glTF splits multi-material meshes into a group of primitives: extras sit on the group.
     const parent = mesh.parent;
     if (parent && !(parent as THREE.Mesh).isMesh && parent.userData.dent) mesh.userData.dent = true;
-    mesh.castShadow = !/glass|head|brake/.test((mesh.material as THREE.Material).name ?? '');
+    // Only the parts that shape the silhouette cast shadows; trim, lights, rims and brakes would cost a
+    // shadow-map draw each for nothing visible.
+    mesh.castShadow = SHADOW_CASTERS.has(name);
   });
 
   const body = new THREE.Group();
@@ -95,7 +101,20 @@ export function sportsCarFromScene(scene: THREE.Object3D, color = '#c0141c'): Sp
     return { pivot, spin };
   };
 
-  return { body, materials: { paint, brake, head }, exhausts, headlights, makeWheel };
+  return { body, materials: { paint, brake, head }, exhausts, headlights, makeWheel, geometry: carGeometry(car.userData) };
+}
+
+/** Reads the dimensions from the "car" node's extras; undefined when they are missing or incomplete. */
+export function carGeometry(extras: Record<string, unknown>): CarGeometry | undefined {
+  const w = extras.wheel as Record<string, unknown> | undefined;
+  const ok = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
+  if (!w || ![w.front, w.rear, w.track, w.radius, w.width, extras.length, extras.width].every(ok)) return undefined;
+  return {
+    name: typeof extras.name === 'string' ? extras.name : undefined,
+    wheel: { front: w.front as number, rear: w.rear as number, track: w.track as number, radius: w.radius as number, width: w.width as number },
+    length: extras.length as number,
+    width: extras.width as number,
+  };
 }
 
 /** Triangles drawn at full detail (for car.model). */

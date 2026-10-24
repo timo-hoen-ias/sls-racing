@@ -27,6 +27,7 @@ import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { registerCommand, runCommand } from './debug/registry.ts';
 import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
+import { Garage, registerGarageCommands } from './vehicle/garage.ts';
 import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
 import { registerReplayCommands } from './replay/commands.ts';
@@ -111,9 +112,9 @@ async function boot() {
   view.scene.add(streamer.root);
   const far = new FarField(TILES_URL, index, streamer, FAR_DIST[quality.name]);
   view.scene.add(far.root);
-  const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world });
+  const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world, carBoxes: quality.lod.cars });
   props.register(world);
-  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass });
+  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
   view.scene.add(props.root);
@@ -170,6 +171,7 @@ async function boot() {
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
+  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root);
   // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
   loadProps().then((set) => {
     props.setPropSet(set);
@@ -332,7 +334,10 @@ async function boot() {
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
-  const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
+  const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
+  registerGarageCommands(garage);
+  void garage.probe();
+  const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
 
   let acc = 0;
   let last = performance.now();
@@ -356,6 +361,7 @@ async function boot() {
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
   const perf = new PerfMonitor($('perf'), view.renderer);
+  perf.camera = view.camera;
   perf.addSource('Kacheln', () => streamer.statsLine());
   perf.addSource('Physik', () => `${world.colliders.len()} Kollider · ${quality.physicsHz} Hz`);
   const physDebug = new PhysicsDebugView(world);

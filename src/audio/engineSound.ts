@@ -95,11 +95,13 @@ export class EngineSound {
   }
 
   private p: EngineSoundProfile;
+  private worklet: boolean;
+  private engineNodes: AudioNode[] = [];
 
   private constructor(ctx: AudioContext, profile: EngineSoundProfile, worklet: boolean, reverb: boolean) {
     this.ctx = ctx;
     this.p = profile;
-    const { voice: VOICE, resonances: RESONANCES, drive: DRIVE, lpIdle: LP_IDLE } = profile;
+    const { lpIdle: LP_IDLE } = profile;
     this.noise = noiseBuffer(ctx);
     this.master = ctx.createGain();
     this.master.gain.value = VOLUME;
@@ -112,30 +114,15 @@ export class EngineSound {
     this.carBus = ctx.createGain();
     this.carBus.connect(this.master);
 
-    // Engine: pulses → drive → resonances → low-pass → level.
-    this.engine = createEngineSource(ctx, VOICE, this.noise, worklet);
-    const pre = ctx.createGain();
-    pre.gain.value = 0.7 + 0.8 * DRIVE;
-    const shaper = ctx.createWaveShaper();
-    shaper.curve = driveCurve(DRIVE);
-    this.engine.node.connect(pre).connect(shaper);
-    let last: AudioNode = shaper;
-    for (const r of RESONANCES) {
-      const pk = ctx.createBiquadFilter();
-      pk.type = 'peaking';
-      pk.frequency.value = r.freq;
-      pk.Q.value = r.q;
-      pk.gain.value = r.gain;
-      last.connect(pk);
-      last = pk;
-    }
     this.lp = ctx.createBiquadFilter();
     this.lp.type = 'lowpass';
     this.lp.frequency.value = LP_IDLE;
     this.lp.Q.value = 0.9;
     this.motorGain = ctx.createGain();
     this.motorGain.gain.value = 0;
-    last.connect(this.lp).connect(this.motorGain).connect(this.carBus);
+    this.lp.connect(this.motorGain).connect(this.carBus);
+    this.worklet = worklet;
+    this.engine = this.buildEngine();
 
     this.fx = ctx.createGain();
     this.fx.connect(this.carBus);
@@ -194,6 +181,40 @@ export class EngineSound {
     this.windGain = wind.g;
     this.windBp = wind.f;
     this.nitroGain = noiseLayer('highpass', 2800, 0.7).g;
+  }
+
+  /** Engine: pulses → drive → resonances, into the low-pass. Returns the source; the nodes are kept for setProfile. */
+  private buildEngine(): EngineSource {
+    const ctx = this.ctx;
+    const { voice, resonances, drive } = this.p;
+    const engine = createEngineSource(ctx, voice, this.noise, this.worklet);
+    const pre = ctx.createGain();
+    pre.gain.value = 0.7 + 0.8 * drive;
+    const shaper = ctx.createWaveShaper();
+    shaper.curve = driveCurve(drive);
+    engine.node.connect(pre).connect(shaper);
+    this.engineNodes = [engine.node, pre, shaper];
+    let last: AudioNode = shaper;
+    for (const r of resonances) {
+      const pk = ctx.createBiquadFilter();
+      pk.type = 'peaking';
+      pk.frequency.value = r.freq;
+      pk.Q.value = r.q;
+      pk.gain.value = r.gain;
+      last.connect(pk);
+      this.engineNodes.push(pk);
+      last = pk;
+    }
+    last.connect(this.lp);
+    return engine;
+  }
+
+  /** Another engine (car.select): rebuilds the engine voice; tyres, wind and effects keep running. */
+  setProfile(profile: EngineSoundProfile) {
+    for (const n of this.engineNodes) n.disconnect();
+    this.p = profile;
+    this.spool = 0;
+    this.engine = this.buildEngine();
   }
 
   resume() {

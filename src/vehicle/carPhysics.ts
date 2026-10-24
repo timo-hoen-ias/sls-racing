@@ -16,13 +16,21 @@ export const CAR_GROUPS = (0x0001 << 16) | (0xffff & ~0x0004);
 export const ROAD_GROUPS = (0x0004 << 16) | 0xffff;
 export const DEBRIS_GROUPS = (0x0002 << 16) | 0xfffe;
 
-/** Approximate roll inertia of the chassis box (kg·m²). */
-const ROLL_INERTIA = (CAR.mass * ((2 * CAR.halfExtents.x) ** 2 + (2 * CAR.halfExtents.y) ** 2)) / 12;
+/** Approximate roll and yaw inertia of the chassis box (kg·m²), and the static load on one wheel (N, the tyre model's reference). */
+function chassisConstants() {
+  const h = CAR.halfExtents;
+  return {
+    roll: (CAR.mass * ((2 * h.x) ** 2 + (2 * h.y) ** 2)) / 12,
+    yaw: (CAR.mass * ((2 * h.x) ** 2 + (2 * h.z) ** 2)) / 12,
+    refLoad: (CAR.mass * 9.81) / 4,
+  };
+}
 
-/** Approximate yaw inertia of the chassis box (kg·m²). */
-const YAW_INERTIA = (CAR.mass * ((2 * CAR.halfExtents.x) ** 2 + (2 * CAR.halfExtents.z) ** 2)) / 12;
-/** Static load on one wheel (N): the reference load of the tyre model. */
-const REF_LOAD = (CAR.mass * 9.81) / 4;
+/** Wheel mounting points in body space: front left, front right, rear left, rear right (+x is left). */
+function wheelMounts(): V3[] {
+  const w = CAR.wheel;
+  return [[w.x, w.front], [-w.x, w.front], [w.x, w.rear], [-w.x, w.rear]].map(([x, z]) => ({ x, y: w.y, z }));
+}
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
@@ -97,9 +105,13 @@ export class CarPhysics {
   private tyreOut: TyreOutput = { fx: 0, fy: 0, alpha: 0, spin: 0, lock: 0, usage: 0 };
   private lastVel = { x: 0, y: 0, z: 0 };
   private bumps = [0, 0, 0, 0];
+  private k = chassisConstants();
+  private world: RAPIER_NS.World;
+  private chassis!: RAPIER_NS.Collider;
 
   constructor(R: R, world: RAPIER_NS.World, pos: V3, heading: number) {
     this.R = R;
+    this.world = world;
     const yaw = Math.PI - heading;
     const desc = R.RigidBodyDesc.dynamic()
       .setTranslation(pos.x, pos.y, pos.z)
@@ -109,22 +121,12 @@ export class CarPhysics {
       .setCanSleep(false)
       .setCcdEnabled(true);
     this.body = world.createRigidBody(desc);
-    const h = CAR.halfExtents;
-    const volume = 8 * h.x * h.y * h.z;
-    world.createCollider(
-      R.ColliderDesc.cuboid(h.x, h.y, h.z).setTranslation(0, CAR.colliderY, 0).setDensity(CAR.mass / volume).setFriction(0.3).setRestitution(0.1).setCollisionGroups(CAR_GROUPS),
-      this.body,
-    );
-    // Lower the centre of mass for stability.
-    this.body.setAdditionalMassProperties(0, { x: 0, y: -0.25, z: 0.05 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, true);
+    this.addChassis();
 
     const vc = world.createVehicleController(this.body);
     vc.indexUpAxis = 1;
     (vc as any).setIndexForwardAxis = 2;
-    const w = CAR.wheel;
-    for (const [x, z] of [[w.x, w.front], [-w.x, w.front], [w.x, w.rear], [-w.x, w.rear]]) {
-      vc.addWheel({ x, y: w.y, z }, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, w.rest, w.radius);
-    }
+    for (const p of wheelMounts()) vc.addWheel(p, { x: 0, y: -1, z: 0 }, { x: -1, y: 0, z: 0 }, CAR.wheel.rest, CAR.wheel.radius);
     this.controller = vc;
     this.applySuspension();
     // Rapier's own tyre friction is off: it would fight the tyre model.
@@ -132,6 +134,33 @@ export class CarPhysics {
       vc.setWheelFrictionSlip(i, 0);
       vc.setWheelSideFrictionStiffness(i, 0);
     }
+  }
+
+  private addChassis() {
+    const h = CAR.halfExtents;
+    const volume = 8 * h.x * h.y * h.z;
+    this.chassis = this.world.createCollider(
+      this.R.ColliderDesc.cuboid(h.x, h.y, h.z).setTranslation(0, CAR.colliderY, 0).setDensity(CAR.mass / volume).setFriction(0.3).setRestitution(0.1).setCollisionGroups(CAR_GROUPS),
+      this.body,
+    );
+    // Lower the centre of mass for stability.
+    this.body.setAdditionalMassProperties(0, { x: 0, y: -0.25, z: 0.05 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, true);
+  }
+
+  /** Takes over a changed CAR (another car picked): chassis box and mass, wheel positions and size, springs. */
+  rebuild() {
+    this.world.removeCollider(this.chassis, false);
+    this.addChassis();
+    this.k = chassisConstants();
+    const vc = this.controller;
+    wheelMounts().forEach((p, i) => {
+      vc.setWheelChassisConnectionPointCs(i, p);
+      vc.setWheelRadius(i, CAR.wheel.radius);
+      vc.setWheelSuspensionRestLength(i, CAR.wheel.rest);
+    });
+    this.applySuspension();
+    const d = this.drivetrain;
+    d.gear = Math.min(Math.max(d.gear, 1), ENGINE.gears.length);
   }
 
   /** Pushes CAR.suspension into Rapier (after a debug change). */
@@ -248,7 +277,7 @@ export class CarPhysics {
         const slip = Math.atan2(sv, fv);
         const cap = 0.7 + (1 - as.esp) * 1.2;
         if (as.esp > 0 && Math.abs(slip) > cap) {
-          const k = (slip - Math.sign(slip) * cap) * YAW_INERTIA * 4 * as.esp * dt;
+          const k = (slip - Math.sign(slip) * cap) * this.k.yaw * 4 * as.esp * dt;
           body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
         }
         // Drift assist: bleed a little sideways speed into forward speed while drifting.
@@ -264,7 +293,7 @@ export class CarPhysics {
         // Without the handbrake no more than the tyres can hold (a bit over their grip at this speed), so turn-in does not overshoot.
         const maxYaw = input.handbrake ? 2.4 : Math.min(1.9, (1.3 * CAR.tyre.mu * 9.81) / Math.max(absV, 1));
         if (Math.abs(yawRate) > maxYaw) {
-          const k = -(yawRate - Math.sign(yawRate) * maxYaw) * YAW_INERTIA * 0.5 * as.esp;
+          const k = -(yawRate - Math.sign(yawRate) * maxYaw) * this.k.yaw * 0.5 * as.esp;
           body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
         }
       }
@@ -272,7 +301,7 @@ export class CarPhysics {
       if (as.esp > 0) {
         const w = body.angvel();
         const rollRate = w.x * fwd.x + w.y * fwd.y + w.z * fwd.z;
-        const k = -rollRate * ROLL_INERTIA * Math.min(1, 8 * as.esp * dt);
+        const k = -rollRate * this.k.roll * Math.min(1, 8 * as.esp * dt);
         body.applyTorqueImpulse({ x: fwd.x * k, y: fwd.y * k, z: fwd.z * k }, true);
       }
     } else {
@@ -340,7 +369,7 @@ export class CarPhysics {
     const capY = [0, 0, 0, 0];
     const tractionBoost = this.boosting ? CAR.nitro.traction : 1;
     for (let i = 0; i < 4; i++) {
-      const mu = loadedMu(spec, loads[i], REF_LOAD) * this.wheelGrip[i] * (i >= 2 ? ty.rearMu : 1);
+      const mu = loadedMu(spec, loads[i], this.k.refLoad) * this.wheelGrip[i] * (i >= 2 ? ty.rearMu : 1);
       // The weather's grip, traction and side factors describe the same road, so they do not stack.
       capX[i] = mu * loads[i] * Math.min(sf.grip, sf.traction) * tractionBoost;
       capY[i] = mu * loads[i] * Math.min(sf.grip, sf.side);
@@ -367,7 +396,7 @@ export class CarPhysics {
     const absV = Math.abs(this.speed);
     // Rough surfaces and kerbs: vertical kicks at the wheels, filtered by the springs into shaking.
     for (let i = 0; i < 4; i++) {
-      const rough = this.wheels[i].contact ? this.wheelRumble[i] * clamp(absV / 15, 0, 1) * (Math.random() * 2 - 1) * REF_LOAD * 0.7 * dt : 0;
+      const rough = this.wheels[i].contact ? this.wheelRumble[i] * clamp(absV / 15, 0, 1) * (Math.random() * 2 - 1) * this.k.refLoad * 0.7 * dt : 0;
       const kick = this.bumps[i] * mass * 0.25 * 0.9;
       this.bumps[i] = 0;
       if (!rough && !kick) continue;

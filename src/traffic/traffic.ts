@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { RoadGraph } from '../world/roadGraph.ts';
 import { type Agent, type PlayerState, TrafficSim, type VehicleKind } from './trafficSim.ts';
 import { TrafficSound } from './trafficSound.ts';
+import { SignalView } from './signalView.ts';
 import { TrafficView } from './trafficView.ts';
 
 /** Vehicles closer than this get a solid body the player can crash into. */
@@ -20,6 +21,8 @@ interface Solid {
 export class Traffic {
   readonly sim: TrafficSim;
   readonly view: TrafficView;
+  readonly lights: SignalView;
+  readonly graph: RoadGraph;
   sound?: TrafficSound;
   /** Draws vehicles; the simulation keeps running when off. */
   visible = true;
@@ -31,8 +34,11 @@ export class Traffic {
   constructor(R: typeof RAPIER_NS, world: RAPIER_NS.World, graph: RoadGraph, opts: { maxAgents: number; shadows: boolean }) {
     this.R = R;
     this.world = world;
+    this.graph = graph;
     this.sim = new TrafficSim(graph, { maxAgents: opts.maxAgents });
     this.view = new TrafficView(opts.maxAgents + 20, opts.shadows);
+    this.lights = new SignalView(graph, this.sim.signals, opts.shadows);
+    this.view.root.add(this.lights.root);
     for (let i = 0; i < SOLID_BODIES; i++) {
       const body = world.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(0, -1000 - i * 10, 0));
       this.solids.push({ body });
@@ -57,6 +63,7 @@ export class Traffic {
     this.sim.update(dt, player, { x: cp.x, z: cp.z, fx: fwd.x / fl, fz: fwd.z / fl });
     this.view.root.visible = this.visible;
     this.view.update(this.visible ? this.sim.agents : [], this.time, cp);
+    this.lights.update(camera);
     if (player) this.updateSolids(player);
     if (this.sound) {
       this.sound.setListener(cp.x, cp.y, cp.z, fwd.x, fwd.y, fwd.z, dt);

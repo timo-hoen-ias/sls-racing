@@ -20,6 +20,8 @@ export interface WorldInfo {
 
 export interface WorldIndex {
   v: 1;
+  /** Tile file format: "bin" = t/<key>.bin (encodeTile). Older builds without it wrote t/<key>.json. */
+  format?: 'bin';
   world: WorldInfo;
   regions: { id: string; name: string }[];
   /** Global grid indices: ix = floor(E / TILE_SIZE), iy = floor(N / TILE_SIZE). */
@@ -122,3 +124,107 @@ function decodeBytes(b64: string): ArrayBuffer {
 export const decodeF32 = (b64: string) => new Float32Array(decodeBytes(b64));
 export const decodeU32 = (b64: string) => new Uint32Array(decodeBytes(b64));
 export const decodeU8 = (b64: string) => new Uint8Array(decodeBytes(b64));
+
+// --- Binary tile container (t/<ix>_<iy>.bin) ---
+//
+//   "SLST" · u32 version · u32 header bytes · header JSON (utf-8) · padding to 4 · sections
+//
+// The header is { ix, iy, s: [[name, type, byteOffset, byteLength], …] }. Data starts at the next multiple of 4
+// after the header; offsets count from there and each section is 4-byte aligned so the client can view it as a typed array without copying.
+// Every TileData field becomes a section: base64 strings by their name ("terrain"), packed meshes as
+// "<field>.<part>" ("roads.pos", "roads.idx"). New optional TileData fields pass through without code changes;
+// list their element type in SECTION_TYPES (default u8 = raw bytes).
+
+export const TILE_MAGIC = 'SLST';
+export const TILE_BIN_VERSION = 2;
+
+export type SectionType = 'f32' | 'u8' | 'u32';
+
+/** Element type per top-level TileData field. Add new fields here. */
+export const SECTION_TYPES: Record<string, SectionType> = {
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32',
+};
+const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
+
+const BYTES: Record<SectionType, number> = { f32: 4, u8: 1, u32: 4 };
+
+/** Packs a tile (as the pipeline builds it) into the binary container. */
+export function encodeTile(tile: TileData): Uint8Array {
+  const parts: { name: string; type: SectionType; bytes: Uint8Array }[] = [];
+  const bytesOf = (b64: string) => new Uint8Array(decodeBytes(b64));
+  for (const [field, value] of Object.entries(tile)) {
+    if (value === undefined || field === 'v' || field === 'ix' || field === 'iy') continue;
+    if (typeof value === 'string') parts.push({ name: field, type: SECTION_TYPES[field] ?? 'u8', bytes: bytesOf(value) });
+    else if (typeof value === 'object')
+      for (const [part, b64] of Object.entries(value as Record<string, string>))
+        if (typeof b64 === 'string') parts.push({ name: `${field}.${part}`, type: MESH_PART_TYPES[part] ?? 'u8', bytes: bytesOf(b64) });
+  }
+  return packSections(tile.ix, tile.iy, parts);
+}
+
+/** Low-level writer, also used for far tiles. */
+export function packSections(ix: number, iy: number, parts: { name: string; type: SectionType; bytes: Uint8Array }[], extra: Record<string, unknown> = {}): Uint8Array {
+  const align = (n: number) => (n + 3) & ~3;
+  let off = 0;
+  const table = parts.map((p) => {
+    const t: [string, SectionType, number, number] = [p.name, p.type, off, p.bytes.byteLength];
+    off = align(off + p.bytes.byteLength);
+    return t;
+  });
+  const header = new TextEncoder().encode(JSON.stringify({ ix, iy, ...extra, s: table }));
+  const dataStart = align(12 + header.byteLength);
+  const out = new Uint8Array(dataStart + off);
+  const dv = new DataView(out.buffer);
+  out.set(new TextEncoder().encode(TILE_MAGIC), 0);
+  dv.setUint32(4, TILE_BIN_VERSION, true);
+  dv.setUint32(8, header.byteLength, true);
+  out.set(header, 12);
+  parts.forEach((p, i) => out.set(p.bytes, dataStart + table[i][2]));
+  return out;
+}
+
+/** Tiles are stored gzipped; this checks the gzip magic bytes. */
+export const isGzip = (b: Uint8Array) => b.length >= 2 && b[0] === 0x1f && b[1] === 0x8b;
+
+/** Decoded view of one tile: typed arrays straight into the downloaded buffer. */
+export class TileContent {
+  readonly ix: number;
+  readonly iy: number;
+  readonly key: string;
+  readonly buffer: ArrayBuffer;
+  /** Extra header fields (far tiles store their grid here). */
+  readonly header: Record<string, unknown>;
+  private sections = new Map<string, { type: SectionType; offset: number; length: number }>();
+
+  constructor(buffer: ArrayBuffer) {
+    const head = new Uint8Array(buffer, 0, 12);
+    if (String.fromCharCode(...head.subarray(0, 4)) !== TILE_MAGIC) throw new Error('keine SLST-Kachel');
+    const dv = new DataView(buffer);
+    const version = dv.getUint32(4, true);
+    if (version !== TILE_BIN_VERSION) throw new Error(`Kachel-Version ${version}, erwartet ${TILE_BIN_VERSION}`);
+    const len = dv.getUint32(8, true);
+    const h = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 12, len)));
+    const dataStart = (12 + len + 3) & ~3;
+    this.buffer = buffer;
+    this.ix = h.ix;
+    this.iy = h.iy;
+    this.key = tileKey(h.ix, h.iy);
+    this.header = h;
+    for (const [name, type, offset, length] of h.s as [string, SectionType, number, number][]) this.sections.set(name, { type, offset: dataStart + offset, length });
+  }
+
+  has(name: string) { return this.sections.has(name); }
+  names() { return [...this.sections.keys()]; }
+
+  private view<T>(name: string, type: SectionType, make: (b: ArrayBuffer, o: number, n: number) => T): T | undefined {
+    const s = this.sections.get(name);
+    if (!s) return undefined;
+    if (s.type !== type && !(type === 'u8')) throw new Error(`Sektion ${name} ist ${s.type}, nicht ${type}`);
+    return make(this.buffer, s.offset, s.length / BYTES[type]);
+  }
+
+  f32(name: string) { return this.view(name, 'f32', (b, o, n) => new Float32Array(b, o, n)); }
+  u32(name: string) { return this.view(name, 'u32', (b, o, n) => new Uint32Array(b, o, n)); }
+  /** Raw bytes of any section. */
+  u8(name: string) { return this.view(name, 'u8', (b, o, n) => new Uint8Array(b, o, n)); }
+}

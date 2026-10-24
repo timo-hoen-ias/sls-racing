@@ -52,46 +52,6 @@ export function groundDetailTexture(): THREE.Texture {
   return t;
 }
 
-/** Window rows for façades, multiplied over the wall colour. */
-export function facadeTexture(): THREE.Texture {
-  const [c, g] = canvas(256, 256);
-  g.fillStyle = '#ffffff';
-  g.fillRect(0, 0, 256, 256);
-  // Faint plaster texture.
-  const img = g.getImageData(0, 0, 256, 256);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const n = (Math.random() - 0.5) * 14;
-    img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n;
-  }
-  g.putImageData(img, 0, 0);
-  for (let y = 36; y < 256; y += 84) {
-    // Floor band.
-    g.fillStyle = '#e4e2dc';
-    g.fillRect(0, y + 58, 256, 4);
-    for (let x = 28; x < 256; x += 64) {
-      // Window: sill, frame, glass with a sky reflection gradient, mullion.
-      g.fillStyle = '#d8d6d0';
-      g.fillRect(x - 3, y + 46, 38, 4);
-      g.fillStyle = '#f1f0ec';
-      g.fillRect(x - 2, y - 2, 36, 50);
-      const glass = g.createLinearGradient(0, y, 0, y + 46);
-      glass.addColorStop(0, '#7f93a8');
-      glass.addColorStop(0.55, '#3e4c5c');
-      glass.addColorStop(1, '#2a333e');
-      g.fillStyle = glass;
-      g.fillRect(x, y, 32, 46);
-      g.fillStyle = '#f1f0ec';
-      g.fillRect(x + 15, y, 2, 46);
-      g.fillRect(x, y + 16, 32, 2);
-    }
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
-  return t;
-}
-
 /** Concrete paving slabs for sidewalks, 1 texture repeat = 2 × 2 m. */
 export function pavingTexture(): THREE.Texture {
   const [c, g] = canvas(128, 128);

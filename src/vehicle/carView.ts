@@ -2,13 +2,14 @@ import * as THREE from 'three';
 import type { CarPhysics } from './carPhysics.ts';
 import { Cockpit } from './cockpit.ts';
 import { CarDamage } from './damage.ts';
-import { buildSportsCar } from './sportsCarModel.ts';
+import type { CarModelKind } from './sportsCarGlb.ts';
+import { buildSportsCar, type SportsCarModel } from './sportsCarModel.ts';
 import { CAR } from './tuning.ts';
 
 /** Height of the physics body origin above the ground with the car at rest (m). */
 export const RIDE_HEIGHT = 0.284;
 
-/** Puts the procedural sports car on the physics body: wheels, steering, lights, nitro flames. */
+/** Puts the sports car (Blender GLB or the procedural fallback) on the physics body: wheels, steering, lights, nitro flames. */
 export class CarView {
   readonly root = new THREE.Group();
   /** Tailpipe ends and headlights in body space (for effects and lights). */
@@ -20,14 +21,18 @@ export class CarView {
   private headLights: THREE.MeshStandardMaterial;
   private night = 0;
   private paint: THREE.MeshPhysicalMaterial;
+  /** Which body is shown (car.model). */
+  kind: CarModelKind = 'procedural';
   /** Interior, shown only in the cockpit view. */
   readonly cockpit = new Cockpit();
   /** Body group in model space (ground at y = 0). */
-  readonly model: THREE.Group;
+  model: THREE.Group;
   readonly damage: CarDamage;
 
-  constructor(color?: string) {
-    const model = buildSportsCar(color);
+  /** model: a prepared body (the Blender GLB from loadSportsCar); without it the procedural car is built. */
+  constructor(color?: string, model?: SportsCarModel) {
+    if (model) this.kind = 'glb';
+    model ??= buildSportsCar(color);
     // The model is built from the ground up; shift it to the physics body origin.
     model.body.position.y = -RIDE_HEIGHT;
     this.root.add(model.body);
@@ -41,13 +46,7 @@ export class CarView {
     const toBody = (v: THREE.Vector3) => v.clone().setY(v.y - RIDE_HEIGHT);
     this.exhausts = model.exhausts.map(toBody);
     this.headlights = model.headlights.map(toBody);
-
-    for (let i = 0; i < 4; i++) {
-      // Wheels 0 and 2 sit on the +x (left) side.
-      const w = model.makeWheel(i % 2 === 0 ? 1 : -1);
-      this.root.add(w.pivot);
-      this.wheels.push(w);
-    }
+    this.addWheels(model);
 
     // Soft contact shadow, so the car sits on the road even without shadow maps.
     const blob = document.createElement('canvas');
@@ -78,6 +77,68 @@ export class CarView {
       this.root.add(f);
       this.flames.push(f);
     }
+  }
+
+  private addWheels(model: SportsCarModel) {
+    for (let i = 0; i < 4; i++) {
+      // Wheels 0 and 2 sit on the +x (left) side.
+      const w = model.makeWheel(i % 2 === 0 ? 1 : -1);
+      this.root.add(w.pivot);
+      this.wheels.push(w);
+    }
+  }
+
+  /** Swaps the body and wheels (car.model). Damage is repaired; lights and effects keep their anchors. */
+  setModel(model: SportsCarModel, kind: CarModelKind) {
+    const color = '#' + this.paint.color.getHexString();
+    this.damage.repair();
+    this.model.removeFromParent();
+    for (const w of this.wheels) w.pivot.removeFromParent();
+    this.wheels = [];
+    model.body.position.y = -RIDE_HEIGHT;
+    model.body.add(this.cockpit.group);
+    this.root.add(model.body);
+    this.model = model.body;
+    this.kind = kind;
+    this.paint = model.materials.paint;
+    this.paint.color.set(color);
+    this.brakeLights = model.materials.brake;
+    this.headLights = model.materials.head;
+    this.damage.attach(model.body, this.paint);
+    // Effects hold these vectors: update them in place.
+    model.exhausts.forEach((v, i) => this.exhausts[i]?.copy(v).setY(v.y - RIDE_HEIGHT));
+    model.headlights.forEach((v, i) => this.headlights[i]?.copy(v).setY(v.y - RIDE_HEIGHT));
+    this.addWheels(model);
+    // Same render layers as the rest of the car (post-processing marks the car).
+    const mask = this.root.layers.mask;
+    model.body.traverse((o) => (o.layers.mask = mask));
+    for (const w of this.wheels) w.pivot.traverse((o) => (o.layers.mask = mask));
+    this.setLod(this.forcedLod);
+  }
+
+  /** Forces a level of detail (0 = full) on body and wheels, or null for automatic by distance. */
+  setLod(level: number | null) {
+    this.forcedLod = level;
+    this.root.traverse((o) => {
+      const lod = o as THREE.LOD;
+      if (!lod.isLOD) return;
+      lod.autoUpdate = level === null;
+      const pick = level === null ? -1 : Math.min(level, lod.levels.length - 1);
+      lod.levels.forEach((l, i) => (l.object.visible = level === null ? i === 0 : i === pick));
+    });
+  }
+
+  /** Level of detail currently shown by the body (for car.lod). */
+  get lodLevel() {
+    if (this.forcedLod !== null) return this.forcedLod;
+    const lod = this.model.getObjectByName('bodyLod') as THREE.LOD | undefined;
+    return lod ? lod.getCurrentLevel() : 0;
+  }
+
+  private forcedLod: number | null = null;
+
+  get paintColor() {
+    return this.paint.color;
   }
 
   setColor(color: string) {

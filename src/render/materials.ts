@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { asphaltTexture, facadeTexture, groundDetailTexture, pavingTexture } from './textures.ts';
+import { createFacadeMaterial } from './facades.ts';
+import { asphaltTexture, groundDetailTexture, pavingTexture } from './textures.ts';
 
 export interface Materials {
   ground: THREE.MeshStandardMaterial;
@@ -23,7 +24,7 @@ export function createMaterials(): Materials {
       polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     }),
     marking: new THREE.MeshStandardMaterial({ color: '#e8e6dc', roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
-    building: new THREE.MeshStandardMaterial({ vertexColors: true, map: facadeTexture(), roughness: 0.85 }),
+    building: createFacadeMaterial(),
     water: new THREE.MeshStandardMaterial({ color: '#27495a', roughness: 0.08, metalness: 0.2, transparent: true, opacity: 0.88 }),
     trunk: new THREE.MeshStandardMaterial({ color: '#4a3a2c', roughness: 1 }),
     crown: new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, flatShading: true }),

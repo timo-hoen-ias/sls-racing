@@ -50,7 +50,11 @@ Wasser: Flüsse, Bäche und Gräben fließen entlang ihrer Ufer (bzw. der Waterw
 
 ## Debug-Konsole
 
-`^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.
+`^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`.
+
+Performance: `perf.hud` (oder `?perf` in der URL) zeigt FPS, einen Frame-Graph (grün < 17 ms, gelb, rot > 33 ms), CPU-Zeit für Streaming, Physik und Rendern, GPU-Zeit (falls der Browser `EXT_disjoint_timer_query_webgl2` kann), Draw-Calls, Dreiecke, Kollider und Kachel-Lade-/Aufbauzeiten. `perf.log 10` nimmt 10 s auf und gibt Ø, p95, p99 und die Zahl der Ruckler aus, `stream.info` zeigt den Zustand des Kachel-Streamings.
+
+Kachel-Streaming: Die Pipeline schreibt Kacheln als gzip-komprimierten Binärcontainer `t/<ix>_<iy>.bin` (Format in `src/world/format.ts`, `encodeTile`/`TileContent`). Download, Entpacken und Vertex-Aufbau laufen in Web Workern (`src/world/tileWorker.ts`), der Hauptthread verpackt nur noch fertige Arrays in Meshes und baut Kollider, in kleinen Schritten mit Zeitbudget pro Frame. Kollider gibt es nur nahe am Auto (Gelände als Heightfield). Befehle: `stream.worker on|off`, `stream.radius`, `stream.physradius`, `stream.budget`, `stream.inflight`, `stream.around`, `stream.reload`, `phys.colliders show|hide`. Neue Inhalte auf Kacheln (Requisiten, Vegetation …) hängen sich über `registerTileLayer` in `src/world/tileHooks.ts` ein, ohne `streamer.ts` zu ändern. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.
 
 **Regel:** Jedes neue Feature und jede Anpassung bringt passende Debug-Befehle mit. Registrieren geht aus jedem Modul:
 
@@ -63,6 +67,31 @@ registerCommand({ name: 'gear.set', help: 'Gang einlegen', args: '<gang>', run: 
 ```
 
 Namen sind klein geschrieben mit Namensraum (`car.*`, `gear.*`, `cam.*`, `fx.*`, `weather.*`, `world.*` …), Hilfetexte auf Deutsch. `run` gibt den Ausgabetext zurück oder wirft einen Fehler.
+
+## Stadtleben
+
+KI-Verkehr (Autos, Lieferwagen, Busse, Lkw) fährt auf dem Straßengraph rechts, folgt mit Abstand (Intelligent Driver Model), bremst vor Kurven und Abbiegungen, lässt an Kreuzungen die größere Straße zuerst, sonst gilt rechts vor links, Linksabbieger warten auf Gegenverkehr. Vor dir bremsen die Autos und hupen, wenn du im Weg stehst; nach einem Rempler bleiben sie mit Warnblinker stehen. Im Nahbereich sind sie fest (Kollision), die nächsten fünf haben Motor- und Reifengeräusch mit Doppler-Effekt.
+
+Befehle: `traffic.density 0..1`, `traffic.spawn [anzahl] [car|van|bus|truck]`, `traffic.freeze`, `traffic.debug` (Zustand als Farbe über jedem Fahrzeug), `traffic.info`, `traffic.near` (mit Grund fürs Warten), `traffic.clear`, `traffic.max`, `traffic.radius`, `traffic.sound`, `traffic on|off`.
+
+Fußgänger gehen auf den Gehwegen der Stadtstraßen und in der Fußgängerzone, queren an Kreuzungen (der Verkehr wartet), springen zur Seite, wenn du auf sie zufährst, und stehen nach einem Umfaller wieder auf. Befehle: `peds.density 0..1`, `peds.spawn [n]`, `peds.debug`, `peds.info`, `peds.freeze`, `peds.clear`, `peds.max`, `peds on|off`.
+
+Fassaden haben Charakter: Die Pipeline ordnet jedem Gebäude einen Typ zu (Wohnhaus, Altbau in der Altstadt, Mehrfamilienhaus, Büro/Geschäft, Halle, Kirche, Garage, Schule/öffentlich; `pipeline/lib/facades.ts`), an Hauptstraßen der Innenstadt bekommt das Erdgeschoss Schaufenster. Nachts leuchten zufällige Fenster. Befehle: `bld.facade [auto|typ]`, `bld.windows`, `bld.shops`, `bld.night auto|0..1`.
+
+Der Hall folgt der Umgebung: Raycasts links, rechts und nach oben messen Hauswände und Brücken, daraus werden offene Straße, Häuserschlucht und Unterführung überblendet, dazu ein Echo von der nächsten Wand je Seite. Die Geräuschkulisse mischt Stadtgemurmel (bebaut), Vögel und Blätter (grün), Autobahnrauschen und die Saar von dort, wo sie wirklich sind; Aufprallgeräusche klingen nach Material (Gebäude, Baum, Mast, Fahrzeug).
+
+Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb.zone [auto|stadt|gruen|autobahn|wasser]`, `amb.mix`, `amb.layer <schicht> on|off`, `amb.volume`, `amb.impact <material>`, `amb on|off`.
+
+## 3D-Modelle (Blender)
+
+Der Sportwagen wird per Blender-Python-Skript gebaut, nicht von Hand modelliert: `tools/blender/make_sportscar.py` erzeugt Karosserie, Kabine, Räder und Anbauteile, schneidet die Radhäuser per Boolean aus und legt Scheinwerfer, Fenster, Lufteinlässe und Fugen direkt als Flächen der Karosserie an. Export als GLB mit drei Detailstufen (LOD 0/1/2 für Karosserie, 2 für Räder), danach Meshopt-Kompression (`tools/compress-model.ts`, Positionen bleiben float, damit das Schadensmodell Beulen eindrücken kann).
+
+```bash
+npm run models:build   # braucht Blender 4.2+ im PATH, schreibt public/models/sportscar.glb
+blender --background --factory-startup --python tools/blender/preview.py -- public/models/sportscar.glb vorschau.png
+```
+
+Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 
 ## Aufbau
 
@@ -78,6 +107,8 @@ src/
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
   world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)
   nav/               GPS: Ziel, Fortschritt, Neuberechnung, Abbiegehinweise
+  peds/              Fußgänger auf Gehwegen: Laufen, Queren, Ausweichen
+  traffic/           KI-Verkehr auf dem Straßengraph: Fahrlogik (IDM, Vorfahrt), Modelle, Kollision, Sound
   render/ audio/ ui/ Szene, Post-Processing, Routen-Linie, Motorsound, HUD, Minimap, Karte
 ```
 

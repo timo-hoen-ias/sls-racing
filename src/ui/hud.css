@@ -42,6 +42,9 @@ body.touch #grip { display: none; }
 #steer-knob { position: absolute; left: 50%; top: 50%; width: 70px; height: 70px; margin: -35px 0 0 -35px; border-radius: 50%; background: #fff3; border: 2px solid #fff9; }
 body.touch #help { display: none; }
 body.touch #tacho { bottom: auto; right: auto; left: 50%; transform: translateX(-50%) scale(.62); transform-origin: 50% 0; top: calc(6px + env(safe-area-inset-top, 0px)); }
+#perf { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); top: calc(56px + env(safe-area-inset-top, 0px)); padding: 6px 8px; border-radius: 4px; background: rgba(8, 11, 16, .6); font: 11px/1.45 ui-monospace, Menlo, monospace; pointer-events: none; }
+#perf canvas { display: block; width: 240px; height: 48px; margin-bottom: 4px; }
+#perf pre { margin: 0; white-space: pre; }
 body.touch #info { font-size: 10px; }
 
 /* Minimap and street name */

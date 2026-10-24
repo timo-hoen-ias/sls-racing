@@ -2,10 +2,11 @@
 //   node pipeline/build.ts            all regions listed in pipeline/world.json
 //   node pipeline/build.ts saarlouis  only the named regions
 //   node pipeline/build.ts fixture    synthetic test area (no download needed)
-// Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.json
+// Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.bin (gzipped binary container, see encodeTile in format.ts)
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import {
-  Ground, TERRAIN_N, TERRAIN_STEP, encode, localToUtm, tileKey, utmToLocal,
+  Ground, TERRAIN_N, TERRAIN_STEP, encode, encodeTile, localToUtm, tileKey, utmToLocal,
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
@@ -60,7 +61,9 @@ function main() {
   console.log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const samples = buildRoads(osm.ways, info, height, tiles, junctions);
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles);
+  // Main roads (tertiary and up) for shop fronts on the ground floor.
+  const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n) });
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${nBuildings}`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
@@ -133,9 +136,10 @@ function main() {
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
-    const json = JSON.stringify(tile);
-    bytes += json.length;
-    writeFileSync(`${paths.out}t/${k}.json`, json);
+    // Gzipped here because static hosting does not compress application/octet-stream; the client inflates it.
+    const bin = gzipSync(encodeTile(tile), { level: 9 });
+    bytes += bin.byteLength;
+    writeFileSync(`${paths.out}t/${k}.bin`, bin);
     index.push([ix, iy]);
   }
 
@@ -150,6 +154,7 @@ function main() {
   }
   const idx: WorldIndex = {
     v: 1,
+    format: 'bin',
     world: info,
     regions: regions.map((r) => ({ id: r.id, name: r.name })),
     tiles: index,

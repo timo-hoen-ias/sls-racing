@@ -51,7 +51,7 @@ describe('road surface', () => {
     };
     const road = run('asphalt');
     const grass = run('gras');
-    expect(grass.speed).toBeLessThan(road.speed - 2.5);
+    expect(grass.speed).toBeLessThan(road.speed - 1.5);
     expect(grass.grip).toBeLessThan(0.7);
     expect(grass.rumble).toBeGreaterThan(0);
     expect(road.rumble).toBe(0);

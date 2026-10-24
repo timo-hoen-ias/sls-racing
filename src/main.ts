@@ -22,12 +22,13 @@ import { Tacho } from './ui/tacho.ts';
 import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { registerCommand, runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
-import { loadAssists, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
+import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
 import { registerReplayCommands } from './replay/commands.ts';
 import { Recorder } from './replay/recorder.ts';
 import { ReplayPlayer } from './replay/replayPlayer.ts';
 import { Telemetry } from './ui/telemetry.ts';
+import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
@@ -76,6 +77,15 @@ async function boot() {
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
+  // Car damage: dents, dull paint, parts breaking off as debris, optional power loss.
+  const debris = new Debris(RAPIER, world);
+  view.scene.add(debris.root);
+  carView.damage.onDetach = (parts) => {
+    carView.model.updateMatrixWorld(true);
+    const lv = car.body.linvel();
+    const side = new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 2, (Math.random() - 0.5) * 4);
+    debris.spawn(parts, carView.model.matrixWorld, new THREE.Vector3(lv.x, lv.y, lv.z).multiplyScalar(0.8).add(side), new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4));
+  };
   const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
   const input = new Input();
@@ -159,6 +169,7 @@ async function boot() {
   const telemetry = new Telemetry(recorder);
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
+  registerDamageCommands(carView.damage, debris);
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F6') { e.preventDefault(); if (replay.active) replay.stop(); else try { navHud.toast(replay.start().split(' · ')[0], 1.5); } catch (err) { navHud.toast((err as Error).message, 1.5); } }
     if (e.code === 'F7') { e.preventDefault(); telemetry.visible = !telemetry.visible; }
@@ -293,9 +304,17 @@ async function boot() {
       effects.impact({ x: ip.x - hitDir.x * 2, y: ip.y - Math.max(0, hitDir.y) * 0.3, z: ip.z - hitDir.z * 2 }, strength);
       sound?.impact(strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
+      // Mostly sideways/longitudinal hits dent the body; hard landings do not.
+      if (Math.abs(hitDir.y) < 0.75) {
+        const from = new THREE.Vector3(-hitDir.x, 0, -hitDir.z).applyQuaternion(iq.clone().invert());
+        carView.damage.hit(from, strength);
+      }
       hitCooldown = 0.25;
     }
     hit = 0;
+    car.power = carView.damage.power;
+    car.steerPull = carView.damage.steerPull;
+    debris.update(dt);
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;
     effects.road.puddle = weather.puddle;

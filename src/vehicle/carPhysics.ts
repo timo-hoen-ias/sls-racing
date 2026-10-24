@@ -7,6 +7,10 @@ import { loadedMu, splitAxle, tyreForce, type TyreOutput, type TyreSpec } from '
 type R = typeof RAPIER_NS;
 type V3 = { x: number; y: number; z: number };
 
+/** Collision groups: the player car is membership 1; debris (membership 2) ignores it but hits the world. */
+export const CAR_GROUPS = (0x0001 << 16) | 0xffff;
+export const DEBRIS_GROUPS = (0x0002 << 16) | 0xfffe;
+
 /** Approximate yaw inertia of the chassis box (kg·m²). */
 const YAW_INERTIA = (CAR.mass * ((2 * CAR.halfExtents.x) ** 2 + (2 * CAR.halfExtents.z) ** 2)) / 12;
 /** Static load on one wheel (N): the reference load of the tyre model. */
@@ -77,6 +81,9 @@ export class CarPhysics {
   assists: Assists = { ...ASSIST_PRESETS.arcade };
   /** Body-frame acceleration of the last step (m/s², x = left, z = forward) for telemetry and the cockpit camera. */
   readonly accel = { x: 0, y: 0, z: 0 };
+  /** From damage: engine power factor and a steering offset (rad, + = right). */
+  power = 1;
+  steerPull = 0;
   private wheelspin = 0;
   private R: R;
   private tyreOut: TyreOutput = { fx: 0, fy: 0, alpha: 0, spin: 0, lock: 0, usage: 0 };
@@ -97,7 +104,7 @@ export class CarPhysics {
     const h = CAR.halfExtents;
     const volume = 8 * h.x * h.y * h.z;
     world.createCollider(
-      R.ColliderDesc.cuboid(h.x, h.y, h.z).setTranslation(0, CAR.colliderY, 0).setDensity(CAR.mass / volume).setFriction(0.3).setRestitution(0.1),
+      R.ColliderDesc.cuboid(h.x, h.y, h.z).setTranslation(0, CAR.colliderY, 0).setDensity(CAR.mass / volume).setFriction(0.3).setRestitution(0.1).setCollisionGroups(CAR_GROUPS),
       this.body,
     );
     // Lower the centre of mass for stability.
@@ -154,7 +161,8 @@ export class CarPhysics {
     if (input.handbrake) maxSteer = Math.max(maxSteer, CAR.steer.drift);
     const sf = this.surface;
     const rate = (CAR.steer.rate * sf.steer) / (1 + absV / CAR.steer.rateSpeed);
-    this.steer += clamp(input.steer * maxSteer - this.steer, -rate * dt, rate * dt);
+    const pull = this.steerPull * clamp(absV / 8, 0, 1);
+    this.steer += clamp(input.steer * maxSteer + pull - this.steer, -rate * dt, rate * dt);
     // Body +x is left, so steering right is a negative angle.
     vc.setWheelSteering(0, -this.steer);
     vc.setWheelSteering(1, -this.steer);
@@ -187,7 +195,7 @@ export class CarPhysics {
 
     // Suspension only: Rapier's engine, brakes and friction stay at zero.
     vc.updateVehicle(dt);
-    this.tyres(input, brake, hold, dt0.force * sf.accel, dt);
+    this.tyres(input, brake, hold, dt0.force * sf.accel * (dt0.force > 0 ? this.power : 1), dt);
 
     const body = this.body;
     const rot = body.rotation();

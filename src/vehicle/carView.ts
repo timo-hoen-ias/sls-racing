@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { CarPhysics } from './carPhysics.ts';
 import { Cockpit } from './cockpit.ts';
+import { CarDamage } from './damage.ts';
 import { buildSportsCar } from './sportsCarModel.ts';
 import { CAR } from './tuning.ts';
 
@@ -21,12 +22,17 @@ export class CarView {
   private paint: THREE.MeshPhysicalMaterial;
   /** Interior, shown only in the cockpit view. */
   readonly cockpit = new Cockpit();
+  /** Body group in model space (ground at y = 0). */
+  readonly model: THREE.Group;
+  readonly damage: CarDamage;
 
   constructor(color?: string) {
     const model = buildSportsCar(color);
     // The model is built from the ground up; shift it to the physics body origin.
     model.body.position.y = -RIDE_HEIGHT;
     this.root.add(model.body);
+    this.model = model.body;
+    this.damage = new CarDamage(model.body, model.materials.paint);
     this.cockpit.group.visible = false;
     model.body.add(this.cockpit.group);
     this.brakeLights = model.materials.brake;
@@ -76,6 +82,7 @@ export class CarView {
 
   setColor(color: string) {
     this.paint.color.set(color);
+    this.damage.rebase();
   }
 
   /** 0 by day .. 1 at night: brightens the light lenses so they bloom. */

@@ -78,6 +78,8 @@ export interface PropOptions {
   cityLimits?: boolean;
   /** Pedestrian railings along bridge caps, from buildRoads. */
   railings?: Railing[];
+  /** Hedge centre lines measured from the laser heights (lib/hedges.ts); dropped where OSM maps a hedge nearby. */
+  hedges?: [number, number][][];
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
   detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
@@ -171,18 +173,34 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   }
 
   // Fences, walls and hedges, in pieces of up to 4 m (mapped guard rails: roadside.ts).
+  // Keep a car's clearance from the lanes: the whole piece stays off them, not only its centre (a barrier way
+  // crossing a street).
+  const clear = o.nearLanes ?? o.onLanes;
+  const offLanes = (e: number, n: number, de: number, dn: number, len: number) => [-0.5, -0.25, 0, 0.25, 0.5].every((f) => !clear(e + de * len * f, n + dn * len * f));
+  const mappedHedges = new Set<string>();
+  const HEDGE_CELL = 3;
   for (const w of osm.ways) {
     const b = w.tags.barrier;
     const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : undefined;
     if (!kind) continue;
-    // Keep a car's clearance from the lanes.
-    const clear = o.nearLanes ?? o.onLanes;
     pieces(w.pts, 4, (e, n, de, dn, len) => {
-      // The whole piece stays off the lanes, not only its centre (a barrier way crossing a street).
-      for (const f of [-0.5, -0.25, 0, 0.25, 0.5]) if (clear(e + de * len * f, n + dn * len * f)) return;
-      add(kind, e, n, headingOf(de, dn), len);
+      if (kind !== Prop.fence) mappedHedges.add(`${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`);
+      if (offLanes(e, n, de, dn, len)) add(kind, e, n, headingOf(de, dn), len);
     });
   }
+  // Measured hedges have a negative length (see isMeasured in propKinds.ts); none beside a mapped hedge or wall.
+  let measuredHedges = 0;
+  const mappedNear = (e: number, n: number) => {
+    const ce = Math.floor(e / HEDGE_CELL), cn = Math.floor(n / HEDGE_CELL);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (mappedHedges.has(`${ce + a}_${cn + b}`)) return true;
+    return false;
+  };
+  for (const h of o.hedges ?? [])
+    pieces(h, 4, (e, n, de, dn, len) => {
+      if (mappedNear(e, n) || !offLanes(e, n, de, dn, len)) return;
+      add(Prop.hedge, e, n, headingOf(de, dn), -len);
+      measuredHedges++;
+    });
 
   // Guard rails (motorways, embankments, bridges, mapped ones) are their own tile field now: roadside.ts.
 
@@ -239,7 +257,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }, 3);
     }
   }
-  return { tiles: out, counts, detected };
+  return { tiles: out, counts, detected, measuredHedges };
 }
 
 /** Variant number for a parked car: colour index × 2 + 1 for a van. */

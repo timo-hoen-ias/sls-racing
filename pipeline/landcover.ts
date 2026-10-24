@@ -12,10 +12,11 @@ import { inflateEntry, RemoteZip, type ZipEntry } from './lib/remotezip.ts';
 import { readTiffRows } from './lib/tiff.ts';
 import { readDbf, readShpPolygons, type ShpPolygon } from './lib/shp.ts';
 import { fetchLaserTiles, laserSampler } from './lib/laser.ts';
+import { HEDGE_HIGH, HEDGE_LOW, traceHedges } from './lib/hedges.ts';
 import { pointInRing, readOsm } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths } from './lib/region.ts';
 import {
-  COVER_NAMES, Cover, LANDCOVER_ATTRIBUTION, LC_CLASS_STEP, LC_COLOUR_STEP, LC_TILE, alkisUse, classify, hidesGround,
+  COVER_NAMES, Cover, LANDCOVER_ATTRIBUTION, LC_CLASS_STEP, LC_COLOUR_STEP, LC_TILE, alkisUse, classify, hidesGround, ndviOf,
   landcoverDir, rasterize, Use, type CoverClass, type LandcoverFile, type RoofColour, type UseClass,
 } from './lib/landcover.ts';
 
@@ -89,6 +90,8 @@ async function surveyTile(e0: number, n0: number, where: Map<string, { zip: Remo
 }
 
 const ROWS = new Set<number>([Use.arable, Use.market]);
+/** No hedges on these parcels: low growth there is young forest, reeds, or overhang above streets and tracks. */
+const NO_HEDGE = new Set<number>([Use.forestBroad, Use.forestNeedle, Use.forest, Use.water, Use.swamp, Use.street, Use.rail, Use.quarry]);
 
 /** Direction (radians, 0..π, from east towards north) of a ring's long axis: principal axis of its outline. */
 function longAxis(ring: [number, number][]): number {
@@ -184,7 +187,7 @@ async function main() {
 
   const out = landcoverDir(id);
   mkdirSync(out, { recursive: true });
-  const index: LandcoverFile = { attribution: LANDCOVER_ATTRIBUTION, tiles: [], roofs: [] };
+  const index: LandcoverFile = { attribution: LANDCOVER_ATTRIBUTION, tiles: [], roofs: [], hedges: [] };
   const counts = new Float64Array(COVER_NAMES.length);
   // Surveys download in parallel with the classification of the previous tile.
   let next: Promise<Uint8Array | undefined> | undefined;
@@ -209,16 +212,21 @@ async function main() {
 
     const cls = new Uint8Array(N * N);
     const lum = new Float32Array(N * N);
+    // Hedges: low green cells, away from crowns, buildings and the ground of streets, rails and water.
+    const low = new Uint8Array(N * N), tall = new Uint8Array(N * N);
     for (let r = 0; r < N; r++)
       for (let c = 0; c < N; c++) {
         const i = r * N + c;
         const e = e0 + (c + 0.5) * LC_CLASS_STEP, n = n1 - (r + 0.5) * LC_CLASS_STEP;
         const top = dom.at(e, n), ground = dgm.at(e, n);
         const p = i * 4;
+        const ndsm = top !== undefined && ground !== undefined ? top - ground : NaN;
         cls[i] = classify({
-          use: use[i] as UseClass, building: !!bld[i], r: dop[p], g: dop[p + 1], b: dop[p + 2], nir: dop[p + 3],
-          ndsm: top !== undefined && ground !== undefined ? top - ground : NaN,
+          use: use[i] as UseClass, building: !!bld[i], r: dop[p], g: dop[p + 1], b: dop[p + 2], nir: dop[p + 3], ndsm,
         });
+        const green = ndviOf(dop[p], dop[p + 3]) > 0.25;
+        low[i] = green && ndsm >= HEDGE_LOW && ndsm <= HEDGE_HIGH && !bld[i] && !NO_HEDGE.has(use[i]) ? 1 : 0;
+        tall[i] = bld[i] || ndsm > HEDGE_HIGH + 0.5 ? 1 : 0;
         lum[i] = 0.3 * dop[p] + 0.59 * dop[p + 1] + 0.11 * dop[p + 2];
         counts[cls[i]]++;
       }
@@ -251,6 +259,8 @@ async function main() {
         }
       }
     }
+
+    for (const h of traceHedges(low, tall, N, e0, n1, LC_CLASS_STEP)) index.hedges!.push(h.flat());
 
     // Roof colours: mean over the building's roof cells, the darkest and brightest fifth left out (shade, glare).
     for (const b of tileBuildings) {
@@ -307,7 +317,8 @@ async function main() {
   }
   writeFileSync(`${out}index.json.gz`, gzipSync(JSON.stringify(index), { level: 9 }));
   const total = counts.reduce((a, b) => a + b, 0) || 1;
-  console.log(`Land cover: ${index.tiles.length} tiles, ${index.roofs.length} roof colours → ${out}`);
+  const km = index.hedges!.reduce((s, h) => s + h.reduce((a, _, i) => (i >= 2 && i % 2 === 0 ? a + Math.hypot(h[i] - h[i - 2], h[i + 1] - h[i - 1]) : a), 0), 0) / 1000;
+  console.log(`Land cover: ${index.tiles.length} tiles, ${index.roofs.length} roof colours, ${index.hedges!.length} hedges (${km.toFixed(0)} km) → ${out}`);
   console.log(`  ${COVER_NAMES.map((n, i) => [n, counts[i]] as const).filter(([, c]) => c).map(([n, c]) => `${n} ${((c / total) * 100).toFixed(1)}%`).join(', ')}`);
 }
 

@@ -3,7 +3,7 @@ import { RoadMask } from '../pipeline/lib/clearance.ts';
 import type { OsmData, Way } from '../pipeline/lib/osm.ts';
 import { buildProps, mapillarySignType, osmSignType } from '../pipeline/lib/props.ts';
 import type { WorldInfo } from '../src/world/format.ts';
-import { PROP_STRIDE, Prop, type PropKind, isDetected, signTypeOf } from '../src/world/propKinds.ts';
+import { PROP_STRIDE, Prop, type PropKind, isDetected, isMeasured, linearLength, signTypeOf } from '../src/world/propKinds.ts';
 
 const world: WorldInfo = { zone: 32, originE: 1000, originN: 1000, tileSize: 256 };
 const E = 1000, N = 1000;
@@ -15,10 +15,10 @@ function street(tags: Record<string, string> = {}): Way {
   return { id: 1, tags: { highway: 'residential', ...tags }, pts, ids: pts.map((_, i) => i + 1), closed: false };
 }
 
-function run(osm: Partial<OsmData>, detected?: { kind: PropKind; e: number; n: number; size?: number }[]) {
+function run(osm: Partial<OsmData>, detected?: { kind: PropKind; e: number; n: number; size?: number }[], hedges?: [number, number][][]) {
   const data: OsmData = { ways: [], polygons: [], trees: [], points: [], ...osm };
   const lanes = new RoadMask(data.ways, -0.5);
-  return buildProps(data, { world, height: () => 0, onLanes: (e, n) => lanes.has(e, n), junctions: [], detected });
+  return buildProps(data, { world, height: () => 0, onLanes: (e, n) => lanes.has(e, n), junctions: [], detected, hedges });
 }
 
 const records = (tiles: Map<string, number[]>) => [...tiles.values()].flatMap((d) => {
@@ -28,6 +28,21 @@ const records = (tiles: Map<string, number[]>) => [...tiles.values()].flatMap((d
 });
 
 describe('street furniture', () => {
+  it('places measured hedges off the lanes and not beside a mapped hedge', () => {
+    const mapped: Way = { id: 2, tags: { barrier: 'hedge' }, pts: [[E + 20, N + 10], [E + 60, N + 10]], ids: [20, 21], closed: false };
+    const r = run({ ways: [street({ 'parking:both': 'no' }), mapped] }, undefined, [
+      [[E + 20, N + 11], [E + 60, N + 11]], // the mapped hedge again
+      [[E + 100, N + 12], [E + 120, N + 12]],
+      [[E + 150, N - 6], [E + 150, N + 6]], // across the street
+    ]);
+    const hedges = records(r.tiles).filter((p) => p[0] === Prop.hedge);
+    const measured = hedges.filter((p) => isMeasured(Prop.hedge, p[5]));
+    expect(hedges.length - measured.length).toBe(10);
+    expect(measured.length).toBe(5);
+    expect(r.measuredHedges).toBe(5);
+    for (const p of measured) expect(linearLength(p[5])).toBeCloseTo(4);
+  });
+
   it('adds features from photos only where OSM has none of the kind nearby', () => {
     const r = run(
       { ways: [street({ 'parking:both': 'no' })], points: [{ id: 10, tags: { traffic_sign: 'DE:206' }, e: E + 50, n: N + 4 }] },

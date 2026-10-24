@@ -177,6 +177,8 @@ export interface LandcoverFile {
   /** South-west corners (UTM, m) of the 2 km tiles that have rasters. */
   tiles: [number, number][];
   roofs: RoofColour[];
+  /** Hedge centre lines measured from the laser heights (lib/hedges.ts): flat e, n pairs (UTM, m). */
+  hedges?: number[][];
 }
 
 export interface Landcover {
@@ -188,6 +190,8 @@ export interface Landcover {
   colourAt(e: number, n: number): [number, number, number] | undefined;
   /** Mean roof colour of the surveyed building whose centroid lies nearest to (e, n), within `max` metres. */
   roofAt(e: number, n: number, max?: number): [number, number, number] | undefined;
+  /** Measured hedge centre lines (UTM, m). */
+  hedges: [number, number][][];
   tiles: number;
 }
 
@@ -245,6 +249,7 @@ export function loadLandcover(region: string): Landcover | undefined {
   }
   return {
     tiles: file.tiles.length,
+    hedges: (file.hedges ?? []).map((f) => Array.from({ length: f.length / 2 }, (_, i) => [f[i * 2], f[i * 2 + 1]] as [number, number])),
     classAt(e, n) {
       const e0 = Math.floor(e / LC_TILE) * LC_TILE, n0 = Math.floor(n / LC_TILE) * LC_TILE;
       const t = tile(e0, n0);

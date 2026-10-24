@@ -32,6 +32,10 @@ export function signTypeOf(kind: PropKind, size: number): SignType | undefined {
 export const DETECTED = -1;
 export const DETECTED_KINDS = new Set<PropKind>([Prop.sign, Prop.stopSign, Prop.giveWay, Prop.bench, Prop.bin, Prop.hydrant]);
 export const isDetected = (kind: PropKind, size: number) => size < 0 && DETECTED_KINDS.has(kind);
+/** Hedges measured from the laser heights rather than mapped in OSM have a negative length. */
+export const isMeasured = (kind: PropKind, size: number) => size < 0 && kind === Prop.hedge;
+/** Length of a linear prop record (measured hedges store it negated). */
+export const linearLength = (size: number) => Math.max(0.2, Math.abs(size));
 
 export const PROP_NAMES: Record<PropKind, string> = {
   1: 'bushaltestelle', 2: 'schild', 3: 'stoppschild', 4: 'vorfahrt-achten', 5: 'poller', 6: 'betonblock', 7: 'bank', 8: 'muelleimer',

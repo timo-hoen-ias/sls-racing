@@ -1,6 +1,8 @@
 // Drives an autopilot car along real roads through the built tiles and reports where it gets stuck.
 // Uses the same physics and the same colliders as the game, without rendering.
-//   node pipeline/drivetest.ts [region] [--routes=60] [--seed=1] [--way=<osm id>]
+//   node pipeline/drivetest.ts [region] [--routes=60] [--seed=1] [--way=<osm id>] [--pace=1] [--trace]
+// Autopilot tuning (to tell its mistakes from the car's): --lat=<m/s²> cornering grip it plans with,
+// --brake=<m/s²> deceleration it plans with, --narrow=<factor> speed on narrow streets.
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -16,7 +18,7 @@ import { readOsm } from './lib/osm.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
-import { densify, isDrivable, roadSurfaceHeights, ROAD_CLASSES } from './lib/roads.ts';
+import { densify, isDrivable, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -27,6 +29,17 @@ const TRACE = process.argv.includes('--trace');
 /** Speed factor on the autopilot's target speeds (1 = cautious 18–50 km/h). */
 const PACE = +arg('pace', '1');
 const STEP = 1 / 60;
+/**
+ * The autopilot plans its speed like a driver: cornering speed from the radius of each bend ahead
+ * (v = √(lat·R)), braked down to in time (v² = v_c² + 2·brake·d). lat grows with the pace up to 1.2 g,
+ * below the car's ~1.4 g, so it does not plan right at the limit.
+ */
+const LAT = Math.min(12, +arg('lat', '5') * PACE * PACE);
+const BRAKE = +arg('brake', '6');
+/** Speed factor on narrow streets (play streets, alleys, under 5 m): little room to correct a slide. */
+const NARROW = +arg('narrow', '0.6');
+/** Route points are densified to this spacing (m). */
+const SPACING = 4;
 
 const index: WorldIndex = JSON.parse(readFileSync(`${paths.out}index.json`, 'utf8'));
 const W = index.world;
@@ -72,8 +85,21 @@ interface Result { ok: boolean; why?: string; at?: [number, number]; dist: numbe
 const handling = { drift: 0, driftWay: '', off: 0, offSum: 0, offN: 0, top: 0 };
 let currentWay = '';
 
-function driveRoute(pts: [number, number][], startY: number): Result {
-  const route = densify(pts.map(([e, n]) => utmToLocal(W, e, n)), 4);
+function driveRoute(pts: [number, number][], startY: number, tags: Record<string, string>): Result {
+  const route = densify(pts.map(([e, n]) => utmToLocal(W, e, n)), SPACING);
+  const narrow = tags.highway === 'living_street' || tags.highway === 'service' || (roadWidth(tags) ?? 6) < 5;
+  const cruise = 14 * PACE * (narrow ? NARROW : 1);
+  // Cornering speed at every route point, from the turn over the points 8 m either side (OSM corners are
+  // kinks; a driver rounds them off over about that length).
+  const cornerSpeed = route.map((_, i) => {
+    const a = route[Math.max(0, i - 2)], b = route[i], c = route[Math.min(route.length - 1, i + 2)];
+    if (a === b || b === c) return cruise;
+    const a1 = Math.atan2(b[0] - a[0], b[1] - a[1]);
+    const a2 = Math.atan2(c[0] - b[0], c[1] - b[1]);
+    const turn = Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1)));
+    const radius = (Math.hypot(b[0] - a[0], b[1] - a[1]) + Math.hypot(c[0] - b[0], c[1] - b[1])) / 2 / Math.max(turn, 1e-3);
+    return Math.min(cruise, Math.sqrt(LAT * (narrow ? NARROW * NARROW : 1) * radius));
+  });
   const len = route.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - route[i - 1][0], p[1] - route[i - 1][1]) : 0), 0);
   // Load every tile within 64 m of the route.
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -88,6 +114,7 @@ function driveRoute(pts: [number, number][], startY: number): Result {
   const car = new CarPhysics(RAPIER, world, { x: sx, y: startY + 1.2, z: sz }, heading0);
   let target = 1;
   let stuck = 0;
+  let lastSpeed = 0;
   let travelled = 0;
   const maxSteps = (len / 6 + 20) * 60;
   for (let step = 0; step < maxSteps; step++) {
@@ -104,14 +131,12 @@ function driveRoute(pts: [number, number][], startY: number): Result {
     const want = Math.atan2(tx - p.x, -(tz - p.z));
     let d = want - car.heading();
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    // Slow down for bends in the next 40 m.
-    let bend = 0;
-    for (let i = target + 1; i < Math.min(route.length - 1, target + 10); i++) {
-      const a1 = Math.atan2(route[i][0] - route[i - 1][0], route[i][1] - route[i - 1][1]);
-      const a2 = Math.atan2(route[i + 1][0] - route[i][0], route[i + 1][1] - route[i][1]);
-      bend = Math.max(bend, Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))));
+    // Slowest speed any bend ahead allows from here, braking in time.
+    let speedGoal = cruise;
+    for (let i = target; i < Math.min(route.length, target + 30); i++) {
+      const d = Math.max(0, (i - target) * SPACING - 2);
+      speedGoal = Math.min(speedGoal, Math.sqrt(cornerSpeed[i] ** 2 + 2 * BRAKE * d));
     }
-    const speedGoal = (bend > 0.5 ? 5 : bend > 0.25 ? 8 : 14) * PACE;
     const input = {
       throttle: car.speed < speedGoal ? 1 : 0, brake: car.speed > speedGoal + 2 ? 1 : 0,
       steer: Math.max(-1, Math.min(1, d * 2.5)), nitro: false, handbrake: false, lookBack: false,
@@ -122,10 +147,17 @@ function driveRoute(pts: [number, number][], startY: number): Result {
     travelled = Math.max(travelled, target * 4);
     if (Math.hypot(route[route.length - 1][0] - q.x, route[route.length - 1][1] - q.z) < 10) return { ok: true, dist: len, len };
     stuck = Math.abs(car.speed) < 1 ? stuck + 1 : 0;
+    // A crash: what the body hit (trace only).
+    if (TRACE && lastSpeed - car.speed > 6) {
+      const hit = new Set<string>();
+      world.contactPairsWith(car.body.collider(0), (o) => hit.add(`${kinds.get(o.handle) ?? '?'} at ${o.translation().x.toFixed(1)},${o.translation().z.toFixed(1)}`));
+      console.log(`crash t=${(step * STEP).toFixed(2)} ${(lastSpeed * 3.6).toFixed(0)} → ${(car.speed * 3.6).toFixed(0)} km/h: ${[...hit].join(', ') || 'nichts'}`);
+    }
+    lastSpeed = car.speed;
     const r = car.body.rotation();
     const upY = 1 - 2 * (r.x * r.x + r.z * r.z);
     const g = groundAt(q.x, q.z);
-    if (TRACE && step % 15 === 0) console.log(`t=${(step * STEP).toFixed(2)} pos=${q.x.toFixed(1)},${q.y.toFixed(2)},${q.z.toFixed(1)} ground=${g?.toFixed(2)} v=${car.speed.toFixed(1)} up=${upY.toFixed(2)}`);
+    if (TRACE && step % 15 === 0) console.log(`t=${(step * STEP).toFixed(2)} goal=${speedGoal.toFixed(1)} pos=${q.x.toFixed(1)},${q.y.toFixed(2)},${q.z.toFixed(1)} ground=${g?.toFixed(2)} v=${car.speed.toFixed(1)} up=${upY.toFixed(2)}`);
     const fail = (why: string): Result => ({ ok: false, why, at: [q.x, q.z], dist: travelled, len });
     if (stuck > 180) {
       const hit = new Set<string>();
@@ -186,7 +218,7 @@ async function main() {
   const fails: string[] = [];
   for (const { w } of pool) {
     currentWay = `way ${w.id}`;
-    const res = driveRoute(w.pts, roadSurfaceHeights(w, height)[0]);
+    const res = driveRoute(w.pts, roadSurfaceHeights(w, height)[0], w.tags);
     if (res.ok) ok++;
     else {
       const [e, n] = [res.at![0] + W.originE, -res.at![1] + W.originN];

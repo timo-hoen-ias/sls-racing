@@ -16,7 +16,7 @@ import { readOsm } from './lib/osm.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
-import { densify, isDrivable, roadSurfaceHeights, ROAD_CLASSES } from './lib/roads.ts';
+import { densify, isMotorRoad, roadSurfaceHeights, ROAD_CLASSES } from './lib/roads.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -173,7 +173,7 @@ async function main() {
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
   let candidates = osm.ways.filter((w) =>
-    isDrivable(w.tags) && ROAD_CLASSES[w.tags.highway].rank >= 2 && w.tags.highway !== 'pedestrian' &&
+    isMotorRoad(w.tags) && ROAD_CLASSES[w.tags.highway].rank >= 2 &&
     w.pts.every(([e, n]) => inWorld.has(tileKey(Math.floor(e / T), Math.floor(n / T)))));
   if (ONLY) candidates = candidates.filter((w) => String(w.id) === ONLY);
   // Long enough to mean something; deterministic sample.

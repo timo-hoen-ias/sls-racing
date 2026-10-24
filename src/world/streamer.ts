@@ -452,6 +452,8 @@ export class WorldStreamer implements KnockableSource {
     }
     mesh('roads', b.meshes.roads, this.mats.road);
     mesh('sidewalks', b.meshes.sidewalks, this.mats.sidewalk);
+    // Footpaths, cycle paths and steps share the road shader (surface code in uv.y).
+    mesh('paths', b.meshes.paths, this.mats.road);
     mesh('markings', b.meshes.markings, this.mats.marking);
     mesh('buildings', b.meshes.buildings, this.mats.building, { cast: true });
 

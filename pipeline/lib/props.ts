@@ -8,7 +8,8 @@ import { DETECTED, PROP_STRIDE, Prop, type PropKind, SIGN_TYPES, type SignType }
 import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
-import { ROAD_LIFT, densify, isDrivable, roadSurfaceHeights, roadWidth } from './roads.ts';
+import { ROAD_LIFT, densify, isBridge, isDrivable, isMotorRoad, roadSurfaceHeights, roadWidth } from './roads.ts';
+import { bollardedEntry } from '../../src/world/roadSpec.ts';
 
 interface Seg {
   ae: number; an: number; be: number; bn: number;
@@ -69,6 +70,8 @@ export interface PropOptions {
   height: (e: number, n: number) => number;
   /** True where a point lies on any road's driving lanes. */
   onLanes: (e: number, n: number) => boolean;
+  /** True on the lanes of a road open to cars (default onLanes); bollards there would close it. */
+  onMotorLanes?: (e: number, n: number) => boolean;
   /** True within a car's clearance of the lanes; fences, walls and hedges stay out of it (default onLanes). */
   nearLanes?: (e: number, n: number) => boolean;
   junctions: Junction[];
@@ -106,8 +109,16 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     let heading = rand(e, n, 5) * Math.PI * 2;
     if (road) {
       const onRoad = o.onLanes(e, n);
-      // Bollards and blocks on a road would close it: drop them.
-      if (onRoad && (kind === Prop.bollard || kind === Prop.block)) return;
+      if (kind === Prop.bollard || kind === Prop.block) {
+        // Bollards and blocks on a road open to cars would close it: drop them. In pedestrian zones and on
+        // roads closed to cars they stay where they are mapped, on the carriageway.
+        if (onRoad && (o.onMotorLanes ?? o.onLanes)(e, n)) return;
+        if (onRoad) {
+          add(kind, e, n, headingOf(road.de, road.dn), size, road.y);
+          remember(kind, e, n);
+          return;
+        }
+      }
       const side = onRoad ? (kind === Prop.stopSign || kind === Prop.giveWay || kind === Prop.busStop || rand(e, n, 2) < 0.5 ? 1 : -1) : road.side;
       if (onRoad) {
         // Right of the way's direction: normal (dn, -de).
@@ -121,9 +132,19 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       else heading = headingOf(-road.dn * side, road.de * side);
     }
     add(kind, e, n, heading, size);
+    remember(kind, e, n);
+  };
+  function remember(kind: PropKind, e: number, n: number) {
     const c = cellOf(e, n);
     if (!placed.has(c)) placed.set(c, []);
     placed.get(c)!.push([kind, e, n]);
+  }
+  const placedNear = (e: number, n: number, r: number, kinds: PropKind[]) => {
+    const k = Math.ceil(r / DEDUPE), ce = Math.floor(e / DEDUPE), cn = Math.floor(n / DEDUPE);
+    for (let a = -k; a <= k; a++)
+      for (let b = -k; b <= k; b++)
+        for (const [kind, pe, pn] of placed.get(`${ce + a}_${cn + b}`) ?? []) if (kinds.includes(kind) && Math.hypot(pe - e, pn - n) < r) return true;
+    return false;
   };
   for (const p of osm.points) {
     const t = p.tags;
@@ -144,6 +165,38 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     else if (t.advertising === 'column') kind = Prop.column;
     if (kind) placePoint(kind, p.e, p.n, size);
   }
+  // A row of bollards where a pedestrian zone or a road closed to motor vehicles leaves a road open to cars,
+  // unless OSM maps a barrier there already. They are breakable (src/world/props.ts), so the player can still get in.
+  const motorWidth = new Map<number, number>();
+  for (const w of osm.ways) if (isMotorRoad(w.tags)) for (const id of w.ids) motorWidth.set(id, Math.max(motorWidth.get(id) ?? 0, roadWidth(w.tags)!));
+  let entries = 0;
+  for (const w of osm.ways) {
+    if (!isDrivable(w.tags) || isMotorRoad(w.tags) || !bollardedEntry(w.tags) || isBridge(w.tags)) continue;
+    const width = roadWidth(w.tags)!;
+    w.ids.forEach((id, i) => {
+      const mw = motorWidth.get(id);
+      if (mw === undefined || (i > 0 && i < w.ids.length - 1)) return;
+      // Into the closed way from the junction: past the road's edge and a little more.
+      const pts = i === 0 ? w.pts : [...w.pts].reverse();
+      const at = alongPolyline(pts, mw / 2 + 2);
+      if (!at) return;
+      const [e, n, de, dn] = at;
+      if (placedNear(e, n, 12, [Prop.bollard, Prop.block]) || (o.onMotorLanes ?? o.onLanes)(e, n)) return;
+      const road = roads.nearest(e, n, 5);
+      const y = road?.y ?? o.height(e, n) + ROAD_LIFT;
+      // 1.5 m apart: too narrow for a car, wide enough for bikes and prams.
+      const count = Math.max(2, Math.round((width - 0.8) / 1.5) + 1);
+      for (let k = 0; k < count; k++) {
+        const off = (k / (count - 1) - 0.5) * (width - 0.8);
+        const be = e + dn * off, bn = n - de * off;
+        if ((o.onMotorLanes ?? o.onLanes)(be, bn)) continue;
+        add(Prop.bollard, be, bn, headingOf(de, dn), 0, y);
+        remember(Prop.bollard, be, bn);
+      }
+      entries++;
+    });
+  }
+
   // Detected features count only where OSM has none of the same kind (signs: any sign) nearby.
   const SIGNS: PropKind[] = [Prop.sign, Prop.stopSign, Prop.giveWay];
   const same = (a: PropKind, b: PropKind) => a === b || (SIGNS.includes(a) && SIGNS.includes(b));
@@ -244,7 +297,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }, 3);
     }
   }
-  return { tiles: out, counts, detected };
+  return { tiles: out, counts, detected, entries };
 }
 
 /** Variant number for a parked car: colour index × 2 + 1 for a van. */
@@ -367,4 +420,19 @@ export function mapillarySignType(value: string): SignType | undefined {
     'regulatory--no-entry': 'einfahrt-verboten', 'regulatory--speed-limit-zone': 'tempo-30', 'information--pedestrians-crossing': 'fussgaenger',
   };
   return map[v];
+}
+
+/** Point and direction (unit de, dn) at a distance along a polyline, or undefined when it is shorter. */
+function alongPolyline(pts: [number, number][], dist: number): [number, number, number, number] | undefined {
+  let left = dist;
+  for (let i = 1; i < pts.length; i++) {
+    const [ae, an] = pts[i - 1], [be, bn] = pts[i];
+    const l = Math.hypot(be - ae, bn - an);
+    if (l >= left && l > 0) {
+      const t = left / l;
+      return [ae + (be - ae) * t, an + (bn - an) * t, (be - ae) / l, (bn - an) / l];
+    }
+    left -= l;
+  }
+  return undefined;
 }

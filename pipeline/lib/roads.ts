@@ -3,7 +3,7 @@ import { utmToLocal } from '../../src/world/format.ts';
 import { encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
 import type { RoadCarve } from './carve.ts';
 import type { HalfWidths } from './overlap.ts';
-import { roadSection } from '../../src/world/roadSpec.ts';
+import { noCars, roadSection } from '../../src/world/roadSpec.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
@@ -39,7 +39,9 @@ const STEP = 4; // metres between road samples
 export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
 /** Road collision lies this far under the drawn surface. */
 const STRIP_DROP = 0.05;
-const SIDEWALK = { width: 2.2, height: 0.14 };
+/** Sidewalk width beside the carriageway, metres. */
+export const SIDEWALK_WIDTH = 2.2;
+const SIDEWALK = { width: SIDEWALK_WIDTH, height: 0.14 };
 const LAMP_SPACING = 32;
 
 /** Carriageway width in metres (lanes and edge strips, see src/world/roadSpec.ts). */
@@ -47,11 +49,18 @@ export function roadWidth(tags: Record<string, string>): number | undefined {
   return ROAD_CLASSES[tags.highway] ? roadSection(tags)!.width : undefined;
 }
 
+/** Built as a carriageway (with collision), including pedestrian zones and roads closed to cars. */
 export function isDrivable(tags: Record<string, string>) {
-  return !!ROAD_CLASSES[tags.highway] && tags.tunnel !== 'yes' && tags.area !== 'yes' && tags.access !== 'no';
+  return !!ROAD_CLASSES[tags.highway] && tags.tunnel !== 'yes' && tags.area !== 'yes';
 }
 
+/** A carriageway open to cars: routing, traffic and the drive test use only these. */
+export const isMotorRoad = (tags: Record<string, string>) => isDrivable(tags) && !noCars(tags);
+
 export const isBridge = (tags: Record<string, string>) => !!tags.bridge && tags.bridge !== 'no';
+
+/** Urban streets get a sidewalk on both sides unless OSM says there is none. */
+export const hasSidewalk = (tags: Record<string, string>) => !!ROAD_CLASSES[tags.highway]?.street && !isBridge(tags) && !['no', 'none'].includes(tags.sidewalk);
 
 export function densify(pts: [number, number][], step = STEP): [number, number][] {
   const out: [number, number][] = [pts[0]];
@@ -168,7 +177,7 @@ class JunctionIndex {
 }
 
 /** Carriageways of all roads, to keep sidewalks off other roads where they meet at an angle. */
-class CarriagewayIndex {
+export class CarriagewayIndex {
   private cells = new Map<string, { way: Way; x0: number; z0: number; x1: number; z1: number; hw: number }[]>();
   add(way: Way, ring: { x: number; z: number }[], hw: number) {
     for (let i = 1; i < ring.length; i++) {
@@ -183,7 +192,7 @@ class CarriagewayIndex {
     }
   }
   /** Whether (x, z) lies on the carriageway of a road other than `self` (plus a margin). */
-  onOther(self: Way, x: number, z: number, margin: number) {
+  onOther(self: Way | undefined, x: number, z: number, margin: number) {
     for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
       if (s.way === self) continue;
       const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
@@ -217,7 +226,7 @@ export function buildRoads(
     const ring = rings.get(way)!;
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
-    const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
+    const sidewalk = hasSidewalk(way.tags);
     // Surface, wear, edge lines and gutters for the road shader (src/render/pbr/roadCode.ts).
     const look = encodeRoad(roadLook(way.tags, way.id, section, sidewalk));
     // Usable half width per sample, narrower where a road at another height runs alongside (overlap.ts).

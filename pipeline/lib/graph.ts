@@ -1,7 +1,7 @@
 import type { RoadGraphData, WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
 import type { Way } from './osm.ts';
-import { roadSection } from '../../src/world/roadSpec.ts';
+import { noCars, roadSection } from '../../src/world/roadSpec.ts';
 import { ROAD_CLASSES, isDrivable, roadSurfaceHeights, roadWidth } from './roads.ts';
 
 export interface Junction {
@@ -53,7 +53,7 @@ export function buildGraph(ways: Way[], world: WorldInfo, height: (e: number, n:
     const c = ROAD_CLASSES[w.tags.highway].rank;
     const oneway = w.tags.oneway === 'yes' || w.tags.junction === 'roundabout';
     const section = roadSection(w.tags)!;
-    const dims = { w: r1(section.width), l: section.lanes, r: r1(section.rightLane) };
+    const dims = { w: r1(section.width), l: section.lanes, r: r1(section.rightLane), ...(noCars(w.tags) ? { x: 1 as const } : {}) };
     let start = 0;
     let p: number[] = [];
     for (let i = 0; i < w.ids.length; i++) {

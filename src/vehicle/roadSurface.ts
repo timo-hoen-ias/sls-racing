@@ -6,7 +6,7 @@ import type { CarPhysics } from './carPhysics.ts';
 // Decided from the road graph (on a carriageway or not, road class) and the tile ground class.
 // Sets the per-wheel grip and rolling drag on the car, and reports rumble, dust and kerb strikes.
 
-export type SurfaceKind = 'asphalt' | 'pflaster' | 'gehweg' | 'schotter' | 'gras' | 'acker' | 'waldboden' | 'wasser';
+export type SurfaceKind = 'asphalt' | 'pflaster' | 'gehweg' | 'fussweg' | 'schotter' | 'gras' | 'acker' | 'waldboden' | 'wasser';
 
 export interface SurfaceSpec {
   label: string;
@@ -28,12 +28,17 @@ export const SURFACES: Record<SurfaceKind, SurfaceSpec> = {
   asphalt: { label: 'Asphalt', grip: 1, rolling: 0, rumble: 0, crunch: 0, squeal: 1 },
   pflaster: { label: 'Kopfsteinpflaster', grip: 0.88, rolling: 0.008, rumble: 0.45, crunch: 0, squeal: 0.7 },
   gehweg: { label: 'Gehweg', grip: 0.95, rolling: 0.004, rumble: 0.12, crunch: 0, squeal: 0.9 },
+  // Paved footpath away from the street: like a pavement, but no kerb on the way there.
+  fussweg: { label: 'Fußweg', grip: 0.95, rolling: 0.004, rumble: 0.14, crunch: 0, squeal: 0.9 },
   schotter: { label: 'Schotter', grip: 0.62, rolling: 0.035, rumble: 0.4, crunch: 1, squeal: 0, dust: '#b8a888' },
   gras: { label: 'Gras', grip: 0.5, rolling: 0.1, rumble: 0.3, crunch: 0.45, squeal: 0, dust: '#6f7f43' },
   acker: { label: 'Acker', grip: 0.5, rolling: 0.14, rumble: 0.55, crunch: 0.6, squeal: 0, dust: '#8a6f4e' },
   waldboden: { label: 'Waldboden', grip: 0.55, rolling: 0.11, rumble: 0.5, crunch: 0.55, squeal: 0, dust: '#5e4a36' },
   wasser: { label: 'Wasser', grip: 0.3, rolling: 0.35, rumble: 0.2, crunch: 0.3, squeal: 0, dust: '#d6e6f0' },
 };
+
+/** Wheel surface per road atlas surface (SURFACE in render/pbr/roadCode.ts) on paths. */
+const PATH_SURFACE: SurfaceKind[] = ['asphalt', 'asphalt', 'asphalt', 'pflaster', 'fussweg', 'fussweg', 'schotter', 'fussweg'];
 
 /** Carriageway half width of an edge, with a little margin. */
 const halfWidth = (e: Edge) => e.width / 2 + 0.3;
@@ -50,6 +55,9 @@ export function classify(graph: RoadGraph, groundAt: (x: number, z: number) => n
     // Pedestrian zones and living streets in Saarlouis are paved with setts; tracks are gravel.
     return { kind: rank === 0 ? 'schotter' : rank === 2 ? 'pflaster' : 'asphalt', rank };
   }
+  // Footpaths, cycle paths and steps (not part of the network), by their surface.
+  const path = graph.pathNear(x, z, 6);
+  if (path && path.dist <= path.path.width / 2 + 0.2) return { kind: PATH_SURFACE[path.path.surface] ?? 'fussweg', rank: -1 };
   // Streets have a raised pavement along both sides.
   if (s && KERBED(s.edge.rank) && s.dist <= halfWidth(s.edge) + SIDEWALK) return { kind: 'gehweg', rank: s.edge.rank };
   const g = groundAt(x, z);

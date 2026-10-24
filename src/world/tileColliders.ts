@@ -54,8 +54,9 @@ export function tileColliderSteps(
     for (const [v, i] of splitMesh(pos, idx, MAX_TRIS_PER_COLLIDER)) steps.push(() => add(R.ColliderDesc.trimesh(v, i).setFriction(friction), kind));
   }
   // Roads and pavements lie a little above the terrain (ROAD_LIFT); without their own surface the tyres sink in.
-  // Only the wheels ride on them (ROAD_GROUPS), so kerbs never catch the chassis.
-  for (const field of ['roads', 'sidewalks']) {
+  // Only the wheels ride on them (ROAD_GROUPS), so kerbs never catch the chassis. Paths lie only a few
+  // centimetres above the terrain, so rolling onto one is no step either.
+  for (const field of ['roads', 'sidewalks', 'paths']) {
     const pos = t.f32(`${field}.pos`);
     if (!pos) continue;
     const idx = t.u32(`${field}.idx`) ?? Uint32Array.from({ length: pos.length / 3 }, (_, n) => n);

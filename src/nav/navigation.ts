@@ -1,4 +1,4 @@
-import { project, type RoadGraph, type Route, type Snap } from '../world/roadGraph.ts';
+import { type Edge, project, type RoadGraph, type Route, type Snap } from '../world/roadGraph.ts';
 
 export interface NavState {
   /** Remaining distance to the destination, metres. */
@@ -7,6 +7,9 @@ export interface NavState {
   next?: { in: number; angle: number; street: string };
   arrived: boolean;
 }
+
+/** The GPS routes over roads open to cars only, never through pedestrian zones or closed roads. */
+const open = (e: Edge) => !e.noCars;
 
 /** GPS: holds the destination and route, tracks progress and reroutes when the car leaves the route. */
 export class Navigation {
@@ -26,7 +29,7 @@ export class Navigation {
 
   /** Sets a destination near (x, z); returns false when no road is close enough. */
   setDestination(x: number, z: number, carX: number, carZ: number): boolean {
-    const dest = this.graph.snap(x, z, 150);
+    const dest = this.graph.snap(x, z, 150, open);
     if (!dest) return false;
     this.destination = dest;
     this.reroute(carX, carZ);
@@ -41,7 +44,7 @@ export class Navigation {
 
   private reroute(carX: number, carZ: number) {
     if (!this.destination) return;
-    const from = this.graph.snap(carX, carZ, 200);
+    const from = this.graph.snap(carX, carZ, 200, open);
     this.route = from ? this.graph.route(from, this.destination) : undefined;
     this.progress = 0;
     this.offRoute = 0;

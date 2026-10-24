@@ -49,7 +49,8 @@ export function roadSurface(tags: Record<string, string>, id: number): number {
   if (['gravel', 'fine_gravel', 'compacted', 'unpaved', 'dirt', 'ground', 'earth', 'grass', 'pebblestone', 'mud', 'sand', 'grass_paver'].includes(s)) return SURFACE.gravel;
   const hw = tags.highway;
   if (!s && hw === 'track' && tags.tracktype !== 'grade1') return SURFACE.gravel;
-  if (!s && hw === 'pedestrian') return SURFACE.plaza;
+  if (!s && (hw === 'pedestrian' || hw === 'footway' || hw === 'steps')) return SURFACE.plaza;
+  if (!s && (hw === 'path' || hw === 'bridleway')) return SURFACE.gravel;
   const r = hash(id);
   if (tags.smoothness === 'bad' || tags.smoothness === 'very_bad') return SURFACE.asphalt_cracked;
   if (['motorway', 'trunk', 'motorway_link', 'trunk_link'].includes(hw)) return r < 0.75 ? SURFACE.asphalt : SURFACE.asphalt_worn;

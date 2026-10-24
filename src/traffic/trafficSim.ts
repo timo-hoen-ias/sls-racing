@@ -33,6 +33,8 @@ export const CAR_PALETTE = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0x
 export const SPEED_LIMIT = [4, 5, 4, 8.3, 11, 13.9, 13.9, 13.9, 25, 33];
 /** Tracks, service roads, living streets and pedestrian zones carry no traffic. */
 export const MIN_RANK = 3;
+/** Roads with traffic: big enough and open to cars. */
+const carries = (e: Edge) => e.rank >= MIN_RANK && !e.noCars;
 
 /** Lateral acceleration drivers accept in bends (m/s²). */
 const LAT_ACC = 2.6;
@@ -191,7 +193,7 @@ export class TrafficSim {
     const px = x + fx * ahead, pz = z + fz * ahead;
     let best: { e: Edge; along: number; dist: number } | undefined;
     this.graph.forEachEdgeNear(px, pz, 150, (e) => {
-      if (e.rank < MIN_RANK) return;
+      if (!carries(e)) return;
       const pr = project(e.p, e.cum, px, pz);
       if (!best || pr.dist < best.dist) best = { e, ...pr };
     });
@@ -225,7 +227,7 @@ export class TrafficSim {
     const candidates: Edge[] = [];
     let total = 0;
     this.graph.forEachEdgeNear(p.x, p.z, this.spawnMax, (e) => {
-      if (e.rank < MIN_RANK || e.length < 15) return;
+      if (!carries(e) || e.length < 15) return;
       candidates.push(e);
       total += e.length * (e.rank >= 5 ? 2 : 1);
     });
@@ -409,7 +411,7 @@ export class TrafficSim {
     const options: { lane: Lane; w: number }[] = [];
     for (const id of this.adj[n]) {
       const e = this.graph.edges[id];
-      if (e === a.edge || e.rank < MIN_RANK) continue;
+      if (e === a.edge || !carries(e)) continue;
       const dir: 1 | -1 = e.a === n ? 1 : -1;
       if (e.oneway && dir < 0) continue;
       const lane = { edge: e, dir };

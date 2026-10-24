@@ -42,6 +42,7 @@ import { registerWaterCommands } from './render/waterCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerScaleCommands } from './world/scaleCommands.ts';
+import { registerPathCommands } from './world/pathCommands.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
@@ -389,6 +390,7 @@ async function boot() {
     tiles: (fn) => streamer.forEachContent(fn),
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
+  registerPathCommands({ graph, scene: view.scene, pos: () => (hold ?? ip), teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading.toFixed(0)}`}`) });
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();
   registerGameSettings({ view, quality, cam, car, setManual, weather, input, tacho, water });

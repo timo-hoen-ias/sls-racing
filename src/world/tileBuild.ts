@@ -1,5 +1,6 @@
 // Turns a decoded tile into ready-to-upload vertex arrays. Pure TypeScript without three.js or DOM,
 // so it runs in the tile worker (tileWorker.ts), on the main thread (stream.worker off) and in Node tests.
+import { GROUND_LOOK, lookWeights, SPLAT, SPLAT_AERIAL_REF } from './coverKinds.ts';
 import { Ground, TERRAIN_N, TERRAIN_STEP, type TileContent, type WorldInfo, tileOriginLocal } from './format.ts';
 
 export interface MeshArrays {
@@ -9,6 +10,8 @@ export interface MeshArrays {
   /** Linear RGB 0..1. */
   col?: Float32Array;
   idx?: Uint32Array;
+  /** Further vertex attributes by name (terrain: splatA, splatB, rows), normalised bytes. */
+  attrs?: Record<string, { array: Uint8Array; size: number }>;
 }
 
 export interface BuiltTile {
@@ -109,6 +112,7 @@ function buildTerrain(t: TileContent, w: WorldInfo): { terrain: MeshArrays; wate
   const N = TERRAIN_N;
   const terrain = gridMesh(terrainHeights(t), g, N, TERRAIN_STEP, ox, oz);
   const { pos, uv } = terrain as Required<MeshArrays>;
+  coverAttributes(t, g, terrain);
 
   let water: MeshArrays | undefined;
   if (g.some((v) => v === Ground.water)) {
@@ -125,6 +129,38 @@ function buildTerrain(t: TileContent, w: WorldInfo): { terrain: MeshArrays; wate
     water = { pos: wp, uv: uv.slice(), idx: widx, nrm: computeNormals(wp, widx) };
   }
   return { terrain, water };
+}
+
+/** Default looks per coarse ground class, for tiles built before the land cover existed. */
+const GROUND_SPLAT = Object.fromEntries(Object.entries(GROUND_LOOK).map(([k, m]) => {
+  const { w, rows } = lookWeights(m);
+  const ref = [0, 1, 2].map((ch) => srgbToLinear(SPLAT.reduce((a, n, i) => a + w[i] * SPLAT_AERIAL_REF[n][ch], 0) / 255));
+  return [k, { w: w.map((v) => Math.round(v * 255)), rows: Math.round(rows * 255), ref }];
+}));
+
+/**
+ * Terrain texture weights (splatA/splatB: 8 channels; rows: crop-row strength and direction) and the survey colour as vertex colour. The ground
+ * shader tints each channel's own colour by the survey colour relative to the channel's reference.
+ */
+function coverAttributes(t: TileContent, g: Uint8Array, m: MeshArrays) {
+  const n = g.length;
+  const splat = t.u8('splat'), rowsIn = t.u8('rows'), tint = t.u8('tint');
+  const a = new Uint8Array(n * 4), b = new Uint8Array(n * 4), rows = new Uint8Array(n * 2);
+  const col = m.col!;
+  const lut = new Float32Array(256).map((_, i) => srgbToLinear(i / 255));
+  for (let i = 0; i < n; i++) {
+    if (splat && rowsIn && tint) {
+      for (let k = 0; k < 4; k++) { a[i * 4 + k] = splat[i * 8 + k]; b[i * 4 + k] = splat[i * 8 + 4 + k]; }
+      rows[i * 2] = rowsIn[i * 2]; rows[i * 2 + 1] = rowsIn[i * 2 + 1];
+      for (let ch = 0; ch < 3; ch++) col[i * 3 + ch] = lut[tint[i * 3 + ch]];
+    } else {
+      const d = GROUND_SPLAT[g[i]] ?? GROUND_SPLAT[Ground.grass];
+      for (let k = 0; k < 4; k++) { a[i * 4 + k] = d.w[k]; b[i * 4 + k] = d.w[4 + k]; }
+      rows[i * 2] = d.rows;
+      for (let ch = 0; ch < 3; ch++) col[i * 3 + ch] = d.ref[ch];
+    }
+  }
+  m.attrs = { splatA: { array: a, size: 4 }, splatB: { array: b, size: 4 }, rows: { array: rows, size: 2 } };
 }
 
 /** Field names that hold packed meshes ("roads" for roads.pos, roads.idx …). */
@@ -157,7 +193,10 @@ export function buildTile(t: TileContent, w: WorldInfo): BuiltTile {
 /** All buffers of a built tile, for postMessage transfer. */
 export function transferList(b: BuiltTile): ArrayBuffer[] {
   const out = new Set<ArrayBuffer>();
-  const add = (m?: MeshArrays) => { if (m) for (const a of [m.pos, m.nrm, m.uv, m.col, m.idx]) if (a) out.add(a.buffer as ArrayBuffer); };
+  const add = (m?: MeshArrays) => {
+    if (!m) return;
+    for (const a of [m.pos, m.nrm, m.uv, m.col, m.idx, ...Object.values(m.attrs ?? {}).map((x) => x.array)]) if (a) out.add(a.buffer as ArrayBuffer);
+  };
   add(b.terrain);
   add(b.water);
   for (const m of Object.values(b.meshes)) add(m);

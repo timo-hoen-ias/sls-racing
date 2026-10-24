@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { patchPbr } from './pbrShader.ts';
 import { BUILDING, cellIndex, NATURE, STREET } from './textureSets.ts';
+import { SPLAT, SPLAT_AERIAL_REF, SPLAT_COLOUR } from '../../world/coverKinds.ts';
 
 // The GLSL bodies of the world's PBR materials. Each sets pbrAlbedo/pbrN/pbrRough/pbrHeight (see pbrShader.ts)
 // and writes diffuseColor. Roads, pavements and terrain are projected from world x/z, so neighbouring tiles,
@@ -138,60 +139,104 @@ const SIDEWALK = /* glsl */ `
   diffuseColor.rgb *= pbrAlbedo;
 `;
 
-/** A ground class colour in linear RGB, as GLSL. */
-const lin = (hex: string) => {
-  const c = new THREE.Color(hex);
-  return `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`;
-};
-
 /**
- * Terrain: the ground class comes from the vertex colour (GROUND_SRGB in world/tileBuild.ts; between
- * vertices of two classes it blends). Height-blended so grass grows between stones instead of cross-fading.
+ * Terrain: texture weights per vertex from the land cover (splatA/splatB, see SPLAT in world/coverKinds.ts),
+ * height-blended so grass grows between stones instead of cross-fading. Crop rows follow each field's long
+ * side (rows attribute) and split the weights into green rows and soil between them. The colour is the
+ * channel's own colour, tinted by the aerial survey colour (vertex colour) relative to what the survey
+ * typically shows for that channel, so a ripe field, a worn lawn or a red clay court keep their real hue.
  * The vertex colour itself is divided out again, since three multiplies it in after this body.
  */
 const GROUND = /* glsl */ `
   vec2 wp = vPbrPos.xz;
   vec2 gx = dFdx(wp), gy = dFdy(wp);
-  vec3 vc = max(vColor.rgb, vec3(1e-3));
-  // Relative distance to each class colour (the per-vertex brightness jitter is ±8 %).
-  vec3 cls[5] = vec3[](${lin('#8d8a7f')}, ${lin('#5f7a3e')}, ${lin('#3d5229')}, ${lin('#2f5566')}, ${lin('#8f8a55')});
-  float cw[5];
-  float cs = 0.0;
-  for (int i = 0; i < 5; i++) { cw[i] = pow(max(0.0, 1.0 - length(vc / cls[i] - 1.0) * 1.6), 2.0); cs += cw[i]; }
-  for (int i = 0; i < 5; i++) cw[i] /= max(cs, 1e-4);
-  float wu = cw[0], wg = cw[1], wf = cw[2], wm = cw[3], wfi = cw[4];
-  if (cs < 1e-4) wg = 1.0;
-  float big = pbrFbm(wp * 0.012);
-  float mid = pbrFbm(wp * 0.06 + 13.0);
-  // Grass varies between lawn and meadow; fields are crops or bare soil per parcel; built-up ground is patchy.
-  float meadow = smoothstep(0.38, 0.62, big);
-  float soil = smoothstep(0.45, 0.55, pbrNoise(floor(wp / 60.0) + 0.5));
-  float urbanPatch = smoothstep(0.35, 0.65, mid);
-  float w[8] = float[](wg * (1.0 - meadow), wg * meadow + wfi * (1.0 - soil), wf, wu * urbanPatch, wfi * soil, 0.0, wm, wu * (1.0 - urbanPatch));
+  float w[8] = float[](vSplatA.x, vSplatA.y, vSplatA.z, vSplatA.w, vSplatB.x, vSplatB.y, vSplatB.z, vSplatB.w);
+  float ws = 0.0;
+  for (int i = 0; i < 8; i++) ws += w[i];
+  if (ws < 1e-3) { w[0] = 1.0; ws = 1.0; }
+  vec3 pal = vec3(0.0), ref = vec3(0.0), dbg = vec3(0.0);
+  for (int i = 0; i < 8; i++) { w[i] /= ws; pal += GROUND_PAL[i] * w[i]; ref += GROUND_REF[i] * w[i]; dbg += GROUND_DBG[i] * w[i]; }
+  vec3 vc = pal * pow(clamp(max(vColor.rgb, vec3(1e-4)) / max(ref, vec3(1e-4)), 0.45, 2.2), vec3(uGroundAerial));
+  // Crop rows: 0.75 m apart across the field, tramlines every 21 m; faded out where they would alias.
+  float rs = vRows.x * uGroundRows;
+  float stripe = 0.5, tram = 0.0;
+  if (rs > 0.01) {
+    float code = floor(vRows.y * 255.0 + 0.5);
+    vec2 cellR = floor((wp + 40.0 * vec2(pbrNoise(wp * 0.004), pbrNoise(wp * 0.004 + 7.0))) / 150.0);
+    float ang = code < 0.5 ? pbrHash(cellR) * 3.14159 : (code - 1.0) / 254.0 * 3.14159;
+    // Direction counts from east towards north; local z runs south.
+    vec2 across = vec2(sin(ang), cos(ang));
+    float x = dot(wp, across);
+    float ph = x / 0.75;
+    float fade = 1.0 - smoothstep(0.2, 0.55, fwidth(ph));
+    stripe = mix(0.5, 0.5 + 0.5 * cos(ph * 6.2832), fade);
+    float tx = mod(x + 10.5, 21.0) - 10.5;
+    tram = smoothstep(0.35, 0.15, abs(abs(tx) - 0.9)) * (1.0 - smoothstep(0.05, 0.3, fwidth(tx)));
+    float green = 2.0 * stripe * (1.0 - tram), bare = 2.0 * (1.0 - stripe) + 2.0 * tram;
+    w[0] *= mix(1.0, green, rs); w[1] *= mix(1.0, green, rs); w[2] *= mix(1.0, green, rs);
+    w[4] *= mix(1.0, bare, rs);
+  }
   vec3 acc = vec3(0.0), accM = vec3(0.0); vec2 accN = vec2(0.0); float accR = 0.0, accH = 0.0, accW = 0.0;
   for (int i = 0; i < 8; i++) {
     if (w[i] < 0.02) continue;
-    float c = float(i);
-    float m = pbrNatureMetres[i];
-    PbrTexel t = pbrNature(c, wp / m, gx / m, gy / m);
+    PbrTexel t;
+    vec3 mean;
+    float c = GROUND_CELL[i];
+    if (i == 5 || i == 6) {
+      float m = pbrStreetMetres[int(c)];
+      t = pbrStreet(c, wp / m, gx / m, gy / m);
+      mean = pbrStreetMean(c);
+    } else {
+      float m = pbrNatureMetres[int(c)];
+      t = pbrNature(c, wp / m, gx / m, gy / m);
+      mean = pbrNatureMean(c);
+    }
     float k = w[i] * pow(0.35 + t.h, 4.0);
-    acc += t.a * k; accM += pbrNatureMean(c) * k; accN += t.n * k; accR += t.r * k; accH += t.h * k; accW += k;
-    if (k > accW * 0.5) pbrCell = c;
+    acc += t.a * k; accM += mean * k; accN += t.n * k; accR += t.r * k; accH += t.h * k; accW += k;
+    if (k > accW * 0.5) pbrCell = c + (i == 5 || i == 6 ? 8.0 : 0.0);
   }
   accW = max(accW, 1e-4);
   pbrAlbedo = acc / accW;
-  // The scans are darker and less saturated than the map's class colours, which read grey under a bright
-  // sky. Keep their detail but move their mean onto the vertex colour (tex.groundtint).
+  // The scans are darker and less saturated than the class colours, which read grey under a bright sky.
+  // Keep their detail but move their mean onto the ground colour (tex.groundtint).
   pbrAlbedo = mix(pbrAlbedo, pbrAlbedo * vc / max(accM / accW, vec3(1e-3)), uPbrGroundTint);
   pbrN = pbrDecodeN(accN / accW);
   // Grass and soil are rough and self-shadowed; scan roughness around 0.7 made grazing sky reflections wash
-  // the ground grey.
-  pbrRough = mix(0.97, 1.0, accR / accW);
+  // the ground grey. Paved yards keep a little sheen.
+  pbrRough = mix(mix(0.97, 1.0, accR / accW), accR / accW, w[5] * 0.6);
   pbrHeight = accH / accW;
+  // Row ridges catch the light, furrows are darker.
+  pbrAlbedo *= mix(1.0, 0.82 + 0.3 * stripe, rs * 0.6);
   pbrUv = wp;
+  float big = pbrFbm(wp * 0.012);
+  float mid = pbrFbm(wp * 0.06 + 13.0);
   pbrAlbedo *= 0.88 + 0.24 * mid * uPbrMacro + (big - 0.5) * 0.1 * uPbrMacro;
   if (uPbrOn < 0.5) { pbrAlbedo = vc; pbrRough = 0.95; }
-  diffuseColor.rgb *= pbrAlbedo / vc;
+  if (uGroundView > 0.5 && uGroundView < 1.5) pbrAlbedo = dbg;
+  else if (uGroundView > 1.5) pbrAlbedo = vColor.rgb;
+  diffuseColor.rgb *= pbrAlbedo / max(vColor.rgb, vec3(1e-4));
+`;
+
+/** Ground uniforms: survey tint strength (ground.aerial), crop rows (ground.rows), debug view (ground.view). */
+export const groundUniforms = {
+  uGroundAerial: { value: 1 },
+  uGroundRows: { value: 1 },
+  uGroundView: { value: 0 },
+};
+
+const vec3s = (cols: THREE.Color[]) => cols.map((c) => `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`).join(', ');
+const GROUND_FUNCTIONS = /* glsl */ `
+varying vec4 vSplatA;
+varying vec4 vSplatB;
+varying vec2 vRows;
+uniform float uGroundAerial;
+uniform float uGroundRows;
+uniform float uGroundView;
+const vec3 GROUND_PAL[8] = vec3[](${vec3s(SPLAT.map((c) => new THREE.Color(SPLAT_COLOUR[c])))});
+const vec3 GROUND_REF[8] = vec3[](${vec3s(SPLAT.map((c) => new THREE.Color().setRGB(...SPLAT_AERIAL_REF[c].map((v) => v / 255) as [number, number, number], THREE.SRGBColorSpace)))});
+const vec3 GROUND_DBG[8] = vec3[](${vec3s(['#4caf50', '#a5d66b', '#c8b45a', '#1b5e20', '#8d5a2b', '#808080', '#d8c8a8', '#3050c0'].map((h) => new THREE.Color(h)))});
+// Atlas cell per channel: nature cells, except paved and gravel from the street atlas.
+const float GROUND_CELL[8] = float[](${N('grass')}, ${N('meadow')}, ${N('patchy')}, ${N('forest')}, ${N('field')}, ${S('asphalt_worn')}, ${S('gravel')}, ${N('mud')});
 `;
 
 /** Bark around the trunk (cylindrical uv with a seam-free derivative). */
@@ -251,7 +296,13 @@ export function patchSidewalk(m: THREE.MeshStandardMaterial) {
 
 export function patchGround(m: THREE.MeshStandardMaterial) {
   m.roughness = 1;
-  patchPbr(m, { key: 'ground', atlases: ['nature'], body: GROUND });
+  // Land cover attributes into varyings (before the PBR hooks, which wrap this).
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec4 splatA;\nattribute vec4 splatB;\nattribute vec2 rows;\nvarying vec4 vSplatA;\nvarying vec4 vSplatB;\nvarying vec2 vRows;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vSplatA = splatA;\n  vSplatB = splatB;\n  vRows = rows;');
+  };
+  patchPbr(m, { key: 'ground', atlases: ['nature', 'street'], body: GROUND, functions: GROUND_FUNCTIONS, uniforms: groundUniforms });
 }
 
 export function patchTrunk(m: THREE.MeshStandardMaterial) {

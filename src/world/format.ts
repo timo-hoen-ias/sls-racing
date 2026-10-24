@@ -80,6 +80,12 @@ export interface TileData {
   waterways?: string;
   /** Float32 x, z, height above ground, ALKIS function group and code (31001, 1000 = Wohnhaus) per LoD2 building, for `bld.info`. */
   bldInfo?: string;
+  /** Uint8 terrain texture weights per vertex, 8 channels (see SPLAT in coverKinds.ts), from the land cover. */
+  splat?: string;
+  /** Uint8 crop-row strength and direction per vertex (1..255 = 0..180° from east towards north, 0 = none). */
+  rows?: string;
+  /** Uint8 sRGB ground colour per vertex from the aerial survey (3 bytes). */
+  tint?: string;
 }
 
 /** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */

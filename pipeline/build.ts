@@ -27,6 +27,7 @@ import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { buildRoads, type Railing } from './lib/roads.ts';
+import { matchRampHeights, planRamps, rampList } from './lib/ramps.ts';
 import { planKerbs } from './lib/kerbs.ts';
 import { buildRoadside } from './lib/roadside.ts';
 import { terrariumSampler } from './lib/terrain.ts';
@@ -72,7 +73,10 @@ function main() {
   const tiles = new TileMap(info.tileSize);
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
+  const ramps = planRamps(osm.ways);
+  console.log(`Motorway junctions: ${ramps.stats.runs} auxiliary lanes, ${ramps.stats.moved} ramps moved onto them, ${ramps.stats.plain} ramps as mapped`);
   roadHeights(osm.ways, regions, height, console.log);
+  matchRampHeights(ramps);
   // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
   const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
   console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
@@ -83,7 +87,7 @@ function main() {
   const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
   const railings: Railing[] = [];
   const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
-  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings });
+  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings }, ramps);
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
@@ -381,6 +385,7 @@ function main() {
   console.log(`Landmarks: ${placed.length} models placed`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
+  writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info)));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);

@@ -19,6 +19,7 @@ import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { readOsm } from './lib/osm.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
+import { matchRampHeights, planRamps } from './lib/ramps.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
 import { densify, isDrivable, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
 
@@ -209,7 +210,9 @@ async function main() {
   const regions = [loadRegion(region)];
   const height = terrainHeight(regions, unproject(cfg.zone));
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
+  const ramps = planRamps(osm.ways);
   roadHeights(osm.ways, regions, height);
+  matchRampHeights(ramps);
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
   let candidates = osm.ways.filter((w) =>

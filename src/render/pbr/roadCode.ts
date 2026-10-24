@@ -22,6 +22,9 @@ export interface RoadLook {
   width: number;
 }
 
+/** Edge line width: broad line (30 cm) on motorways and their ramps (RMS), else 15 cm. */
+export const edgeLineWidth = (shoulder: number) => (shoulder >= 2 ? 0.3 : 0.15);
+
 export function encodeRoad(r: RoadLook): number {
   const q = (v: number, max: number) => Math.max(0, Math.min(max, Math.round(v * 4)));
   // 20 bits: exact in the float32 uv.

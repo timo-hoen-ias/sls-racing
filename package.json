@@ -14,6 +14,7 @@
     "world:fixture": "node pipeline/build.ts fixture",
     "world:drivetest": "node pipeline/drivetest.ts saarlouis",
     "models:build": "blender --background --factory-startup --python tools/blender/make_sportscar.py -- public/models/sportscar.raw.glb && node tools/compress-model.ts public/models/sportscar.raw.glb public/models/sportscar.glb && blender --background --factory-startup --python tools/blender/make_traffic.py -- public/models/traffic.raw.glb && node tools/compress-model.ts public/models/traffic.raw.glb public/models/traffic.glb && npm run models:landmarks",
+    "textures:build": "node tools/textures/build-textures.ts",
     "models:landmarks": "blender --background --factory-startup --python tools/blender/make_landmarks.py && for f in public/models/landmarks/*.raw.glb; do node tools/compress-model.ts \"$f\" \"${f%.raw.glb}.glb\"; done"
   },
   "engines": {
@@ -32,6 +33,7 @@
     "@types/node": "^22.20.5",
     "@types/pngjs": "^6.0.5",
     "@types/three": "^0.186.0",
+    "ktx2-encoder": "^0.6.0",
     "meshoptimizer": "^1.3.0",
     "pngjs": "^7.0.0",
     "typescript": "^7.0.2",

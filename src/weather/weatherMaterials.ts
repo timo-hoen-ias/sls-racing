@@ -97,12 +97,15 @@ uniform float uWxRain;
 uniform float uWxTime;
 uniform sampler2D uWxPuddleMap;
 float wxPuddle = 0.0;
+// Snow cover, for the PBR normal maps (render/pbr/pbrShader.ts) to flatten under snow.
+float wxCover = 0.0;
 ${NOISE}`,
       )
+      // Before metalness rather than right after roughnessmap_fragment, so the textured roughness of the PBR
+      // materials (render/pbr) is in roughnessFactor before rain makes it glossy.
       .replace(
-        '#include <roughnessmap_fragment>',
-        `#include <roughnessmap_fragment>
-  {
+        '#include <metalnessmap_fragment>',
+        `{
     vec2 wp = vWxPos.xz;
     float up = smoothstep(WX_UP, WX_UP + 0.35, vWxNrm.y);
     float patches = wxNoise(wp * 0.08) * 0.6 + wxNoise(wp * 0.7) * 0.4;
@@ -138,11 +141,15 @@ ${NOISE}`,
     diffuseColor.rgb = mix(diffuseColor.rgb, snowCol, cover);
     roughnessFactor = mix(roughnessFactor, 0.7, cover);
     wxPuddle *= 1.0 - cover;
-  }`,
+    wxCover = cover;
+  }
+#include <metalnessmap_fragment>`,
       );
   };
-  // One program per material for all weather: the switches are uniforms, not defines.
-  mat.customProgramCacheKey = () => `wx-${o.wet}-${o.snow}-${o.upFrom}-${o.road ? 1 : 0}`;
+  // One program per material for all weather: the switches are uniforms, not defines. Keeps the key of
+  // an earlier patch (PBR bodies, facades), else two materials with the same weather would share a program.
+  const base = Object.hasOwn(mat, 'customProgramCacheKey') ? mat.customProgramCacheKey.bind(mat) : () => '';
+  mat.customProgramCacheKey = () => `${base()}wx-${o.wet}-${o.snow}-${o.upFrom}-${o.road ? 1 : 0}`;
   mat.needsUpdate = true;
 }
 

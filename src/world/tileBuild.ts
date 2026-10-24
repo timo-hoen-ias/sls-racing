@@ -102,13 +102,32 @@ export function gridMesh(y: Float32Array, g: Uint8Array, n: number, step: number
   return { pos, col, uv, idx, nrm: computeNormals(pos, idx) };
 }
 
+/**
+ * Ground class weights for the textured terrain (render/pbr/surfaces.ts): colour = (grass, forest, farmland),
+ * uv = (urban, water bank). One-hot per vertex; the GPU interpolates them into blends between classes.
+ */
+export function groundWeights(m: MeshArrays, g: Uint8Array) {
+  const col = new Float32Array(g.length * 3);
+  const uv = new Float32Array(g.length * 2);
+  for (let i = 0; i < g.length; i++) {
+    const k = g[i];
+    col[i * 3] = k === Ground.grass ? 1 : 0;
+    col[i * 3 + 1] = k === Ground.forest ? 1 : 0;
+    col[i * 3 + 2] = k === Ground.farmland ? 1 : 0;
+    uv[i * 2] = k === Ground.urban ? 1 : 0;
+    uv[i * 2 + 1] = k === Ground.water ? 1 : 0;
+  }
+  return { ...m, col, uv };
+}
+
 function buildTerrain(t: TileContent, w: WorldInfo): { terrain: MeshArrays; water?: MeshArrays } {
   const [ox, oz] = tileOriginLocal(w, t.ix, t.iy);
   const h = t.f32('terrain')!;
   const g = t.u8('ground')!;
   const N = TERRAIN_N;
-  const terrain = gridMesh(terrainHeights(t), g, N, TERRAIN_STEP, ox, oz);
-  const { pos, uv } = terrain as Required<MeshArrays>;
+  const grid = gridMesh(terrainHeights(t), g, N, TERRAIN_STEP, ox, oz);
+  const { pos, uv } = grid as Required<MeshArrays>;
+  const terrain = groundWeights(grid, g);
 
   let water: MeshArrays | undefined;
   if (g.some((v) => v === Ground.water)) {

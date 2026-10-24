@@ -1,5 +1,6 @@
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
+import { encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
@@ -146,6 +147,9 @@ export function buildRoads(
     const bridge = isBridge(way.tags);
     const ySurf = surface(way, height);
     const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
+    // Surface, wear, edge lines and gutters for the road shader (src/render/pbr/roadCode.ts).
+    const oneway = way.tags.oneway === 'yes' || way.tags.oneway === '1' || way.tags.highway === 'motorway' || way.tags.junction === 'roundabout';
+    const look = encodeRoad(roadLook(way.tags, way.id, width, sidewalk, oneway));
 
     let dist = 0;
     const ring = pts.map((p, i) => {
@@ -181,7 +185,7 @@ export function buildRoads(
         buf.tri(v[1], v[2], v[3]);
       };
       const hw = width / 2;
-      strip(tile.roads, -hw, hw, [a.y, a.y], [b.y, b.y], (p, s) => [s, p.dist / width]);
+      strip(tile.roads, -hw, hw, [a.y, a.y], [b.y, b.y], (_, s) => [s, look]);
       // Lifted road on an embankment: own collision, and retaining walls down to the terrain.
       const above = !bridge && way.raise ? Math.max(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) : 0;
       if (bridge || above > ROAD_LIFT + 0.1) {
@@ -192,7 +196,7 @@ export function buildRoads(
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
       if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
         const o = hw + 0.5;
-        strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1]);
+        strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1], () => [0, 0]);
         wall(tile.sidewalks, off(a, o), off(b, o), a.y - 1, a.y, b.y - 1, b.y, true);
         wall(tile.sidewalks, off(a, -o), off(b, -o), a.y - 1, a.y, b.y - 1, b.y, false);
       }

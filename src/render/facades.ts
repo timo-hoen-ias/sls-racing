@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { parseNum, registerCommand, registerToggle } from '../debug/registry.ts';
+import { pbrHooks } from './pbr/pbrShader.ts';
+import { BUILDING, cellIndex } from './pbr/textureSets.ts';
 
 // Façades with character: a texture atlas with one cell per building type (house, old town house, apartment
 // block, office, hall, church, garage, school) plus shop fronts for ground floors, and lit windows at night.
 // The pipeline encodes the type in the wall's v coordinate (pipeline/lib/facades.ts): v = code * 1000 + height,
 // code = type + 16 when the ground floor has shops. One texture repeat covers 14 m × 9 m (4 bays, 3 floors).
+// On top of the drawn atlas: a normal map derived from it (recessed, glossy window glass), photo plaster or
+// concrete detail from the building PBR atlas, and roof tiles / gravel on roofs (render/pbr/).
 
 /** Keep in sync with Facade in pipeline/lib/facades.ts. Index = atlas cell. */
 export const FACADES = ['plain', 'wohnhaus', 'altbau', 'mehrfamilien', 'buero', 'halle', 'kirche', 'garage', 'schule'] as const;
@@ -20,14 +24,20 @@ export interface FacadeMaterial extends THREE.MeshStandardMaterial {
       uForce: { value: number };
       uShops: { value: number };
       litMap: { value: THREE.Texture };
+      facadeNrm: { value: THREE.Texture };
     };
   };
 }
 
+/** Photo detail per facade type (FACADES order, then the shop cell): plaster, rough plaster or concrete. */
+const DETAIL = ['plaster', 'plaster', 'plaster_rough', 'plaster', 'concrete', 'concrete', 'plaster_rough', 'plaster_rough', 'plaster', 'plaster']
+  .map((n) => `${cellIndex(BUILDING, n)}.0`);
+const BC = (n: string) => `${cellIndex(BUILDING, n)}.0`;
+
 export function createFacadeMaterial(): FacadeMaterial {
-  const { map, lit } = drawAtlas();
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, map, roughness: 0.85 }) as FacadeMaterial;
-  const uniforms = { uNight: { value: 0 }, uWindows: { value: 1 }, uForce: { value: -1 }, uShops: { value: 1 }, litMap: { value: lit } };
+  const { map, lit, nrm } = drawAtlas();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, map, roughness: 1 }) as FacadeMaterial;
+  const uniforms = { uNight: { value: 0 }, uWindows: { value: 1 }, uForce: { value: -1 }, uShops: { value: 1 }, litMap: { value: lit }, facadeNrm: { value: nrm } };
   mat.userData.uniforms = uniforms;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -38,14 +48,26 @@ uniform float uWindows;
 uniform float uForce;
 uniform float uShops;
 uniform sampler2D litMap;
+uniform sampler2D facadeNrm;
 float facadeHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
       .replace('#include <map_fragment>', `
 vec3 facadeLit = vec3(0.0);
 float facadeWin = 0.0;
 #ifdef USE_MAP
 {
+  vec3 wn = normalize(vPbrNrm);
+  vec3 wp = vPbrPos;
   float code = floor(vMapUv.y / 1000.0 + 0.0005);
-  vec2 fuv = vec2(vMapUv.x, vMapUv.y - code * 1000.0);
+  // Roofs and gable ends carry uv (0.02, 0.02): no facade type, so the wall pattern comes from world space.
+  bool untyped = code < 0.5 && abs(vMapUv.x - 0.02) < 1e-4 && abs(vMapUv.y - 0.02) < 1e-4;
+  bool roof = untyped && wn.y > 0.2;
+  vec2 along = normalize(vec2(-wn.z, wn.x) + 1e-5);
+  vec2 fuv = untyped ? vec2(dot(wp.xz, along) / 14.0, wp.y / 9.0) : vec2(vMapUv.x, vMapUv.y - code * 1000.0);
+  // Roof plane: u along the eaves, v down the slope; flat roofs top-down.
+  vec3 t3 = vec3(along.x, 0.0, along.y);
+  vec2 ruv = wn.y > 0.95 ? wp.xz : vec2(dot(wp, t3), dot(wp, cross(wn, t3)));
+  vec2 rgx = dFdx(ruv), rgy = dFdy(ruv);
+  vec2 dgx = dFdx(fuv * vec2(14.0, 9.0)), dgy = dFdy(fuv * vec2(14.0, 9.0));
   bool shopFloor = code > 15.5 && uShops > 0.5 && fuv.y < 0.42;
   float type = uForce >= 0.0 && code > 0.5 ? uForce : mod(code, 16.0);
   float cell = shopFloor ? ${SHOP_CELL}.0 : type;
@@ -53,20 +75,62 @@ float facadeWin = 0.0;
   vec2 grid = vec2(${COLS}.0, ${ROWS}.0);
   vec2 auv = (cxy + 0.008 + fract(fuv) * 0.984) / grid;
   vec2 gx = dFdx(fuv) * 0.984 / grid, gy = dFdy(fuv) * 0.984 / grid;
-  diffuseColor *= textureGrad(map, auv, gx, gy);
-  facadeLit = textureGrad(litMap, auv, gx, gy).rgb;
-  // Which windows are lit: random per bay and floor, different per building (wall colour) and repeat.
-  vec2 bay = floor(fuv * vec2(4.0, 3.0));
-  #ifdef USE_COLOR
-  bay += floor(vColor.rg * 63.0 + 0.5) * 7.0;
-  #endif
-  facadeWin = step(shopFloor ? 0.15 : 0.55, facadeHash(bay)) * (0.6 + 0.6 * facadeHash(bay + 7.3));
+  if (roof) {
+    bool isFlat = wn.y > 0.95;
+    #ifdef USE_COLOR
+    vec3 rc = vColor.rgb;
+    #else
+    vec3 rc = vec3(0.3);
+    #endif
+    // Grey roofs are slate, the rest clay tiles; flat roofs gravel.
+    float sat = (max(rc.r, max(rc.g, rc.b)) - min(rc.r, min(rc.g, rc.b))) / max(rc.r, 0.01);
+    float rcell = isFlat ? ${BC('roof_gravel')} : sat < 0.2 ? ${BC('roof_slate')} : ${BC('roof_clay')};
+    float m = pbrBuildingMetres[int(rcell)];
+    PbrTexel t = pbrBuilding(rcell, ruv / m, rgx / m, rgy / m);
+    pbrUse(t);
+    pbrUv = ruv;
+    pbrCell = rcell;
+    vec3 mean = pbrBuildingMean(rcell);
+    float l = dot(t.a, vec3(0.2126, 0.7152, 0.0722)) / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 0.01);
+    // Pitched: the photo as light/dark detail on the roof colour; flat: the gravel's own colour.
+    vec3 c = isFlat ? t.a / max(rc, vec3(0.02)) : vec3(l) * mix(vec3(1.0), t.a / max(mean, vec3(0.01)), 0.35);
+    if (uPbrOn < 0.5) c = vec3(1.0);
+    diffuseColor.rgb *= c;
+  } else {
+    diffuseColor *= textureGrad(map, auv, gx, gy);
+    facadeLit = textureGrad(litMap, auv, gx, gy).rgb;
+    vec3 fn = textureGrad(facadeNrm, auv, gx, gy).rgb;
+    float glass = fn.b;
+    float dcell = ${DETAIL.map((c, i) => (i < DETAIL.length - 1 ? `cell < ${i}.5 ? ${c} : ` : c)).join('')};
+    float m = pbrBuildingMetres[int(dcell)];
+    vec2 duv = fuv * vec2(14.0, 9.0);
+    PbrTexel d = pbrBuilding(dcell, duv / m, dgx / m, dgy / m);
+    vec3 mean = pbrBuildingMean(dcell);
+    float l = dot(d.a, vec3(0.2126, 0.7152, 0.0722)) / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 0.01);
+    if (uPbrOn > 0.5) diffuseColor.rgb *= mix(1.0, clamp(l, 0.55, 1.5), 0.7 * (1.0 - glass));
+    // Window recesses from the drawn atlas, whiteout-blended with the plaster relief (none on glass).
+    vec2 wxy = fn.rg * 2.0 - 1.0;
+    vec3 dn = pbrDecodeN(d.n);
+    pbrN = normalize(vec3(wxy * 1.6 + dn.xy * (1.0 - glass), dn.z));
+    pbrRough = mix(d.r, 0.06, glass);
+    pbrHeight = d.h;
+    pbrUv = duv;
+    pbrCell = dcell;
+    // Which windows are lit: random per bay and floor, different per building (wall colour) and repeat.
+    vec2 bay = floor(fuv * vec2(4.0, 3.0));
+    #ifdef USE_COLOR
+    bay += floor(vColor.rg * 63.0 + 0.5) * 7.0;
+    #endif
+    facadeWin = step(shopFloor ? 0.15 : 0.55, facadeHash(bay)) * (0.6 + 0.6 * facadeHash(bay + 7.3));
+  }
+  pbrAlbedo = diffuseColor.rgb;
 }
 #endif`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
 totalEmissiveRadiance += facadeLit * facadeWin * uNight * uWindows * 1.4;`);
+    pbrHooks(shader, ['building']);
   };
-  mat.customProgramCacheKey = () => 'facade-v1';
+  mat.customProgramCacheKey = () => 'facade-v2';
   return mat;
 }
 
@@ -160,15 +224,55 @@ function drawAtlas() {
     g.restore();
     l.restore();
   });
-  const tex = (c: HTMLCanvasElement) => {
+  const tex = (c: HTMLCanvasElement, srgb = true) => {
     const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace;
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
     t.anisotropy = 8;
     t.generateMipmaps = true;
     t.minFilter = THREE.LinearMipmapLinearFilter;
     return t;
   };
-  return { map: tex(mc), lit: tex(lc) };
+  return { map: tex(mc), lit: tex(lc), nrm: tex(facadeNormals(lc), false) };
+}
+
+/**
+ * Normal map of the atlas from its window mask (the lit canvas): glass sits 12 cm behind the wall, so the
+ * reveals catch the light. RG = normal XY (OpenGL convention, canvas rows run down), B = glass mask.
+ */
+function facadeNormals(lit: HTMLCanvasElement): HTMLCanvasElement {
+  const w = lit.width, h = lit.height;
+  const src = lit.getContext('2d')!.getImageData(0, 0, w, h).data;
+  const glass = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) glass[i] = Math.max(src[i * 4], src[i * 4 + 1], src[i * 4 + 2]) > 8 ? 1 : 0;
+  // Soft 3×3 blur so the reveal is a bevel, not a one-pixel step.
+  const soft = new Float32Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) sum += glass[Math.min(h - 1, Math.max(0, y + dy)) * w + Math.min(w - 1, Math.max(0, x + dx))];
+      soft[y * w + x] = sum / 9;
+    }
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d')!;
+  const img = g.createImageData(w, h);
+  const k = 2.2;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const at = (xx: number, yy: number) => -soft[Math.min(h - 1, Math.max(0, yy)) * w + Math.min(w - 1, Math.max(0, xx))];
+      const dx = (at(x + 1, y) - at(x - 1, y)) * k;
+      const dyUp = (at(x, y - 1) - at(x, y + 1)) * k;
+      const l = Math.hypot(dx, dyUp, 1);
+      const i = (y * w + x) * 4;
+      img.data[i] = 128 - (dx / l) * 127;
+      img.data[i + 1] = 128 - (dyUp / l) * 127;
+      img.data[i + 2] = soft[y * w + x] * 255;
+      img.data[i + 3] = 255;
+    }
+  g.putImageData(img, 0, 0);
+  return c;
 }
 
 /** Rectangle in metres from the cell's bottom-left corner (x across, y up). */

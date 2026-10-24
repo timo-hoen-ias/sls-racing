@@ -100,6 +100,26 @@ export function registerRenderCommands(view: SceneSetup) {
       },
     });
   factor('fog', 'fx.fog', 'Distance Fog: Dunst zum Horizont, passt sich der Sichtweite an', 20);
+  factor('ssr', 'fx.ssr', 'Spiegelungen auf nasser Straße und in Pfützen (Screen-Space Reflections)', 3);
+  registerCommand({
+    name: 'fx.ssr.debug',
+    args: '[on|off]',
+    help: 'Zeigt statt des Bildes, wie stark jede Fläche spiegelt (weiß = Pfütze)',
+    run: ([a]) => {
+      post.ssr.debug = a ? isOn(a) : !post.ssr.debug;
+      return `fx.ssr.debug ${post.ssr.debug ? 'an' : 'aus'}`;
+    },
+  });
+  registerCommand({
+    name: 'fx.hazegain',
+    args: '[faktor]',
+    help: 'Wie hell Dunst und Nebel höchstens leuchten, relativ zur Horizontfarbe (Standard 2)',
+    run: ([a]) => {
+      if (a) post.hazeGain = parseNum(a, 0.1, 20);
+      return `fx.hazegain = ${post.hazeGain}`;
+    },
+  });
+  factor('beams', 'fx.beams', 'Lichtkegel der Scheinwerfer und Lichthöfe der Laternen in Nebel und Regen', 10);
   factor('heightFog', 'fx.heightfog', 'Höhennebel in Tälern und über der Saar (morgens und nachts dichter)', 20);
   const meters = (key: 'fogHeight' | 'fogBase', name: string, help: string, min: number, max: number) =>
     registerCommand({

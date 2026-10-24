@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { EngineSound } from './audio/engineSound.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
+import { registerAddressCommands } from './nav/addressCommands.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
@@ -46,6 +47,7 @@ import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
+import { loadProps } from './world/propGlb.ts';
 import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
@@ -117,6 +119,7 @@ async function boot() {
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
   const lampLights = new LampLights(quality, mats.lampHead);
   view.scene.add(lampLights.root);
+  view.post?.beams.sources.push(...carLights.heads, ...lampLights.pool);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
@@ -158,6 +161,12 @@ async function boot() {
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
+  // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
+  loadProps().then((set) => {
+    props.setPropSet(set);
+    if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
+    peds.view.setVariants(set.peds);
+  }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   peds.sim.events.knocked = (_, v) => {
     sound?.impact(Math.min(0.5, v / 30));
     input.rumble(0.5, 150);
@@ -328,14 +337,13 @@ async function boot() {
   const debug = new DebugConsole();
   debug.onToggle = () => input.releaseAll();
   bigMap.onTeleport = () => debug.exec('tp ziel');
-  registerGameCommands({
-    R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar,
-    teleport: (x, z, heading = car.heading(), road = false) => {
-      if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
-      hold = { x, z, heading, frames: 0, road };
-      worldReady = false;
-    },
-  }, debugState);
+  const teleport = (x: number, z: number, heading = car.heading(), road = false) => {
+    if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
+    hold = { x, z, heading, frames: 0, road };
+    worldReady = false;
+  };
+  registerGameCommands({ R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar, teleport }, debugState);
+  registerAddressCommands({ world: index.world, graph, nav, pos: ip, teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
   const perf = new PerfMonitor($('perf'), view.renderer);

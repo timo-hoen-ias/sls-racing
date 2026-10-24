@@ -6,7 +6,7 @@ import type { Quality } from '../quality.ts';
 // exist (dark when unused), so switching them never recompiles shaders.
 
 export class CarLights {
-  private heads: THREE.SpotLight[] = [];
+  readonly heads: THREE.SpotLight[] = [];
   private tail: THREE.PointLight;
   private nitro: THREE.PointLight;
   private flash: THREE.PointLight;
@@ -49,7 +49,7 @@ export class CarLights {
 
 export class LampLights {
   readonly root = new THREE.Group();
-  private pool: THREE.PointLight[] = [];
+  readonly pool: THREE.PointLight[] = [];
   private headMat: THREE.MeshStandardMaterial;
   private timer = 0;
   private near: { x: number; y: number; z: number; d: number }[] = [];

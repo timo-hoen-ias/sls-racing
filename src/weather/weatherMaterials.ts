@@ -26,6 +26,8 @@ interface PatchOptions {
   upFrom?: number;
   /** Road: puddles, and wheel tracks in the snow (uv.x runs across the road). */
   road?: boolean;
+  /** How mirror-like the wet surface gets for the screen-space reflections, 0..1 (default 0). */
+  mirror?: number;
 }
 
 const NOISE = /* glsl */ `
@@ -69,7 +71,7 @@ export function patchMaterial(mat: THREE.MeshStandardMaterial, o: PatchOptions) 
   mat.onBeforeCompile = (shader, renderer) => {
     prev?.call(mat, shader, renderer);
     Object.assign(shader.uniforms, weatherUniforms);
-    shader.defines = { ...shader.defines, WX_WET_K: o.wet.toFixed(3), WX_SNOW_K: o.snow.toFixed(3), WX_UP: (o.upFrom ?? 0.55).toFixed(3), ...(o.road ? { WX_ROAD: '' } : {}) };
+    shader.defines = { ...shader.defines, WX_WET_K: o.wet.toFixed(3), WX_SNOW_K: o.snow.toFixed(3), WX_UP: (o.upFrom ?? 0.55).toFixed(3), WX_MIRROR_K: (o.mirror ?? 0).toFixed(3), ...(o.road ? { WX_ROAD: '' } : {}) };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWxPos;\nvarying vec3 vWxNrm;\nvarying vec2 vWxUv;')
       .replace(
@@ -97,6 +99,7 @@ uniform float uWxRain;
 uniform float uWxTime;
 uniform sampler2D uWxPuddleMap;
 float wxPuddle = 0.0;
+float wxMirror = 0.0;
 ${NOISE}`,
       )
       .replace(
@@ -138,20 +141,29 @@ ${NOISE}`,
     diffuseColor.rgb = mix(diffuseColor.rgb, snowCol, cover);
     roughnessFactor = mix(roughnessFactor, 0.7, cover);
     wxPuddle *= 1.0 - cover;
+    // Flat wet ground mirrors the street (screen-space reflections read this from the alpha).
+    wxMirror = WX_MIRROR_K * (1.0 - cover) * smoothstep(0.9, 0.98, vWxNrm.y) * max(wet * 0.55, wxPuddle);
   }`,
+      )
+      .replace(
+        '#include <opaque_fragment>',
+        `#include <opaque_fragment>
+  #ifdef OPAQUE
+  gl_FragColor.a = 1.0 - clamp(wxMirror, 0.0, 0.99);
+  #endif`,
       );
   };
   // One program per material for all weather: the switches are uniforms, not defines.
-  mat.customProgramCacheKey = () => `wx-${o.wet}-${o.snow}-${o.upFrom}-${o.road ? 1 : 0}`;
+  mat.customProgramCacheKey = () => `wx-${o.wet}-${o.snow}-${o.upFrom}-${o.road ? 1 : 0}-${o.mirror ?? 0}`;
   mat.needsUpdate = true;
 }
 
 /** Puts the weather into the world's materials (call once, before tiles are built). */
 export function patchWorldMaterials(m: Materials) {
   weatherUniforms.uWxPuddleMap.value = puddleTexture();
-  patchMaterial(m.road, { wet: 1, snow: 0.9, road: true });
-  patchMaterial(m.marking, { wet: 0.8, snow: 0.9 });
-  patchMaterial(m.sidewalk, { wet: 0.9, snow: 1 });
+  patchMaterial(m.road, { wet: 1, snow: 0.9, road: true, mirror: 1 });
+  patchMaterial(m.marking, { wet: 0.8, snow: 0.9, mirror: 0.8 });
+  patchMaterial(m.sidewalk, { wet: 0.9, snow: 1, mirror: 0.5 });
   patchMaterial(m.ground, { wet: 0.6, snow: 1 });
   patchMaterial(m.building, { wet: 0.5, snow: 0.9 });
   patchMaterial(m.crown, { wet: 0.3, snow: 0.7, upFrom: 0.05 });

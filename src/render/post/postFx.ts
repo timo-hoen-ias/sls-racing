@@ -12,6 +12,9 @@ import { AtmospherePass } from './atmosphere.ts';
 import { CloudPass } from './clouds.ts';
 import { LensFlarePass } from './lensFlare.ts';
 import { MotionBlurPass } from './motionBlur.ts';
+import { SSRPass } from './ssr.ts';
+import { BeamPass } from './beams.ts';
+import { weatherUniforms } from '../../weather/weatherMaterials.ts';
 
 /** Objects on this layer (the player car) are kept sharp by the motion blur. */
 export const CAR_LAYER = 2;
@@ -65,6 +68,10 @@ export interface FxSettings {
   nitroBlur: number;
   /** Distance fog (aerial perspective) density. */
   fog: number;
+  /** Screen-space reflections on wet roads. */
+  ssr: number;
+  /** Light shafts of headlights and lamps in the air. */
+  beams: number;
   /** Height fog (valley mist) density. */
   heightFog: number;
   /** Height fog layer thickness in m. */
@@ -79,11 +86,16 @@ export interface FxSettings {
 }
 
 export class PostFX {
-  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1 };
+  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, ssr: 1, beams: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1 };
   readonly ao?: GTAOPass;
   readonly smaaPass?: SMAAPass;
   readonly clouds: CloudPass;
   readonly fog: AtmospherePass;
+  readonly ssr: SSRPass;
+  /** Headlight cones and lamp halos in mist and rain. */
+  readonly beams: BeamPass;
+  /** Brightest haze relative to the daylight fog colour (fx.hazegain). */
+  hazeGain = 2;
   readonly blur: MotionBlurPass;
   readonly flare: LensFlarePass;
   readonly bloom: UnrealBloomPass;
@@ -119,6 +131,9 @@ export class PostFX {
     const c = (this.composer = new EffectComposer(renderer, target));
     c.addPass(new RenderPass(scene, camera));
     c.addPass(this.grab);
+    // Wet-road reflections first, so AO, fog and blur apply to them like to the rest of the image.
+    this.ssr = new SSRPass(camera);
+    c.addPass(this.ssr);
     if (high && !off.has('ao')) {
       const ao = new GTAOPass(scene, camera, 1, 1);
       ao.blendIntensity = 0.8;
@@ -133,6 +148,8 @@ export class PostFX {
     c.addPass(this.clouds);
     this.fog = new AtmospherePass(camera, daylight.skyCube.texture, ground, q.radius);
     c.addPass(this.fog);
+    this.beams = new BeamPass(camera);
+    c.addPass(this.beams);
     this.blur = new MotionBlurPass(camera, this.mask.texture);
     c.addPass(this.blur);
     this.flare = new LensFlarePass(camera, daylight.sunDir);
@@ -142,9 +159,11 @@ export class PostFX {
     c.addPass(this.bloom);
     c.addPass(new OutputPass());
     const depth = () => this.grab.depth;
-    this.clouds.depth = this.fog.depth = this.blur.depth = this.flare.depth = depth;
+    this.ssr.depth = this.beams.depth = this.clouds.depth = this.fog.depth = this.blur.depth = this.flare.depth = depth;
     this.cloudsOn = !off.has('clouds');
     this.fog.enabled = !off.has('fog');
+    this.ssr.enabled = !off.has('ssr');
+    this.beams.enabled = !off.has('beams');
     this.blur.enabled = !off.has('blur');
     this.flare.enabled = !off.has('flare');
     this.bloom.enabled = !off.has('bloom');
@@ -182,13 +201,19 @@ export class PostFX {
     // Distance fog scales with the view distance: a blue haze over kilometres when the far view
     // reaches the horizon, a little denser when the world ends after a few hundred metres.
     const fu = this.fog.uniforms;
-    fu.uDensity.value = THREE.MathUtils.clamp(1.4 / fu.uEdge.value.y, 0.00012, 0.0006) * st.fog * (1 + oc * 4);
+    fu.uDensity.value = THREE.MathUtils.clamp(1.4 / fu.uEdge.value.y, 0.00012, 0.0006) * st.fog * (1 + oc * 2);
     // Valley mist: thick at dawn and at night, a light veil in the afternoon.
     const dawn = Math.exp(-(((d.hours - 7) % 24) ** 2) / 4);
     const mist = Math.max(1 - d.daylight, dawn);
-    fu.uHDensity.value = THREE.MathUtils.lerp(0.0006, 0.0025, mist) * st.heightFog * (1 + oc);
+    fu.uHDensity.value = THREE.MathUtils.lerp(0.0006, 0.0025, mist) * st.heightFog * (1 + oc * 0.5);
     fu.uHFalloff.value = 1 / Math.max(1, st.fogHeight);
     fu.uHBase.value = this.ground + st.fogBase;
+    // Light shafts: faint in clear air, strong in mist and rain.
+    this.beams.density = st.beams * (0.0003 + fu.uHDensity.value * 0.4 + weatherUniforms.uWxRain.value * 0.0025);
+    // The sky cube is far brighter than lit ground under clouds; keep the haze from glowing.
+    const fc = d.fogColor;
+    fu.uMaxLum.value = (0.2126 * fc.r + 0.7152 * fc.g + 0.0722 * fc.b) * this.hazeGain;
+    this.ssr.strength = st.ssr;
     this.flare.sunColor.copy(d.sunColor);
     this.flare.strength = 0.7 * st.flare;
     // Light bloom: by day only glints, chrome and the sun's surroundings glow softly; at night

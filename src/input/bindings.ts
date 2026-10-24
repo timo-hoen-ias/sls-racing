@@ -2,7 +2,7 @@
 
 export type Action =
   | 'throttle' | 'brake' | 'left' | 'right' | 'nitro' | 'handbrake' | 'lookBack'
-  | 'shiftUp' | 'shiftDown' | 'gearbox' | 'reset' | 'camera' | 'map' | 'time' | 'mute' | 'menu';
+  | 'shiftUp' | 'shiftDown' | 'gearbox' | 'reset' | 'rewind' | 'camera' | 'map' | 'time' | 'mute' | 'menu';
 
 export interface Binding {
   /** KeyboardEvent.code values, at most two. */
@@ -25,6 +25,7 @@ export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'shiftDown', label: 'Runterschalten' },
   { id: 'gearbox', label: 'Automatik / Manuell' },
   { id: 'reset', label: 'Auto zurücksetzen' },
+  { id: 'rewind', label: 'Zurückspulen' },
   { id: 'camera', label: 'Kamera wechseln' },
   { id: 'map', label: 'Karte' },
   { id: 'time', label: 'Tageszeit weiter' },
@@ -44,6 +45,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   shiftDown: { keys: ['KeyQ'], pad: [] },
   gearbox: { keys: ['KeyG'], pad: [11] },
   reset: { keys: ['KeyR'], pad: [3] },
+  rewind: { keys: ['Backspace'], pad: [14] },
   camera: { keys: ['KeyC'], pad: [8] },
   map: { keys: ['Tab', 'KeyK'], pad: [13] },
   time: { keys: ['KeyT'], pad: [12] },

@@ -102,6 +102,8 @@ export interface RoadGraphData {
     /** Polyline x, y, z from a to b, including both ends. */
     p: number[];
   }[];
+  /** Junctions with traffic lights: [node, group]; nodes of one group (a big junction) share their phases. */
+  s?: [number, number][];
 }
 
 export const tileKey = (ix: number, iy: number) => `${ix}_${iy}`;

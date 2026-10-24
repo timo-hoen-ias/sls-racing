@@ -10,7 +10,12 @@ const WALKABLE = new Set([2, 3, 5, 6, 7]);
 const ROAD_WIDTH = [3, 4, 5, 6, 5.5, 7, 7.5, 8.5, 10, 11];
 const SIDEWALK = 2.2;
 
-export type PedState = 'walk' | 'cross' | 'dodge' | 'down' | 'stand';
+export type PedState = 'walk' | 'cross' | 'wait' | 'dodge' | 'down' | 'stand';
+
+/** Traffic lights as the pedestrians see them: the light for traffic arriving at node in direction (dx, dz). */
+export interface PedSignals {
+  light(node: number, dx: number, dz: number): string | undefined;
+}
 
 export interface Ped {
   id: number;
@@ -67,6 +72,10 @@ export class PedSim {
   spawnMax = 170;
   frozen = false;
   events: PedEvents = {};
+  /** Traffic lights: at signalised junctions pedestrians cross only with the parallel traffic's green. */
+  signals?: PedSignals;
+  /** Pedestrians ignore red lights (debug). */
+  jaywalk = false;
   readonly graph: RoadGraph;
   private adj: number[][];
   private rng: () => number;
@@ -221,6 +230,13 @@ export class PedSim {
       return;
     }
 
+    // Wait at the kerb of a signalised junction until the traffic going the same way has green.
+    const corner = (ROAD_WIDTH[p.edge.rank] ?? 6) / 2 + SIDEWALK;
+    if (this.mustWait(p, corner, dt)) {
+      p.state = 'wait';
+      this.place(p);
+      return;
+    }
     p.s += p.speed * dt;
     p.phase += dt * p.speed * 5.2;
     while (p.s >= p.edge.length) {
@@ -229,9 +245,28 @@ export class PedSim {
     }
     const rem = p.edge.length - p.s;
     // Crossing the junction area at either end of the edge.
-    const corner = (ROAD_WIDTH[p.edge.rank] ?? 6) / 2 + SIDEWALK;
     p.state = p.s < corner * 0.6 || rem < corner * 0.6 ? 'cross' : 'walk';
     this.place(p);
+  }
+
+  private mustWait(p: Ped, corner: number, dt: number) {
+    if (!this.signals || this.jaywalk) return false;
+    const rem = p.edge.length - p.s;
+    const kerb = corner * 0.6;
+    // Only right before stepping onto the road, not once crossing.
+    if (rem < kerb || rem - p.speed * dt - 0.5 > kerb) return false;
+    const e = p.edge, node = p.dir > 0 ? e.b : e.a;
+    const along = p.dir > 0 ? e.length : 0;
+    const [ax, , az] = pointAt(e.p, e.cum, along - 4 * p.dir);
+    const [bx, , bz] = pointAt(e.p, e.cum, along);
+    const l = Math.hypot(bx - ax, bz - az) || 1;
+    const light = this.signals.light(node, (bx - ax) / l, (bz - az) / l);
+    return light !== undefined && light !== 'green';
+  }
+
+  /** Pedestrians waiting at a red light. */
+  waiting() {
+    return this.peds.filter((p) => p.state === 'wait').length;
   }
 
   private isHit(p: Ped, t: Threat) {

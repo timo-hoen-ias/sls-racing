@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RoadMask } from '../pipeline/lib/clearance.ts';
 import type { OsmData, Way } from '../pipeline/lib/osm.ts';
-import { buildProps } from '../pipeline/lib/props.ts';
+import { buildProps, osmSignType } from '../pipeline/lib/props.ts';
 import type { WorldInfo } from '../src/world/format.ts';
 import { PROP_STRIDE, Prop } from '../src/world/propKinds.ts';
 
@@ -62,5 +62,13 @@ describe('street furniture', () => {
     const pieces = records(run({ ways: [fence] }).tiles).filter((p) => p[0] === Prop.fence);
     expect(pieces.length).toBe(8);
     expect(pieces.reduce((s, p) => s + p[5], 0)).toBeCloseTo(30, 1);
+  });
+
+  it('reads the sign type from OSM traffic_sign values', () => {
+    expect(osmSignType('DE:306')).toBe('vorfahrtstrasse');
+    expect(osmSignType('DE:274[50]')).toBe('tempo-50');
+    expect(osmSignType('DE:274.1')).toBe('tempo-30');
+    expect(osmSignType('DE:1020-30,DE:205')).toBe('vorfahrt-achten');
+    expect(osmSignType('DE:101')).toBeUndefined();
   });
 });

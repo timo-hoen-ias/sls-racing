@@ -13,7 +13,7 @@ function rng(seed = 1) {
 }
 
 /** Grid of 3 × 3 junctions, 120 m apart (local x east, z south). The middle row (z = 0) is a main road. */
-function gridGraph(opts: { oneway?: boolean } = {}): RoadGraph {
+function gridGraph(opts: { oneway?: boolean; signals?: boolean } = {}): RoadGraph {
   const S = 120;
   const data: RoadGraphData = { v: 1, names: ['Hauptstraße', 'Nebenstraße', 'Einbahn'], nodes: [], edges: [] };
   const id = (i: number, j: number) => j * 3 + i;
@@ -31,6 +31,7 @@ function gridGraph(opts: { oneway?: boolean } = {}): RoadGraph {
       const one = opts.oneway && i === 2;
       data.edges.push({ a: id(i, j), b: id(i, j + 1), n: one ? 2 : 1, c: 3, ...(one ? { o: 1 as const } : {}), p: line(id(i, j), id(i, j + 1)) });
     }
+  if (opts.signals) data.s = [[id(1, 1), 0]];
   return new RoadGraph(data);
 }
 
@@ -105,6 +106,40 @@ describe('TrafficSim', () => {
     const order: Agent[] = [];
     run(sim, 30, () => { for (const x of [m, s]) if (!order.includes(x) && x.prev) order.push(x); });
     expect(order[0]).toBe(m);
+  });
+
+  it('stops at a red light and drives on at green', () => {
+    const g = gridGraph({ signals: true });
+    const sim = new TrafficSim(g, { rng: rng(8) });
+    sim.density = 0;
+    sim.signals.forced = 'red';
+    const side = edgeAt(g, 0, -60);
+    const a = sim.spawn({ edge: side, dir: 1 }, 40)!; // from the north towards the lights at (0, 0)
+    a.v = 10;
+    run(sim, 25);
+    expect(a.edge).toBe(side);
+    expect(a.v).toBeLessThan(0.3);
+    expect(a.reason).toBe('Rot');
+    sim.signals.forced = 'green';
+    run(sim, 10);
+    expect(a.edge).not.toBe(side);
+  });
+
+  it('switches the two directions of a junction in turn', () => {
+    const g = gridGraph({ signals: true });
+    const sim = new TrafficSim(g, { rng: rng(9) });
+    const node = 4;
+    let bothGreen = 0, mainGreen = 0, crossGreen = 0;
+    for (let t = 0; t < sim.signals.cycle * 2; t += 0.5) {
+      sim.signals.update(0.5);
+      const m = sim.signals.light(node, 1, 0), c = sim.signals.light(node, 0, 1);
+      if (m === 'green' && c === 'green') bothGreen++;
+      if (m === 'green') mainGreen++;
+      if (c === 'green') crossGreen++;
+    }
+    expect(bothGreen).toBe(0);
+    expect(mainGreen).toBeGreaterThan(20);
+    expect(crossGreen).toBeGreaterThan(20);
   });
 
   it('stops behind the player without hitting them', () => {

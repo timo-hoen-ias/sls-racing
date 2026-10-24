@@ -91,4 +91,21 @@ describe('PedSim', () => {
     expect(car.v).toBeLessThan(0.3);
     expect(car.x).toBeLessThan(traffic.obstacles[0].x - 2);
   });
+
+  it('waits at a red light and crosses at green', () => {
+    const g = graph();
+    const sim = new PedSim(g, { rng: rng(4) });
+    sim.density = 0;
+    let light = 'red';
+    sim.signals = { light: (node) => (node === 1 ? light : undefined) };
+    const p = sim.spawn(g.edges[0], 1, 80, 1); // walking east towards the junction at x = 0
+    p.state = 'walk';
+    for (let i = 0; i < 30 * 20; i++) sim.update(1 / 30, undefined);
+    expect(p.state).toBe('wait');
+    expect(p.edge).toBe(g.edges[0]);
+    expect(p.x).toBeLessThan(-2);
+    light = 'green';
+    for (let i = 0; i < 30 * 10; i++) sim.update(1 / 30, undefined);
+    expect(p.edge).not.toBe(g.edges[0]);
+  });
 });

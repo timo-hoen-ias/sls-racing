@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { type DebugCommand, registerCommand } from '../debug/registry.ts';
 import type { FxSettings } from './post/postFx.ts';
 import type { SceneSetup } from './scene.ts';
@@ -82,6 +83,29 @@ export function registerRenderCommands(view: SceneSetup) {
       return status();
     },
   }, ['bewölkung']);
+
+  registerCommand({
+    name: 'sky.env',
+    args: '[faktor]',
+    help: 'Stärke des Himmelslichts (Umgebungslicht). Kleiner = kräftigere Schatten und mehr Kontrast',
+    run: ([a]) => {
+      if (a) d.envScale = parseNum(a, 0, 3);
+      return `sky.env = ${d.envScale}`;
+    },
+  });
+  registerCommand({
+    name: 'fx.shadowdist',
+    args: '[m]',
+    help: 'Halbe Kantenlänge des Schattenbereichs um das Auto in m (hoch 170, sonst 110). Größer = weiter, aber unschärfer',
+    run: ([a]) => {
+      if (a) view.shadowExtent = parseNum(a, 30, 600);
+      const map = view.sun.shadow.mapSize.x;
+      const sun = view.sun;
+      const t = sun.target.getWorldPosition(new THREE.Vector3());
+      return `Schatten bis ${view.shadowExtent} m · Karte ${map} px · ${((view.shadowExtent * 200) / Math.max(1, map)).toFixed(1)} cm pro Texel\n`
+        + `Licht ${sun.castShadow ? 'wirft Schatten' : 'ohne Schatten'} · Stärke ${sun.intensity.toFixed(2)} · Ziel ${t.x.toFixed(0)}, ${t.y.toFixed(0)}, ${t.z.toFixed(0)} · Karte ${sun.shadow.map ? 'da' : 'fehlt'}`;
+    },
+  });
 
   const post = view.post;
   if (!post) {

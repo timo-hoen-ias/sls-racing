@@ -73,6 +73,8 @@ export interface PropOptions {
   nearLanes?: (e: number, n: number) => boolean;
   junctions: Junction[];
   boundary?: [number, number][][];
+  /** False when the place-name signs come from guideSigns.ts: no props for city limits then (default true). */
+  cityLimits?: boolean;
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
   detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
@@ -132,7 +134,11 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     if (t.highway === 'bus_stop') { kind = Prop.busStop; size = t.shelter === 'yes' ? 1 : 0; }
     else if (t.highway === 'stop') kind = Prop.stopSign;
     else if (t.highway === 'give_way') kind = Prop.giveWay;
-    else if (t.traffic_sign) { kind = Prop.sign; size = signSize(osmSignType(t.traffic_sign)); }
+    else if (t.traffic_sign) {
+      kind = Prop.sign;
+      size = signSize(osmSignType(t.traffic_sign));
+      if (o.cityLimits === false && size === signSize('ortsschild')) continue;
+    }
     else if (t.barrier === 'bollard') kind = Prop.bollard;
     else if (t.barrier === 'block') kind = Prop.block;
     else if (t.amenity === 'bench') kind = Prop.bench;
@@ -149,6 +155,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   const same = (a: PropKind, b: PropKind) => a === b || (SIGNS.includes(a) && SIGNS.includes(b));
   let detected = 0;
   for (const d of o.detected ?? []) {
+    if (o.cityLimits === false && d.kind === Prop.sign && d.size === signSize('ortsschild')) continue;
     let dup = false;
     const ce = Math.floor(d.e / DEDUPE), cn = Math.floor(d.n / DEDUPE);
     for (let a = -1; a <= 1 && !dup; a++)
@@ -195,7 +202,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   }
 
   // City limit signs where roads cross the boundary.
-  for (const ring of o.boundary ?? []) {
+  for (const ring of o.cityLimits === false ? [] : o.boundary ?? []) {
     for (const w of osm.ways) {
       if (!isDrivable(w.tags) || !/^(primary|secondary|tertiary|unclassified|trunk)$/.test(w.tags.highway)) continue;
       for (let i = 1; i < w.pts.length; i++) {

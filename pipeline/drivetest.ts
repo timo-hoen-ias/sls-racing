@@ -9,6 +9,8 @@ import {
 } from '../src/world/format.ts';
 import { addTileColliders } from '../src/world/tileColliders.ts';
 import { addPropColliders } from '../src/world/propColliders.ts';
+import { addSignColliders } from '../src/world/signColliders.ts';
+import { GUIDE_SIGN_NAMES, type SignsFile } from '../src/world/signSpec.ts';
 import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.ts';
 import { terrainHeights } from '../src/world/tileBuild.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
@@ -40,6 +42,9 @@ function tile(k: string): TileContent | null {
   }
   return tileCache.get(k)!;
 }
+
+/** Guide sign posts and gantry legs (signs.json), as in the game. */
+const guideSigns: SignsFile['signs'] = existsSync(`${paths.out}signs.json`) ? (JSON.parse(readFileSync(`${paths.out}signs.json`, 'utf8')) as SignsFile).signs : [];
 
 /** What each collider is, for failure reports. */
 const kinds = new Map<number, string>();
@@ -82,6 +87,8 @@ function driveRoute(pts: [number, number][], startY: number): Result {
   for (const [x, z] of route)
     for (const dx of [-64, 0, 64]) for (const dz of [-64, 0, 64]) keys.add(tileKey(...tileOfLocal(W, x + dx, z + dz)));
   for (const k of keys) { const t = tile(k); if (t) addColliders(world, t); }
+  const signBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  for (const s of guideSigns) if (keys.has(tileKey(...tileOfLocal(W, s.x, s.z)))) addSignColliders(RAPIER, world, signBody, s, (c) => kinds.set(c.handle, GUIDE_SIGN_NAMES[s.t]));
 
   const [sx, sz] = route[0];
   const heading0 = Math.atan2(route[1][0] - sx, -(route[1][1] - sz));

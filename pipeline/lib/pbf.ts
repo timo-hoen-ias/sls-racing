@@ -244,12 +244,16 @@ export function wantedNode(tags: Tags | undefined): boolean {
   if (!tags) return false;
   return !!(
     tags.natural === 'tree' ||
-    /^(traffic_signals|stop|give_way|bus_stop|street_lamp)$/.test(tags.highway ?? '') ||
+    /^(traffic_signals|stop|give_way|bus_stop|street_lamp|motorway_junction)$/.test(tags.highway ?? '') ||
+    /^(city|town|village|suburb|quarter|hamlet)$/.test(tags.place ?? '') ||
     /^(bollard|block)$/.test(tags.barrier ?? '') ||
     /^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling)$/.test(tags.amenity ?? '') ||
     tags.emergency === 'fire_hydrant' || tags.advertising === 'column' || tags.traffic_sign
   );
 }
+
+/** Named towns, villages and districts (destinations on signs; also kept in the far view extract). */
+const isPlace = (tags: Tags | undefined) => !!tags?.name && /^(city|town|village|suburb)$/.test(tags.place ?? '');
 
 const wantedRelation = (tags: Tags) =>
   !!tags.building || (tags.type === 'multipolygon' && (!!tags.landuse || /^(water|wood)$/.test(tags.natural ?? '')));
@@ -261,7 +265,7 @@ export interface Cut {
   marginMeters: number;
   /** Which ways to keep (default: wanted). Multipolygon relations always follow wantedRelation. */
   keep?: (tags: Tags) => boolean;
-  /** Keep point features: trees and street furniture (default true). */
+  /** Keep point features: trees and street furniture (default true); without them only place names are kept. */
   trees?: boolean;
 }
 
@@ -315,7 +319,7 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
       node(id, lat, lon, tags) {
         if (lat < south || lat > north || lon < west || lon > east) return;
         inside.set(id, [lat, lon]);
-        if (cut.trees !== false && wantedNode(tags)) els.push({ type: 'node', id, lat, lon, tags });
+        if (cut.trees !== false ? wantedNode(tags) : isPlace(tags)) els.push({ type: 'node', id, lat, lon, tags });
       },
     });
 

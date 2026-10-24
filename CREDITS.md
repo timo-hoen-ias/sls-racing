@@ -5,5 +5,5 @@
 - Gelände: Terrain Tiles auf AWS Open Data (Mapzen/Tilezen; Quellen u. a. SRTM, EU-DEM). Siehe https://github.com/tilezen/joerd/blob/master/docs/attribution.md
 
 ## Assets
-Noch keine externen Assets. Auto, Texturen und Motorsound sind derzeit prozedural erzeugt.
+Noch keine externen Assets. Der Sportwagen (generisches Coupé, keine reale Marke), Texturen und Motorsound sind prozedural erzeugt.
 CC-lizenzierte Modelle und Sounds werden hier mit Autor, Quelle und Lizenz eingetragen.

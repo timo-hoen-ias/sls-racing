@@ -20,25 +20,26 @@ export interface SoundState {
   airborne: boolean;
 }
 
-/** 3.0 l turbo straight six: smooth, a bit raspy at the top, crackles on the overrun. */
-const VOICE: EngineVoiceSpec = {
-  cylinders: 6,
-  idleRpm: 850,
-  maxRpm: 7200,
-  lumpy: 0.12,
-  irregular: 0.14,
-  pulse: { noise: 0.42, tone: 0.62, toneHz: 210, decay: 0.72, color: 0.7 },
-};
-const RESONANCES = [
-  { freq: 120, q: 1.8, gain: 6 }, // exhaust boom
-  { freq: 620, q: 2.2, gain: 4 }, // muffler
-  { freq: 2300, q: 3, gain: 3 }, // intake rasp
-];
-const DRIVE = 0.5;
-const LP_IDLE = 900;
-const LP_FULL = 5200;
-const TURBO_RATIO = 34;
-const POPS = 0.45;
+/** Everything that makes one engine sound like itself. */
+export interface EngineSoundProfile {
+  voice: EngineVoiceSpec;
+  /** Exhaust and intake resonances (peaking filters). */
+  resonances: { freq: number; q: number; gain: number }[];
+  /** Distortion 0..1 (rasp). */
+  drive: number;
+  /** Low-pass at idle without load and at full load (Hz). */
+  lpIdle: number;
+  lpFull: number;
+  /** Turbo whistle (frequency = rpm/60 × ratio); omit for a naturally aspirated engine. */
+  turbo?: { ratio: number; gain: number };
+  /** Induction howl level under load. */
+  intake: number;
+  /** Overrun pops 0..1. */
+  pops: number;
+  /** Exhaust crack on full-throttle upshifts (dual-clutch) 0..1. */
+  shiftPop: number;
+}
+
 const VOLUME = 0.55;
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -54,6 +55,7 @@ export class EngineSound {
   private turbo: OscillatorNode;
   private turboGain: GainNode;
   private intakeGain: GainNode;
+  private intakeFilter: BiquadFilterNode;
   private squeal: BiquadFilterNode[] = [];
   private squealGain: GainNode;
   private roadGain: GainNode;
@@ -70,14 +72,18 @@ export class EngineSound {
   onBackfire?: () => void;
 
   /** Creates the context and loads the worklet; call from a user gesture. */
-  static async create(reverb = true) {
+  static async create(profile: EngineSoundProfile, reverb = true) {
     const ctx = new AudioContext({ latencyHint: 'interactive' });
     const worklet = await loadEngineWorklet(ctx).catch(() => false);
-    return new EngineSound(ctx, worklet, reverb);
+    return new EngineSound(ctx, profile, worklet, reverb);
   }
 
-  private constructor(ctx: AudioContext, worklet: boolean, reverb: boolean) {
+  private p: EngineSoundProfile;
+
+  private constructor(ctx: AudioContext, profile: EngineSoundProfile, worklet: boolean, reverb: boolean) {
     this.ctx = ctx;
+    this.p = profile;
+    const { voice: VOICE, resonances: RESONANCES, drive: DRIVE, lpIdle: LP_IDLE } = profile;
     this.noise = noiseBuffer(ctx);
     this.master = ctx.createGain();
     this.master.gain.value = VOLUME;
@@ -145,7 +151,9 @@ export class EngineSound {
     this.turboGain.gain.value = 0;
     this.turbo.connect(this.turboGain).connect(this.master);
     this.turbo.start();
-    this.intakeGain = noiseLayer('bandpass', 1800, 0.9).g;
+    const intake = noiseLayer('bandpass', 1800, 2.2);
+    this.intakeGain = intake.g;
+    this.intakeFilter = intake.f;
 
     // Tyre squeal: two narrow bands that wobble like a real howl.
     this.squealGain = ctx.createGain();
@@ -183,6 +191,7 @@ export class EngineSound {
     const t = ctx.currentTime;
     const dt = clamp(t - this.lastT, 0, 0.1);
     this.lastT = t;
+    const { voice: VOICE, lpIdle: LP_IDLE, lpFull: LP_FULL, pops: POPS } = this.p;
     const rpm01 = clamp((s.rpm - VOICE.idleRpm) / (VOICE.maxRpm - VOICE.idleRpm), 0, 1);
     const load = s.cut ? 0 : s.blip ? 0.9 : s.load;
 
@@ -195,11 +204,16 @@ export class EngineSound {
     const spoolTarget = s.boosting ? 1 : load * clamp((s.rpm - 1500) / 2500, 0, 1);
     const prevSpool = this.spool;
     this.spool += (spoolTarget - this.spool) * Math.min(1, dt * (spoolTarget > this.spool ? 2.2 : 6));
-    glide(this.turbo.frequency, clamp((s.rpm / 60) * TURBO_RATIO * (0.5 + 0.6 * this.spool), 400, 7000), t, 0.08);
-    glide(this.turboGain.gain, 0.022 * this.spool * this.spool, t, 0.08);
-    glide(this.intakeGain.gain, 0.05 * load * (0.3 + 0.7 * rpm01) * (0.5 + 0.5 * this.spool), t, 0.06);
-    // Blow-off valve when the throttle snaps shut on boost.
-    if (prevSpool > 0.55 && load < 0.15 && this.loadSmooth > 0.6) this.blowOff(t, prevSpool);
+    const turbo = this.p.turbo;
+    if (turbo) {
+      glide(this.turbo.frequency, clamp((s.rpm / 60) * turbo.ratio * (0.5 + 0.6 * this.spool), 400, 7000), t, 0.08);
+      glide(this.turboGain.gain, turbo.gain * this.spool * this.spool, t, 0.08);
+      // Blow-off valve when the throttle snaps shut on boost.
+      if (prevSpool > 0.55 && load < 0.15 && this.loadSmooth > 0.6) this.blowOff(t, prevSpool);
+    }
+    // Induction howl climbs with the revs (sharper without a turbo in the way).
+    glide(this.intakeFilter.frequency, 900 + 2600 * rpm01, t, 0.05);
+    glide(this.intakeGain.gain, this.p.intake * load * (0.2 + 0.8 * rpm01 * rpm01) * (turbo ? 0.5 + 0.5 * this.spool : 1), t, 0.05);
 
     // Overrun: pops on lifting off, crackle while coasting at high revs.
     if (!s.airborne && t > this.popCooldown) {
@@ -215,7 +229,10 @@ export class EngineSound {
     }
     if (s.shifted === 'up') {
       this.clunk(t, 0.12, 300);
-      if (rpm01 > 0.7 && load > 0.5) this.pop(t + 0.02, 0.35 * POPS);
+      if (rpm01 > 0.6 && this.loadSmooth > 0.5 && this.p.shiftPop > 0) {
+        this.pop(t + 0.015, this.p.shiftPop * (0.5 + 0.5 * rpm01));
+        if (this.p.shiftPop > 0.4) this.onBackfire?.();
+      }
     } else if (s.shifted === 'down') this.clunk(t, 0.07, 240);
     this.loadSmooth += (load - this.loadSmooth) * Math.min(1, dt * 12);
 

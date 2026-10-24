@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { parseBool, parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import { CAR_PALETTE } from '../traffic/trafficSim.ts';
 import { VEHICLE_LOD_DISTANCE, type VehicleSet, proceduralVehicleSet } from '../traffic/vehicleGlb.ts';
+import { patchPaintedMetal } from '../render/pbr/surfaces.ts';
 import { patchMaterial } from '../weather/weatherMaterials.ts';
 import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, signTypeOf } from './propKinds.ts';
 import { PROP_LOD_DISTANCE, type PropSet } from './propGlb.ts';
@@ -77,6 +78,8 @@ export class PropLayer {
     this.radius = opts.radius;
     this.info = opts.world;
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.1 });
+    // Chipped paint and grime as detail on the vertex colours (render/pbr), then the weather on top.
+    patchPaintedMetal(mat, 'props');
     patchMaterial(mat, { wet: 0.5, snow: 0.8 });
     this.propMat = mat;
     const paint = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.35, metalness: 0.45, envMapIntensity: 1.2 });

@@ -1,5 +1,6 @@
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
+import { encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
 import type { RoadCarve } from './carve.ts';
 import type { HalfWidths } from './overlap.ts';
 import { roadSection } from '../../src/world/roadSpec.ts';
@@ -217,6 +218,8 @@ export function buildRoads(
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
     const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
+    // Surface, wear, edge lines and gutters for the road shader (src/render/pbr/roadCode.ts).
+    const look = encodeRoad(roadLook(way.tags, way.id, section, sidewalk));
     // Usable half width per sample, narrower where a road at another height runs alongside (overlap.ts).
     const half = halves?.get(way);
     const L = new Map(ring.map((p, i) => [p, half?.left[i] ?? width / 2]));
@@ -244,7 +247,8 @@ export function buildRoads(
       };
       const hw = width / 2;
       const left = (p: typeof a) => L.get(p)!, right = (p: typeof a) => -R.get(p)!;
-      strip(tile.roads, right, left, [a.y, a.y], [b.y, b.y], (p, s) => [s, p.dist / width]);
+      // uv.x: 0 at the full right edge, 1 at the full left edge, so narrowed stretches keep their lines in place.
+      strip(tile.roads, right, left, [a.y, a.y], [b.y, b.y], (p, s) => [(s ? left(p) : right(p)) / width + 0.5, look]);
       // Lifted road on an embankment: own collision, and retaining walls down to the terrain.
       const above = !bridge && way.raise ? Math.max(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) : 0;
       // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the edges
@@ -265,7 +269,7 @@ export function buildRoads(
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
       if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
         const o = hw + 0.5;
-        strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1]);
+        strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1], () => [0, 0]);
         wall(tile.sidewalks, off(a, o), off(b, o), a.y - 1, a.y, b.y - 1, b.y, true);
         wall(tile.sidewalks, off(a, -o), off(b, -o), a.y - 1, a.y, b.y - 1, b.y, false);
       }

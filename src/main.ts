@@ -9,6 +9,8 @@ import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
 import { createMaterials } from './render/materials.ts';
+import { PbrTextures } from './render/pbr/pbrTextures.ts';
+import { registerTextureCommands } from './render/pbr/texCommands.ts';
 import { CarLights, LampLights } from './render/lights.ts';
 import { markCar } from './render/post/postFx.ts';
 import { createScene } from './render/scene.ts';
@@ -95,6 +97,10 @@ async function boot() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
   const mats = createMaterials();
+  // PBR atlases (KTX2); the world renders with stand-ins until they are in.
+  const textures = new PbrTextures(view.renderer, quality.name);
+  textures.load().catch((e) => console.warn('[tex] PBR-Texturen nicht geladen', e));
+  registerTextureCommands(textures);
   const water = new Water(view.renderer, view.scene, view.camera, view.daylight, quality);
   mats.water = water.material;
   patchWorldMaterials(mats);

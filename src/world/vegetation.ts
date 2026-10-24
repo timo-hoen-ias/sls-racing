@@ -6,7 +6,7 @@ import { Ground, TERRAIN_N, TERRAIN_STEP, type WorldInfo, tileOriginLocal } from
 import type { RoadGraph } from './roadGraph.ts';
 import { registerTileLayer } from './tileHooks.ts';
 import { BUSH_STRIDE, TREE_NAMES, Tree, type TreeKind } from './vegKinds.ts';
-import { buildBushGeometries, buildGrassGeometry, buildTreeGeometries } from './vegModels.ts';
+import { buildBushGeometries, buildGrassGeometry, buildTreeGeometries, grassTexture } from './vegModels.ts';
 
 // Vegetation (W6) as a tile layer: trees by species with two levels of detail, bushes, grass clumps around the
 // camera, wind that sways crowns and grass, and field rows on farmland in the ground shader.
@@ -135,9 +135,9 @@ export class Vegetation {
     patchWind(this.treeMat, 0.35, 'tree');
     this.bushMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
     patchWind(this.bushMat, 0.08, 'bush');
-    const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, side: THREE.DoubleSide });
+    const grassMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: grassTexture(), alphaTest: 0.5, roughness: 1, side: THREE.DoubleSide });
     patchWind(grassMat, 0.12, 'grass');
-    this.grass = new THREE.InstancedMesh(buildGrassGeometry(), grassMat, Math.max(1, opts.grass));
+    this.grass = new THREE.InstancedMesh(buildGrassGeometry(), grassMat, Math.max(3000, opts.grass));
     this.grass.count = 0;
     this.grass.frustumCulled = false;
     this.grass.receiveShadow = true;

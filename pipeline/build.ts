@@ -23,7 +23,7 @@ import { TileMap } from './lib/tilebuf.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
 import { PROP_NAMES, type PropKind } from '../src/world/propKinds.ts';
-import { Bush, type TreeKind } from '../src/world/vegKinds.ts';
+import { BUSH_STRIDE, Bush, type TreeKind } from '../src/world/vegKinds.ts';
 import { areaDensity, areaTreeKind, treeKindOf } from './lib/vegetation.ts';
 
 function main() {
@@ -211,6 +211,9 @@ function main() {
   }
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
+  const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
+  const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
+  console.log(`Vegetation: ${nTrees} trees, ${nBushes} bushes`);
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 

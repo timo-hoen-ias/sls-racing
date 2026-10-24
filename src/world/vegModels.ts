@@ -130,18 +130,49 @@ export function buildBushGeometries(): Record<BushKind, Geo> {
   };
 }
 
-/** Grass clump: three crossed blades quads, 0.5 m tall. */
+/** Grass clump: three crossed quads 0.5 m tall with a blade texture (see grassTexture), uv kept. */
 export function buildGrassGeometry(): Geo {
   const parts: Geo[] = [];
   for (let i = 0; i < 3; i++) {
-    const g = new THREE.PlaneGeometry(0.6, 0.5, 1, 1).translate(0, 0.25, 0).rotateY((i * Math.PI) / 3);
-    parts.push(finish(g, 0x6f8a3c, (y) => 0.55 + y, 0.5));
+    const g = new THREE.PlaneGeometry(0.7, 0.5, 1, 1).translate(0, 0.25, 0).rotateY((i * Math.PI) / 3);
+    const pos = g.getAttribute('position');
+    const col = new Float32Array(pos.count * 3);
+    const wind = new Float32Array(pos.count);
+    for (let k = 0; k < pos.count; k++) {
+      const y = pos.getY(k);
+      col.set([0.55 + y, 0.55 + y, 0.55 + y], k * 3);
+      wind[k] = y / 0.5;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('wind', new THREE.BufferAttribute(wind, 1));
+    parts.push(g);
   }
   const g = mergeGeometries(parts)!;
   // Upright normals so the clumps light like the ground they stand on.
-  const n = new Float32Array(g.getAttribute('position').count * 3);
-  for (let i = 0; i < n.length; i += 3) n[i + 1] = 1;
-  g.setAttribute('normal', new THREE.BufferAttribute(n, 3));
+  const n = g.getAttribute('normal') as THREE.BufferAttribute;
+  for (let i = 0; i < n.count; i++) n.setXYZ(i, 0, 1, 0);
   g.computeBoundingSphere();
   return g;
+}
+
+/** Blades of grass on transparent ground, for the clumps (alphaTest). */
+export function grassTexture(): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d')!;
+  let seed = 7;
+  const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let i = 0; i < 26; i++) {
+    const x = 6 + r() * 116, w = 3 + r() * 4, h = 60 + r() * 66, lean = (r() - 0.5) * 40;
+    const g = 120 + r() * 70;
+    ctx.fillStyle = `rgb(${Math.round(g * 0.62)}, ${Math.round(g)}, ${Math.round(g * 0.35)})`;
+    ctx.beginPath();
+    ctx.moveTo(x - w / 2, 128);
+    ctx.quadraticCurveTo(x + lean * 0.3, 128 - h * 0.5, x + lean, 128 - h);
+    ctx.quadraticCurveTo(x + lean * 0.3 + w * 0.3, 128 - h * 0.5, x + w / 2, 128);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }

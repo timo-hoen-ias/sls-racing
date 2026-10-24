@@ -92,8 +92,9 @@ float facadeWin = 0.0;
     pbrCell = rcell;
     vec3 mean = pbrBuildingMean(rcell);
     float l = dot(t.a, vec3(0.2126, 0.7152, 0.0722)) / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 0.01);
-    // Pitched: the photo as light/dark detail on the roof colour; flat: the gravel's own colour.
-    vec3 c = isFlat ? t.a / max(rc, vec3(0.02)) : vec3(l) * mix(vec3(1.0), t.a / max(mean, vec3(0.01)), 0.35);
+    // The photo as light/dark detail on the roof colour (measured in the aerial survey where there is one);
+    // flat roofs keep a little more of the gravel's own hue.
+    vec3 c = vec3(l) * mix(vec3(1.0), t.a / max(mean, vec3(0.01)), isFlat ? 0.5 : 0.35);
     if (uPbrOn < 0.5) c = vec3(1.0);
     diffuseColor.rgb *= c;
   } else {

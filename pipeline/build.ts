@@ -41,7 +41,7 @@ import { areaDensity, areaTreeKind, areaTreeScale, isPark, treeKindOf } from './
 import { loadLidar } from './lib/lidar.ts';
 import { categorize, loadMapillary } from './lib/mapillary.ts';
 import { placeLidarTrees, type MeasuredTree } from './lib/lidarTrees.ts';
-import { LANDCOVER_ATTRIBUTION, loadLandcover, tileCover } from './lib/landcover.ts';
+import { LANDCOVER_ATTRIBUTION, loadLandcover, roofColour, tileCover } from './lib/landcover.ts';
 import { waterLevels, type TileGrid } from './lib/waterLevel.ts';
 
 function main() {
@@ -106,6 +106,20 @@ function main() {
     const r = b.ground[0] ?? [];
     return !r.length || !used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`);
   };
+  // Land cover from the aerial survey (pipeline/landcover.ts), where a region has it; also the measured roof colours.
+  const landcover = regions.map((r) => (r.boundary.type === 'fixture' ? undefined : loadLandcover(r.id))).find((l) => l);
+  if (landcover) console.log(`Land cover: ${landcover.tiles} survey tiles of 2 km`);
+  // Roof colours per tile for roof.at: local x, z and sRGB.
+  const roofInfo = new Map<string, number[]>();
+  const roofColourAt = (e: number, n: number) => {
+    const m = landcover?.roofAt(e, n);
+    if (!m) return undefined;
+    const c = roofColour(m);
+    const k = tileKey(Math.floor(e / info.tileSize), Math.floor(n / info.tileSize));
+    if (!roofInfo.has(k)) roofInfo.set(k, []);
+    roofInfo.get(k)!.push(...utmToLocal(info, e, n).map((v) => Math.round(v * 10) / 10), ...c);
+    return c;
+  };
   // Buildings a road runs through (canopies, garages, passages the survey models solid) would block it.
   const lines = new RoadLines(osm.ways);
   let blocking = 0;
@@ -116,8 +130,9 @@ function main() {
   };
   const shopBuildings: ShopBuilding[] = [];
   const onBuilding = (b: ShopBuilding) => shopBuildings.push(b);
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding });
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, roofColour: roofColourAt, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding, roofColour: roofColourAt });
+  if (landcover) console.log(`Roofs: ${[...roofInfo.values()].reduce((a, v) => a + v.length / 5, 0)} buildings with their surveyed colour`);
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM, ${blocking} left out on roads`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
@@ -136,9 +151,6 @@ function main() {
   }
 
   const ground = new GroundIndex(osm.polygons);
-  // Land cover from the aerial survey (pipeline/landcover.ts), where a region has it.
-  const landcover = regions.map((r) => (r.boundary.type === 'fixture' ? undefined : loadLandcover(r.id))).find((l) => l);
-  if (landcover) console.log(`Land cover: ${landcover.tiles} survey tiles of 2 km`);
   let coverTiles = 0;
   const water = new WaterLines(osm.ways);
   const waterways = water.polylines(info, height);
@@ -319,6 +331,8 @@ function main() {
     }
     const lamps = offLanes(b?.lamps ?? []);
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
+    const ri = roofInfo.get(k);
+    if (ri) tile.roofInfo = encode(new Float32Array(ri));
     const bi = lod2.info.get(k);
     if (bi) tile.bldInfo = encode(new Float32Array(bi));
     const wl = levels.get(k);

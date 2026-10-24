@@ -53,4 +53,25 @@ export function registerGroundCommands(g: { index: WorldIndex; pos: () => { x: n
       ].join('\n');
     },
   });
+  registerCommand({
+    name: 'roof.at',
+    help: 'Dachfarben aus dem Luftbild: die nächsten Gebäude um das Auto (oder bei x z) mit ihrer gemessenen Farbe',
+    args: '[x z]',
+    run([xs, zs]) {
+      const p = g.pos();
+      const x = xs !== undefined ? parseNum(xs, 'x') : p.x, z = zs !== undefined ? parseNum(zs, 'z') : p.z;
+      const near: [number, number, number, number][] = [];
+      let total = 0;
+      g.tiles((t) => {
+        const r = t.f32('roofInfo');
+        if (!r) return;
+        total += r.length / 5;
+        for (let i = 0; i + 5 <= r.length; i += 5) near.push([Math.hypot(r[i] - x, r[i + 1] - z), r[i + 2], r[i + 3], r[i + 4]]);
+      });
+      if (!total) return 'Keine gemessenen Dachfarben in den geladenen Kacheln';
+      near.sort((a, b) => a[0] - b[0]);
+      return [`${total} Gebäude mit Dachfarbe aus dem Luftbild geladen; die nächsten:`,
+        ...near.slice(0, 6).map(([d, r, gg, b]) => `  ${d.toFixed(0)} m: rgb(${r}, ${gg}, ${b})`)].join('\n');
+    },
+  });
 }

@@ -333,3 +333,18 @@ export function tileCover(lc: Landcover | undefined, E0: number, N0: number, gro
     }
   return hits ? { splat, rows, tint } : undefined;
 }
+
+const toLin = (c: number) => { const v = c / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+const toSrgb = (v: number) => Math.round(255 * Math.min(1, Math.max(0, v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055)));
+
+/**
+ * Roof colour for the building mesh from the survey's mean roof colour: the aerial photo is hazy and
+ * bright (an anthracite roof shows as mid grey), so the haze is taken off in linear light, the result
+ * darkened a little and its saturation raised. Measured against roofs on the Großer Markt and in Roden.
+ */
+export function roofColour([r, g, b]: [number, number, number]): [number, number, number] {
+  const haze = [0.07, 0.07, 0.07];
+  const lin = [r, g, b].map((c, i) => Math.max(0, toLin(c) - haze[i]) * 0.85);
+  const l = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  return lin.map((v) => toSrgb(Math.max(0, l + (v - l) * 1.3))) as [number, number, number];
+}

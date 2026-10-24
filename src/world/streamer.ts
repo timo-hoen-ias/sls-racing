@@ -24,8 +24,30 @@ interface LoadedTile {
   body?: RAPIER_NS.RigidBody;
   /** Collider steps still to run; the tile counts as solid when this is empty. */
   pending?: (() => void)[];
-  /** World positions of the lamp heads (x, y, z), for the night lights. */
+  /** World positions of the lamp heads (x, y, z), for the night lights; NaN once knocked over. */
   lamps?: Float32Array;
+  /** Pole and head instances of the lamps. */
+  lampMeshes?: THREE.InstancedMesh[];
+}
+
+/** Something on the street that can be knocked over, found by its collider. */
+export interface Knockable {
+  kind: string | number;
+  tileKey: string;
+  index: number;
+  /** Foot of the object (world), its heading and height (m). */
+  x: number;
+  y: number;
+  z: number;
+  heading: number;
+  size: number;
+}
+
+/** A set of knockable objects: the street lamps here, street furniture elsewhere. */
+export interface KnockableSource {
+  lookup(collider: RAPIER_NS.Collider): Knockable | undefined;
+  /** Takes the object out of the world: instance, collider and the light it gave. */
+  remove(collider: RAPIER_NS.Collider): void;
 }
 
 interface ReadyTile { content: TileContent; built: LoadedTileData['built'] }
@@ -77,7 +99,7 @@ class TileLoader {
  * Download, decoding and vertex building run in web workers; the main thread only wraps the arrays in meshes and
  * creates colliders, within a time budget per frame. Colliders exist only within physRadius of the car.
  */
-export class WorldStreamer {
+export class WorldStreamer implements KnockableSource {
   readonly root = new THREE.Group();
   private loaded = new Map<string, LoadedTile>();
   private loading = new Set<string>();
@@ -95,7 +117,11 @@ export class WorldStreamer {
   private mats: Materials;
   private quality: Quality;
   private loader: TileLoader;
-  private lampGeo: { pole: THREE.BufferGeometry; head: THREE.BufferGeometry };
+  readonly lampGeo: { pole: THREE.BufferGeometry; head: THREE.BufferGeometry };
+  /** Lamp colliders by handle. */
+  private lampColliders = new Map<number, Knockable>();
+  /** Lamps knocked over this session (tileKey:index); they stay down when their tile comes back. */
+  private knocked = new Set<string>();
   /** Colliders are built within this distance (m) and dropped beyond physRadius + 150. */
   physRadius = 420;
   /** Main-thread time per frame for building meshes and colliders (ms). At least one job runs per frame. */
@@ -144,7 +170,64 @@ export class WorldStreamer {
   forEachLamp(fn: (x: number, y: number, z: number) => void) {
     for (const t of this.loaded.values()) {
       const l = t.lamps;
-      if (l) for (let i = 0; i < l.length; i += 3) fn(l[i], l[i + 1], l[i + 2]);
+      if (l) for (let i = 0; i < l.length; i += 3) if (l[i] === l[i]) fn(l[i], l[i + 1], l[i + 2]);
+    }
+  }
+
+  lookup(collider: RAPIER_NS.Collider) {
+    return this.lampColliders.get(collider.handle);
+  }
+
+  remove(collider: RAPIER_NS.Collider) {
+    const k = this.lampColliders.get(collider.handle);
+    if (!k) return;
+    this.lampColliders.delete(collider.handle);
+    this.world.removeCollider(collider, true);
+    this.knocked.add(`${k.tileKey}:${k.index}`);
+    const t = this.loaded.get(k.tileKey);
+    if (t) this.showLamp(t, k.index, false);
+  }
+
+  /** Lamp colliders within r of (x, z) (debug). */
+  lampsNear(x: number, z: number, r: number) {
+    const out: RAPIER_NS.Collider[] = [];
+    for (const [h, k] of this.lampColliders) if (Math.hypot(k.x - x, k.z - z) < r) out.push(this.world.getCollider(h));
+    return out;
+  }
+
+  get knockedCount() { return this.knocked.size; }
+
+  /** Stands every knocked-over lamp up again (debug). Their colliders return when the tile's physics is rebuilt. */
+  restoreLamps() {
+    const n = this.knocked.size;
+    const back = [...this.knocked];
+    this.knocked.clear();
+    for (const key of new Set(back.map((k) => k.slice(0, k.lastIndexOf(':'))))) {
+      const t = this.loaded.get(key);
+      if (!t) continue;
+      for (const k of back) if (k.startsWith(`${key}:`)) this.showLamp(t, +k.slice(key.length + 1), true);
+      // Rebuild the colliders so the lamps are solid again.
+      if (t.body) this.removePhysics(t);
+    }
+    return n;
+  }
+
+  /** Shows or hides lamp i of a tile (mesh instances and light). */
+  private showLamp(t: LoadedTile, i: number, on: boolean) {
+    const l = t.content.f32('lamps');
+    if (!l || !t.lamps) return;
+    const m = new THREE.Matrix4();
+    if (on) {
+      const q = new THREE.Quaternion().setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.PI - l[i * 4 + 3]);
+      m.compose(new THREE.Vector3(l[i * 4], l[i * 4 + 1], l[i * 4 + 2]), q, new THREE.Vector3(1, 1, 1));
+      new THREE.Vector3(0, 6.7, 1.55).applyMatrix4(m).toArray(t.lamps, i * 3);
+    } else {
+      m.makeScale(0, 0, 0);
+      t.lamps[i * 3] = t.lamps[i * 3 + 1] = t.lamps[i * 3 + 2] = NaN;
+    }
+    for (const mesh of t.lampMeshes ?? []) {
+      mesh.setMatrixAt(i, m);
+      mesh.instanceMatrix.needsUpdate = true;
     }
   }
   get physicsCount() { let n = 0; for (const t of this.loaded.values()) if (solid(t)) n++; return n; }
@@ -369,6 +452,7 @@ export class WorldStreamer {
 
     const l = t.f32('lamps');
     let lampHeads: Float32Array | undefined;
+    let lampMeshes: THREE.InstancedMesh[] | undefined;
     if (l) {
       const n = l.length / 4;
       const poles = new THREE.InstancedMesh(this.lampGeo.pole, this.mats.lampPole, n);
@@ -390,6 +474,7 @@ export class WorldStreamer {
       poles.computeBoundingSphere();
       heads.computeBoundingSphere();
       group.add(poles, heads);
+      lampMeshes = [poles, heads];
     }
 
     const origin = tileOriginLocal(this.index.world, t.ix, t.iy);
@@ -400,8 +485,10 @@ export class WorldStreamer {
     }
 
     this.root.add(group);
-    this.loaded.set(key, { key, ix: t.ix, iy: t.iy, content: t, group, lamps: lampHeads });
+    const tile: LoadedTile = { key, ix: t.ix, iy: t.iy, content: t, group, lamps: lampHeads, lampMeshes };
+    this.loaded.set(key, tile);
     this.visibleVersion++;
+    for (const k of this.knocked) if (k.startsWith(`${key}:`)) this.showLamp(tile, +k.slice(key.length + 1), false);
     this.stats.visualMs.push(performance.now() - t0);
     this.stats.built++;
   }
@@ -410,7 +497,12 @@ export class WorldStreamer {
   private addPhysics(t: LoadedTile) {
     const t0 = performance.now();
     if (!t.body) {
-      const { body, steps } = tileColliderSteps(this.R, this.world, t.content, this.index.world);
+      const { body, steps } = tileColliderSteps(this.R, this.world, t.content, this.index.world, (c, kind, i) => {
+        if (kind !== 'lamp') return;
+        if (this.knocked.has(`${t.key}:${i}`)) return this.world.removeCollider(c, false);
+        const l = t.content.f32('lamps')!;
+        this.lampColliders.set(c.handle, { kind: 'lamp', tileKey: t.key, index: i, x: l[i * 4], y: l[i * 4 + 1], z: l[i * 4 + 2], heading: l[i * 4 + 3], size: 7 });
+      });
       t.body = body;
       t.pending = steps;
       for (const layer of tileLayers()) {
@@ -429,6 +521,7 @@ export class WorldStreamer {
 
   private removePhysics(t: LoadedTile) {
     if (!t.body) return;
+    for (const [h, k] of this.lampColliders) if (k.tileKey === t.key) this.lampColliders.delete(h);
     this.world.removeRigidBody(t.body);
     t.body = undefined;
     t.pending = undefined;

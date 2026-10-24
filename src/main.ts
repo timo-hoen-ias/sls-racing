@@ -43,7 +43,11 @@ import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
+import { Vegetation } from './world/vegetation.ts';
+import { loadVegetation } from './world/vegGlb.ts';
+import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
@@ -98,6 +102,9 @@ async function boot() {
   view.scene.add(far.root);
   const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world });
   props.register(world);
+  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass });
+  vegetation.register(quality.trees);
+  view.scene.add(vegetation.root);
   view.scene.add(props.root);
 
   const spawn = index.spawn;
@@ -141,6 +148,11 @@ async function boot() {
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
   // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  loadVegetation().then((set) => {
+    vegetation.setModels(set);
+    const hedge = set.species.hecke;
+    if (hedge) props.setModel(Prop.hedge, hedge.lod0);
+  }, (e) => console.warn('[veg] GLB nicht geladen, nehme die prozeduralen Bäume', e));
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
@@ -211,8 +223,43 @@ async function boot() {
   };
   try { car.drivetrain.manual = localStorage.getItem('sls.gearbox') === 'manual'; } catch { /* storage blocked */ }
 
+  // Reset puts the car on the nearest road: right-hand lane, along the road in the direction it was facing
+  // (or the one-way direction), on a spot free of traffic, parked cars and street furniture.
+  const roadSpot = () => {
+    const p = car.body.translation();
+    // Real streets first (not service ways or tracks), any way as a fallback.
+    const street = (e: { rank: number }) => e.rank >= 2;
+    let s = graph.snap(p.x, p.z, 400, street) ?? graph.snap(p.x, p.z, 400);
+    if (!s) return undefined;
+    const box = new RAPIER.Cuboid(CAR.halfExtents.x + 0.3, CAR.halfExtents.y, CAR.halfExtents.z + 0.5);
+    const h = car.heading();
+    if (!s.edge.oneway && s.dx * Math.sin(h) - s.dz * Math.cos(h) < 0) s = { ...s, dx: -s.dx, dz: -s.dz };
+    const { dx, dz } = s;
+    const base = s;
+    for (let n = 0; n < 9; n++) {
+      if (n) {
+        // Try further along the road, alternating ahead and behind.
+        const step = 8 * Math.ceil(n / 2) * (n % 2 ? 1 : -1);
+        const next = graph.snap(base.x + dx * step, base.z + dz * step, 6, street);
+        if (!next) continue;
+        const flip = next.dx * dx + next.dz * dz < 0 ? -1 : 1;
+        s = { ...next, dx: next.dx * flip, dz: next.dz * flip };
+      }
+      // Right of the direction of travel (x east, z south): (-dz, dx).
+      // A little inside the lane centre, so wide cars on narrow streets keep off the kerb.
+      const off = s.edge.rightLane * 0.65;
+      const x = s.x - s.dz * off, z = s.z + s.dx * off;
+      const heading = Math.atan2(s.dx, -s.dz);
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -heading);
+      let blocked = false;
+      world.intersectionsWithShape({ x, y: s.y + 0.8, z }, q, box, () => { blocked = true; return false; }, undefined, undefined, undefined, car.body);
+      if (!blocked) return { x, y: s.y, z, heading };
+    }
+    return undefined;
+  };
   const resetCar = () => {
-    car.reset({ x: safe.x, y: safe.y + 1.2, z: safe.z }, safe.heading);
+    const r = roadSpot() ?? safe;
+    car.reset({ x: r.x, y: r.y + 1.2, z: r.z }, r.heading);
     prevVel.x = prevVel.y = prevVel.z = 0;
     hitCooldown = 0.6;
   };
@@ -226,6 +273,20 @@ async function boot() {
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
   registerDamageCommands(carView.damage, debris);
+  // Street lamps and light street furniture give way when hit fast enough: lamps go dark, poles tip over.
+  const knockdown = new Knockdown(world, car, debris);
+  knockdown.addSource(streamer, lampDebris(streamer.lampGeo, mats.lampPole, mats.lampPole), 90);
+  // Signs, bollards, bins, benches … from the street furniture layer.
+  knockdown.addSource(propSource(props), propDebris(), 30);
+  knockdown.onKnock = (_, speed, dir) => {
+    const strength = Math.min(0.6, speed / 40);
+    sound?.impact(strength);
+    worldAudio.impact(ip, car.heading(), strength);
+    input.rumble(0.5 + strength * 0.5, 160);
+    effects.impact({ x: ip.x + dir.x * 2, y: ip.y, z: ip.z + dir.z * 2 }, strength);
+    carView.damage.hit(new THREE.Vector3(dir.x, 0, dir.z).applyQuaternion(iq.clone().invert()), strength * 0.6);
+  };
+  registerKnockCommands(knockdown, streamer, () => ip);
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F6') { e.preventDefault(); if (replay.active) replay.stop(); else try { navHud.toast(replay.start().split(' · ')[0], 1.5); } catch (err) { navHud.toast((err as Error).message, 1.5); } }
     if (e.code === 'F7') { e.preventDefault(); telemetry.visible = !telemetry.visible; }
@@ -238,6 +299,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  vegetation.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
@@ -355,6 +417,7 @@ async function boot() {
         car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       }
       car.update(drive, STEP);
+      knockdown.step(STEP);
       world.step();
       capture(curr);
       const lv = car.body.linvel();
@@ -419,6 +482,7 @@ async function boot() {
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
+    vegetation.update(dt, view.camera, weather.weather);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
@@ -504,6 +568,7 @@ async function boot() {
     }
     (window as any).__sls = {
       props,
+      vegetation,
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,

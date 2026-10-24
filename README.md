@@ -91,6 +91,8 @@ Fassaden haben Charakter: Die Pipeline ordnet jedem Gebäude einen Typ zu (Wohnh
 
 Straßenmöbel und parkende Autos kommen aus OpenStreetMap (`pipeline/lib/props.ts`): Bushaltestellen (mit Wartehäuschen, wo gemappt), Verkehrs-, Stopp-, Vorfahrt- und Ortsschilder, Poller, Bänke, Mülleimer, Briefkästen, Container, Hydranten, Fahrradständer, Litfaßsäulen, Zäune, Mauern, Hecken und Leitplanken (auch entlang von Autobahn und Schnellstraße). Was auf der Fahrbahn gemappt ist, rückt an den Bordstein. Parkplätze bekommen Autos in Parkbuchten, Wohnstraßen halb aufgestellte Parker am Rand (`parking:*`-Tags werden beachtet). Leichte Teile sind für den Schadens-Code als umfahrbar markiert (`props.lookup/remove`). Befehle: `props on|off`, `props.toggle schilder|moebel|parker|zaeune|<typ> [on|off]`, `props.radius`, `props.count`, `props.near [radius]`, `props.reset`.
 
+Vegetation: Bäume haben Arten (Laubbaum, Nadelbaum, Pappel, Birke, Obstbaum) aus den OSM-Tags oder passend zur Fläche (Mischwald, Nadelwald, Friedhof, Streuobstwiese, Kleingärten), dazu Büsche in Parks und Gebüsch statt Wald auf `natural=scrub`. Die Bäume kommen aus Blender (`vegetation.glb`: Platane, Linde, Kastanie, Ahorn, Fichte, Kiefer, Pappel, Birke, Obstbaum), mit drei Stufen: detailliert nah, einfach in mittlerer Entfernung, Billboards in der Ferne; ohne GLB gibt es prozedurale Bäume. Wind wiegt Kronen und Gras, stärker bei Regen und Schnee. Um die Kamera wachsen Grasbüschel, Äcker haben Furchen und je Feld eine eigene Frucht. Befehle: `veg.density 0..1`, `veg.wind auto|0..1`, `veg.lod <m>`, `veg.lod.force 0|1|2|auto`, `veg.models glb|procedural`, `veg.grass on|off`, `veg.grass.radius`, `veg.fields 0..1`, `veg.info`.
+
 Der Hall folgt der Umgebung: Raycasts links, rechts und nach oben messen Hauswände und Brücken, daraus werden offene Straße, Häuserschlucht und Unterführung überblendet, dazu ein Echo von der nächsten Wand je Seite. Die Geräuschkulisse mischt Stadtgemurmel (bebaut), Vögel und Blätter (grün), Autobahnrauschen und die Saar von dort, wo sie wirklich sind; Aufprallgeräusche klingen nach Material (Gebäude, Baum, Mast, Fahrzeug).
 
 Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb.zone [auto|stadt|gruen|autobahn|wasser]`, `amb.mix`, `amb.layer <schicht> on|off`, `amb.volume`, `amb.impact <material>`, `amb on|off`.
@@ -108,6 +110,8 @@ Der Verkehr (und später die parkenden Autos) kommt aus `tools/blender/make_traf
 
 Wahrzeichen (W7): `tools/landmark-footprints.ts` holt die OSM-Grundrisse und schreibt `pipeline/landmarks.json` (UTM 32N, je Eintrag `id`, `glb`, `e`, `n`, `heading`, `footprint`). `tools/blender/make_landmarks.py` baut darauf passend je Wahrzeichen ein GLB nach `public/models/landmarks/<id>.glb` mit `<id>_lod0`, `<id>_lod1` und `<id>_collider` (+X Ost, −Z Nord, Ursprung im Grundriss-Schwerpunkt, Sockel 1 m unter Grund), `npm run models:landmarks` baut und komprimiert sie. Bisher: St. Ludwig (neugotische Westfront mit Turm, Böhm-Schiff) und Rathaus (1950er-Bau mit Uhrturm). Die Grundrisse sind exakt, die Höhen sind aus Fotos geschätzt, bis die LoD2-Daten da sind.
 
+Vegetation: `tools/blender/make_vegetation.py` baut Platane, Linde, Kastanie, Ahorn, Birke, Pappel, Fichte, Kiefer und Obstbaum (auf 8 m normiert, Extras `height`/`crown`/`kind`) sowie Busch, Gebüsch und ein 1 m langes Heckenstück entlang z. Je Art gibt es `lod0` (400–800 Dreiecke), `lod1` (≤ 120) und für Bäume ein Billboard aus zwei gekreuzten Flächen mit eingebackenem Atlas. Farben stecken in den Vertexfarben, Texturen werden keine gebraucht außer dem Billboard-Atlas. `src/world/vegGlb.ts` lädt `public/models/vegetation.glb` (`npm run models:vegetation`), ergänzt das `wind`-Attribut wie `vegModels.ts` und ordnet die Arten den Vegetationsarten zu (`SPECIES_BY_KIND`).
+
 Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 
 ## Aufbau
@@ -121,6 +125,7 @@ src/
   world/format.ts    Kachelformat und Koordinaten (geteilt von Pipeline und Spiel)
   world/streamer.ts  lädt Kacheln um das Auto, baut Meshes und Kollision
   world/props.ts     Straßenmöbel und Parker als Kachel-Layer (Modelle in propModels.ts)
+  world/vegetation.ts Bäume, Büsche, Gras, Wind und Ackerfurchen als Kachel-Layer
   vehicle/           Rapier-Raycast-Fahrzeug mit Arcade-Tuning, Nitro, Drift
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
   world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)

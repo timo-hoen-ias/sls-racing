@@ -96,6 +96,11 @@ export class PropLayer {
     this.meshes.set(key, list);
   }
 
+  /** Replaces the geometry of a prop kind (e.g. the Blender hedge). */
+  setModel(kind: PropKind, geo: THREE.BufferGeometry) {
+    for (const im of this.meshes.get(kind) ?? []) im.geometry = geo;
+  }
+
   /** Parked cars use the traffic models (variants, and the simpler LOD beyond VEHICLE_LOD_DISTANCE). */
   setVehicles(set: VehicleSet) {
     for (const [key, list] of this.meshes) {

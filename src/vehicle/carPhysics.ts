@@ -9,7 +9,12 @@ type R = typeof RAPIER_NS;
 const YAW_INERTIA = (CAR.mass * ((2 * CAR.halfExtents.x) ** 2 + (2 * CAR.halfExtents.z) ** 2)) / 12;
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+/** Steering lock (rad) at a speed (m/s): shrinks with the square of the speed. */
+export function maxSteerAngle(speed: number) {
+  const s = CAR.steer;
+  return s.highSpeed + (s.lowSpeed - s.highSpeed) / (1 + (Math.abs(speed) / s.fadeSpeed) ** 2);
+}
 
 /** Per-wheel contact state for tyre marks, smoke and sound. */
 export interface WheelState {
@@ -39,6 +44,8 @@ export class CarPhysics {
   slip = 0;
   drifting = false;
   airborne = false;
+  /** Road condition multipliers set by the weather each frame (1 = dry asphalt). */
+  surface = { grip: 1, side: 1, traction: 1, brake: 1, steer: 1, accel: 1 };
   private wheelspin = 0;
   private R: R;
 
@@ -91,8 +98,13 @@ export class CarPhysics {
     this.airborne = contacts === 0;
 
     // Steering: less lock at speed, smoothed.
-    const maxSteer = lerp(CAR.steer.lowSpeed, CAR.steer.highSpeed, clamp(absV / CAR.steer.fadeSpeed, 0, 1));
-    this.steer += clamp(input.steer * maxSteer - this.steer, -CAR.steer.rate * dt, CAR.steer.rate * dt);
+    // Speed-sensitive steering: full lock when parking, only a few degrees at motorway speed,
+    // and the wheel turns slower the faster the car goes. The handbrake keeps enough lock to drift.
+    let maxSteer = maxSteerAngle(absV);
+    if (input.handbrake) maxSteer = Math.max(maxSteer, CAR.steer.drift);
+    const sf = this.surface;
+    const rate = (CAR.steer.rate * sf.steer) / (1 + absV / CAR.steer.rateSpeed);
+    this.steer += clamp(input.steer * maxSteer - this.steer, -rate * dt, rate * dt);
     // Body +x is left, so steering right is a negative angle.
     vc.setWheelSteering(0, -this.steer);
     vc.setWheelSteering(1, -this.steer);
@@ -106,8 +118,8 @@ export class CarPhysics {
     const dt0 = this.drivetrain;
     const reversing = input.throttle === 0 && ((v < 1 && input.brake > 0) || (v < -0.5 && dt0.gear === -1));
     let brake = 0;
-    if (input.throttle > 0 && v < -1) brake = CAR.brake.force * input.throttle;
-    if (input.brake > 0 && v > 1) brake = Math.max(brake, CAR.brake.force * input.brake);
+    if (input.throttle > 0 && v < -1) brake = CAR.brake.force * sf.brake * input.throttle;
+    if (input.brake > 0 && v > 1) brake = Math.max(brake, CAR.brake.force * sf.brake * input.brake);
     if (input.throttle === 0 && input.brake === 0 && absV < 1) brake = 6; // holds the car on slopes
     const pedal = reversing ? input.brake * clamp((CAR.reverseSpeed + v) / 2, 0, 1) : v < -1 ? 0 : input.throttle;
     dt0.update({
@@ -122,23 +134,26 @@ export class CarPhysics {
       dt,
     });
     // Arcade traction control: what the tyres cannot put down spins them instead.
-    const tractionLimit = CAR.traction * CAR.mass * 9.81 * (contacts / 4) * (this.boosting ? CAR.nitro.traction : 1);
-    const wanted = dt0.force;
+    const tractionLimit = CAR.traction * sf.traction * CAR.mass * 9.81 * (contacts / 4) * (this.boosting ? CAR.nitro.traction : 1);
+    const wanted = dt0.force * sf.accel;
     // Rapier ignores the brakes on a wheel with engine force, so braking overrides engine braking.
     const engine = brake > 6 ? 0 : Math.sign(wanted) * Math.min(Math.abs(wanted), tractionLimit);
     const spin = wanted > 0 && tractionLimit > 0 ? clamp((wanted / tractionLimit - 1.15) / 0.9, 0, 1) : 0;
     this.wheelspin = absV < 30 ? spin : 0;
-    // All-wheel drive, 35 % front / 65 % rear.
+    // Rear-biased all-wheel drive.
     for (let i = 0; i < 4; i++) {
-      vc.setWheelEngineForce(i, engine * (i < 2 ? 0.35 : 0.65) * 0.5);
+      vc.setWheelEngineForce(i, engine * (i < 2 ? CAR.frontDrive : 1 - CAR.frontDrive) * 0.5);
       vc.setWheelBrake(i, brake * (i < 2 ? 0.6 : 0.4));
     }
 
     // Handbrake drift: lock and loosen the rear.
     this.drifting = input.handbrake && absV > 8;
-    const rearGrip = input.handbrake ? CAR.grip.driftRear : CAR.grip.rear;
+    const rearGrip = (input.handbrake ? CAR.grip.driftRear : CAR.grip.rear) * sf.grip;
+    vc.setWheelFrictionSlip(0, CAR.grip.front * sf.grip);
+    vc.setWheelFrictionSlip(1, CAR.grip.front * sf.grip);
     vc.setWheelFrictionSlip(2, rearGrip);
     vc.setWheelFrictionSlip(3, rearGrip);
+    for (let i = 0; i < 4; i++) vc.setWheelSideFrictionStiffness(i, CAR.grip.side * sf.side);
     if (input.handbrake) { vc.setWheelBrake(2, CAR.brake.handbrake); vc.setWheelBrake(3, CAR.brake.handbrake); }
 
     vc.updateVehicle(dt);
@@ -154,7 +169,9 @@ export class CarPhysics {
       body.applyImpulse({ x: -up.x * df, y: -up.y * df, z: -up.z * df }, true);
       // Yaw assist: a gentle extra turn at speed so the car feels responsive.
       if (absV > 3) {
-        const yawAssist = -this.steer * clamp(absV / 20, 0, 1) * (input.handbrake ? 1.1 : 0.6) * Math.sign(v) * mass * 0.9 * dt;
+        // Fades out at high speed so the car stays planted instead of darting.
+        const fade = input.handbrake ? 1 : clamp(1.5 - absV / 40, 0.35, 1);
+        const yawAssist = -this.steer * clamp(absV / 20, 0, 1) * fade * (input.handbrake ? 1.1 : 0.6) * Math.sign(v) * mass * 0.9 * dt;
         body.applyTorqueImpulse({ x: up.x * yawAssist, y: up.y * yawAssist, z: up.z * yawAssist }, true);
       }
       // Drift angle cap: past ~40° the car is pulled back towards its direction of travel.

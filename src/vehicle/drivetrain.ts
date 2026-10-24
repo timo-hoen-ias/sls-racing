@@ -74,6 +74,9 @@ export class Drivetrain {
   limiter = false;
   /** Set for exactly one update after a gear change. */
   shifted: 'up' | 'down' | null = null;
+  /** Manual mode: the driver picks the gear with shift(); the box only protects the engine. */
+  manual = false;
+  private request = 0;
   private cutTimer = 0;
   private blipTimer = 0;
   private lock = 0;
@@ -102,6 +105,11 @@ export class Drivetrain {
     return lerp(1100, 3000, clamp(throttle, 0, 1) ** 1.3);
   }
 
+  /** Queues a manual gear change (+1 up, −1 down); applied on the next update. */
+  shift(dir: 1 | -1) {
+    this.request = dir;
+  }
+
   update(i: DrivetrainInput) {
     const s = this.spec;
     const dt = clamp(i.dt, 0, 0.1);
@@ -117,10 +125,25 @@ export class Drivetrain {
       if (this.gear !== -1) { this.gear = -1; this.shifted = 'down'; }
     } else {
       if (this.gear < 1) { this.gear = 1; this.shifted = 'up'; }
-      if (!i.airborne && !i.freeRev && this.lock <= 0) {
+      if (this.manual) {
+        const req = this.request;
+        if (req > 0 && this.gear < top) {
+          this.gear++;
+          this.cutTimer = s.shiftTime;
+          this.shifted = 'up';
+        } else if (req < 0 && this.gear > 1 && this.gearRpm(this.gear - 1, i.speed) < s.maxRpm) {
+          // A downshift that would over-rev the engine is refused, like a real DCT.
+          this.gear--;
+          this.blipTimer = 0.12;
+          this.shifted = 'down';
+        }
+      } else if (!i.airborne && !i.freeRev && this.lock <= 0) {
         const cur = this.gearRpm(this.gear, i.speed);
-        const up = i.boost > 1 ? s.shiftRpm : i.brake > 0.1 ? Infinity : this.upRpm(thr);
-        const down = Math.max(this.downRpm(thr), i.brake > 0.1 ? 2600 : 0);
+        // Off the throttle the box holds its gear (engine braking) and changes down as the revs
+        // fall; under braking it changes down earlier, with a blip.
+        const overrun = thr < 0.05;
+        const up = i.boost > 1 || overrun || i.brake > 0.1 ? s.shiftRpm : this.upRpm(thr);
+        const down = Math.max(this.downRpm(thr), i.brake > 0.1 ? 2600 : overrun ? 2000 : 0);
         if (this.gear < top && cur >= up && this.gearRpm(this.gear + 1, i.speed) > down + 300) {
           this.gear++;
           this.cutTimer = s.shiftTime;
@@ -138,6 +161,7 @@ export class Drivetrain {
         }
       }
     }
+    this.request = 0;
     this.cut = this.cutTimer > 0;
     this.blip = this.blipTimer > 0;
 
@@ -175,7 +199,8 @@ export class Drivetrain {
     }
     let f = engineTorque * toForce;
     // Engine braking off throttle (only while rolling in the gear's direction).
-    if (thr < 0.05 && Math.abs(i.speed) > 1.5) {
+    // The clutch opens near idle, so engine braking ends there instead of stalling.
+    if (thr < 0.05 && Math.abs(i.speed) > 1.5 && this.gearRpm(this.gear, i.speed) > s.idleRpm * 1.15) {
       f -= (s.engineBrake.base + s.engineBrake.perRpm * this.rpm) * toForce;
     }
     this.force = this.gear < 0 ? -f : f;

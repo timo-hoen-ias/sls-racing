@@ -150,8 +150,9 @@ function driveRoute(pts: [number, number][], startY: number, tags: Record<string
     // A crash: what the body hit (trace only).
     if (TRACE && lastSpeed - car.speed > 6) {
       const hit = new Set<string>();
-      world.contactPairsWith(car.body.collider(0), (o) => hit.add(`${kinds.get(o.handle) ?? '?'} at ${o.translation().x.toFixed(1)},${o.translation().z.toFixed(1)}`));
-      console.log(`crash t=${(step * STEP).toFixed(2)} ${(lastSpeed * 3.6).toFixed(0)} → ${(car.speed * 3.6).toFixed(0)} km/h: ${[...hit].join(', ') || 'nichts'}`);
+      // The body touched it within the last steps (the bounce may already have separated them).
+      world.contactPairsWith(car.body.collider(0), (o) => hit.add(kinds.get(o.handle) ?? '?'));
+      console.log(`crash t=${(step * STEP).toFixed(2)} at ${q.x.toFixed(1)},${q.z.toFixed(1)} ${(lastSpeed * 3.6).toFixed(0)} → ${(car.speed * 3.6).toFixed(0)} km/h, near: ${[...hit].join(', ') || 'nothing'}`);
     }
     lastSpeed = car.speed;
     const r = car.body.rotation();

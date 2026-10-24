@@ -10,17 +10,21 @@ import {
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
+import { bridgeDeckList } from './lib/bridges.ts';
+import { RoadCarve } from './lib/carve.ts';
 import { buildProps } from './lib/props.ts';
 import { signalJunctions } from './lib/signals.ts';
 import { RoadMask } from './lib/clearance.ts';
+import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
+import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
-import { liftOverpasses } from './lib/overpasses.ts';
 import { buildRoads } from './lib/roads.ts';
-import { flatSampler, terrariumSampler, type HeightSampler } from './lib/terrain.ts';
+import { terrariumSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
+import { WaterLines } from './lib/waterways.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
 import { PROP_NAMES, type PropKind } from '../src/world/propKinds.ts';
@@ -51,22 +55,14 @@ function main() {
     }
   }
 
-  const terrarium = regions.find((r) => r.terrain.source === 'terrarium')?.terrain as { zoom: number } | undefined;
-  const sampler: HeightSampler = terrarium ? terrariumSampler(paths.terrain, terrarium.zoom) : flatSampler();
-  const hCache = new Map<string, number>();
-  const height = (e: number, n: number) => {
-    const k = `${Math.round(e * 2)}_${Math.round(n * 2)}`;
-    let h = hCache.get(k);
-    if (h === undefined) { h = sampler.at(...toLonLat(e, n)); hCache.set(k, h); }
-    return h;
-  };
+  const height = terrainHeight(regions, toLonLat, console.log);
 
   const osm = readOsm(merged, project);
   const tiles = new TileMap(info.tileSize);
-  const over = liftOverpasses(osm.ways, height);
-  console.log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
+  roadHeights(osm.ways, regions, height, console.log);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
-  const samples = buildRoads(osm.ways, info, height, tiles, junctions);
+  const carve = new RoadCarve(TERRAIN_STEP);
+  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n) });
@@ -88,6 +84,8 @@ function main() {
   }
 
   const ground = new GroundIndex(osm.polygons);
+  const water = new WaterLines(osm.ways);
+  const waterways = water.polylines(info, height);
   const onRoad = new RoadMask(osm.ways);
   // Lamps stand beside their own road; drop the ones that end up on another road's lanes.
   const onLanes = new RoadMask(osm.ways, -0.5);
@@ -96,6 +94,8 @@ function main() {
     for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
     return out;
   };
+  const TREE_CELL = 8;
+  const TREE_EVERY = Math.max(1, Math.round(TREE_CELL / TERRAIN_STEP));
   const treesByTile = new Map<string, number[]>();
   const treeKindsByTile = new Map<string, number[]>();
   const bushesByTile = new Map<string, number[]>();
@@ -131,18 +131,19 @@ function main() {
       for (let c = 0; c < TERRAIN_N; c++) {
         const e = E0 + c * TERRAIN_STEP;
         const n = N0 - r * TERRAIN_STEP;
-        h[r * TERRAIN_N + c] = Math.round(height(e, n) * 100) / 100;
-        const cls = ground.at(e, n, Ground.grass);
+        h[r * TERRAIN_N + c] = Math.round(carve.apply(e, n, height.raw(e, n)) * 100) / 100;
+        // Brooks become water cells, except under roads (culverts), where the mesh must stay level.
+        const cls = water.has(e, n) && !onRoad.has(e, n) ? Ground.water : ground.at(e, n, Ground.grass);
         g[r * TERRAIN_N + c] = cls;
-        // Scatter trees and bushes in woods, scrub and parks, away from roads. Densities are per cell and area type.
-        if (r < TERRAIN_N - 1 && c < TERRAIN_N - 1 && (cls === Ground.forest || cls === Ground.grass)) {
-          const tags = ground.tagsAt(e + TERRAIN_STEP / 2, n - TERRAIN_STEP / 2);
+        // Scatter trees and bushes in woods, scrub and parks, away from roads. Densities are per 8 m cell and area type, whatever the mesh step.
+        if (r % TREE_EVERY === 0 && c % TREE_EVERY === 0 && r < TERRAIN_N - 1 && c < TERRAIN_N - 1 && (cls === Ground.forest || cls === Ground.grass)) {
+          const tags = ground.tagsAt(e + TREE_CELL / 2, n - TREE_CELL / 2);
           const d = areaDensity(tags, cls === Ground.forest);
           const count = (v: number, s: number) => Math.floor(v) + (rand(e, n, s) < v % 1 ? 1 : 0);
           const nt = count(d.trees, 3), nb = count(d.bushes, 4);
           for (let i = 0; i < nt + nb; i++) {
-            const te = e + rand(e, n, i * 2 + 5) * TERRAIN_STEP;
-            const tn = n - rand(e, n, i * 2 + 6) * TERRAIN_STEP;
+            const te = e + rand(e, n, i * 2 + 5) * TREE_CELL;
+            const tn = n - rand(e, n, i * 2 + 6) * TREE_CELL;
             if (onRoad.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
             if (i < nt) addTree(te, tn, 0.7 + rand(te, tn) * 0.7, areaTreeKind(tags, rand(te, tn, 7)));
             else addBush(te, tn, 0.6 + rand(te, tn, 8) * 0.8, tags?.natural === 'scrub' || cls === Ground.forest ? Bush.scrub : Bush.round);
@@ -157,6 +158,8 @@ function main() {
     };
     const lamps = offLanes(b?.lamps ?? []);
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
+    const ww = waterways.get(k);
+    if (ww) tile.waterways = encode(new Float32Array(ww));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
     const treeKinds = treeKindsByTile.get(k);
@@ -190,12 +193,14 @@ function main() {
     graph: 'graph.json',
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
-      ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)', 'Gelände: Terrain Tiles (AWS Open Data, SRTM/EU-DEM)']
+      ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',
+        ...(regions.some((r) => r.laser) ? ['Gelände und Brücken: © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0'] : []),
+        'Gelände außerhalb: Terrain Tiles (AWS Open Data, SRTM/EU-DEM)']
       : ['Synthetisches Testgelände'],
   };
   // Far view (P3): coarse terrain and building blocks around regions that ask for it.
   const farRegion = regions.find((r) => r.far && existsSync(`${paths.raw(r.id)}far-osm.json`));
-  if (farRegion?.far && terrarium) {
+  if (farRegion?.far && farRegion.terrain.source === 'terrarium') {
     const farJson: OsmJson = JSON.parse(readFileSync(`${paths.raw(farRegion.id)}far-osm.json`, 'utf8'));
     const farOsm = readOsm(farJson, project);
     // The detailed tiles plus the far margin (the extract itself reaches further along long relations).
@@ -205,8 +210,7 @@ function main() {
     // Detailed terrain where the near tiles have it, so both meet; the coarse zoom beyond.
     const coarse = terrariumSampler(paths.terrain, farRegion.far.zoom);
     const farHeight = (e: number, n: number) => {
-      const ll = toLonLat(e, n);
-      try { return sampler.at(...ll); } catch { return coarse.at(...ll); }
+      try { return height.raw(e, n); } catch { return coarse.at(...toLonLat(e, n)); }
     };
     idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, out: paths.out }) };
   }
@@ -214,6 +218,7 @@ function main() {
   graph.s = signalJunctions(graph, signalPts);
   console.log(`Traffic lights: ${signalPts.length} signal nodes → ${graph.s.length} junctions in ${new Set(graph.s.map((s) => s[1])).size} groups`);
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
+  writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);

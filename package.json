@@ -17,6 +17,7 @@
     "world:build": "node pipeline/build.ts saarlouis",
     "world:fixture": "node pipeline/build.ts fixture",
     "world:drivetest": "node pipeline/drivetest.ts saarlouis",
+    "world:gaps": "node pipeline/gapcheck.ts saarlouis",
     "models:build": "blender --background --factory-startup --python tools/blender/make_sportscar.py -- public/models/sportscar.raw.glb && node tools/compress-model.ts public/models/sportscar.raw.glb public/models/sportscar.glb && blender --background --factory-startup --python tools/blender/make_traffic.py -- public/models/traffic.raw.glb && node tools/compress-model.ts public/models/traffic.raw.glb public/models/traffic.glb && npm run models:landmarks && npm run models:vegetation && npm run models:props",
     "models:landmarks": "blender --background --factory-startup --python tools/blender/make_landmarks.py && for f in public/models/landmarks/*.raw.glb; do node tools/compress-model.ts \"$f\" \"${f%.raw.glb}.glb\"; done",
     "models:vegetation": "blender --background --factory-startup --python tools/blender/make_vegetation.py && node tools/compress-model.ts public/models/vegetation.raw.glb public/models/vegetation.glb",

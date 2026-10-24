@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import { FullScreenQuad, Pass } from 'three/examples/jsm/postprocessing/Pass.js';
 
-// Distance and height fog as a post pass: haze thickens towards the ground and takes its colour
-// from the sky in the direction of view (warm towards the sun, blue away from it), so the world
-// edge melts into the horizon at any time of day.
+// Distance and height fog as a post pass, both taking their colour from the sky in the direction
+// of view (warm towards the sun, blue away from it):
+// - distance fog (aerial perspective): thin haze with a scale height of ~1 km that blues out the
+//   far view and melts the world edge into the horizon at any time of day;
+// - height fog: a dense layer a few dozen metres thick above the valley floor, so mist lies in
+//   the Saar valley and low ground while hills rise out of it.
 
 export class AtmospherePass extends Pass {
   /** Scene depth of the current frame, provided by the post chain. */
@@ -22,11 +25,16 @@ export class AtmospherePass extends Pass {
       tSky: { value: sky },
       uInvViewProj: { value: new THREE.Matrix4() },
       uCamPos: { value: new THREE.Vector3() },
-      /** Extinction per metre at ground level (~0.0003 = 13 km visibility). */
+      /** Distance fog: extinction per metre at ground level (~0.0003 = 13 km visibility). */
       uDensity: { value: 0.0003 },
-      /** Haze thins out with this scale height (m). */
-      uFalloff: { value: 1 / 300 },
+      /** Distance fog thins out with this scale height (m). */
+      uFalloff: { value: 1 / 1000 },
       uGround: { value: ground },
+      /** Height fog: extinction per metre at its base, and 1 / layer thickness (m). */
+      uHDensity: { value: 0.001 },
+      uHFalloff: { value: 1 / 35 },
+      /** Height fog base (valley floor, m). */
+      uHBase: { value: ground },
       /** Fade to the horizon between these distances: the streamed world ends there. */
       uEdge: { value: new THREE.Vector2(radius * 0.5, radius * 1.02) },
       uMaxSky: { value: 30 },
@@ -42,7 +50,7 @@ export class AtmospherePass extends Pass {
         uniform samplerCube tSky;
         uniform mat4 uInvViewProj;
         uniform vec3 uCamPos;
-        uniform float uDensity, uFalloff, uGround, uMaxSky;
+        uniform float uDensity, uFalloff, uGround, uMaxSky, uHDensity, uHFalloff, uHBase;
         uniform vec2 uEdge;
         varying vec2 vUv;
         vec3 worldAt(vec2 uv, float d) {
@@ -52,6 +60,12 @@ export class AtmospherePass extends Pass {
         vec3 skyAt(vec3 rd) {
           vec3 dir = normalize(vec3(rd.x, max(rd.y, 0.03), rd.z));
           return min(textureLod(tSky, dir, 2.5).rgb, vec3(uMaxSky));
+        }
+        /** Optical depth of an exponential layer (density d0 at height y0, falloff k) along v. */
+        float layer(vec3 v, float dist, float d0, float y0, float k) {
+          float dy = v.y * k;
+          float integ = abs(dy) > 1e-3 ? (1.0 - exp(-dy)) / dy : 1.0;
+          return d0 * exp(clamp(-(uCamPos.y - y0) * k, -80.0, 80.0)) * dist * integ;
         }
         void main() {
           vec4 col = texture2D(tColor, vUv);
@@ -65,14 +79,16 @@ export class AtmospherePass extends Pass {
           }
           vec3 v = worldAt(vUv, d) - uCamPos;
           float dist = length(v);
-          // Exponential height fog integrated along the view ray.
-          float k = uFalloff;
-          float dy = v.y * k;
-          float integ = abs(dy) > 1e-3 ? (1.0 - exp(-dy)) / dy : 1.0;
-          float od = uDensity * exp(-(uCamPos.y - uGround) * k) * dist * integ;
-          float f = 1.0 - exp(-od);
-          f = max(f, smoothstep(uEdge.x, uEdge.y, dist));
-          col.rgb = mix(col.rgb, skyAt(rd), f);
+          // Both layers integrated along the view ray. The mist takes the horizon colour, a bit paler.
+          float odD = layer(v, dist, uDensity, uGround, uFalloff);
+          float odH = min(layer(v, dist, uHDensity, uHBase, uHFalloff), 40.0);
+          float f = 1.0 - exp(-odD - odH);
+          vec3 horizon = skyAt(vec3(rd.x, 0.0, rd.z));
+          vec3 mist = mix(horizon, vec3(dot(horizon, vec3(0.333))), 0.35);
+          vec3 fogCol = mix(skyAt(rd), mist, odH / max(odD + odH, 1e-5));
+          float edge = smoothstep(uEdge.x, uEdge.y, dist);
+          col.rgb = mix(col.rgb, fogCol, f);
+          col.rgb = mix(col.rgb, skyAt(rd), edge);
           gl_FragColor = col;
         }`,
       depthTest: false,

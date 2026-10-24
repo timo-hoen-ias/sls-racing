@@ -63,8 +63,14 @@ export interface FxSettings {
   radial: number;
   /** How much nitro pumps up blur and streaks. */
   nitroBlur: number;
-  /** Fog density. */
+  /** Distance fog (aerial perspective) density. */
   fog: number;
+  /** Height fog (valley mist) density. */
+  heightFog: number;
+  /** Height fog layer thickness in m. */
+  fogHeight: number;
+  /** Height fog base relative to the typical ground height, in m. */
+  fogBase: number;
   /** Cloud cover on a clear day, 0..1. */
   clouds: number;
   godrays: number;
@@ -73,7 +79,7 @@ export interface FxSettings {
 }
 
 export class PostFX {
-  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, clouds: 0.4, godrays: 1, flare: 1, bloom: 1 };
+  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1 };
   readonly ao?: GTAOPass;
   readonly smaaPass?: SMAAPass;
   readonly clouds: CloudPass;
@@ -131,9 +137,8 @@ export class PostFX {
     c.addPass(this.blur);
     this.flare = new LensFlarePass(camera, daylight.sunDir);
     c.addPass(this.flare);
-    // The physical sky is very bright in linear HDR: by day only lights and glints pass the
-    // threshold; at night it drops so lamps, headlights and the city glow bloom.
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.3, 0.4, 40);
+    // Subtle bloom; threshold and strength follow the time of day in render().
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.12, 0.5, 6);
     c.addPass(this.bloom);
     c.addPass(new OutputPass());
     const depth = () => this.grab.depth;
@@ -174,11 +179,22 @@ export class PostFX {
     cl.rayStrength = 0.4 * st.godrays;
     cl.setWeather({ base: this.ground + 1200 - oc * 500, top: this.ground + 2600, coverage: THREE.MathUtils.lerp(st.clouds, 0.97, oc), density: 1 + oc });
     if (!this.cloudsOn) cl.enabled = false;
-    this.fog.uniforms.uDensity.value = 0.0003 * st.fog * (1 + oc * 4);
+    // Distance fog scales with the view distance: a blue haze over kilometres when the far view
+    // reaches the horizon, a little denser when the world ends after a few hundred metres.
+    const fu = this.fog.uniforms;
+    fu.uDensity.value = THREE.MathUtils.clamp(1.4 / fu.uEdge.value.y, 0.00012, 0.0006) * st.fog * (1 + oc * 4);
+    // Valley mist: thick at dawn and at night, a light veil in the afternoon.
+    const dawn = Math.exp(-(((d.hours - 7) % 24) ** 2) / 4);
+    const mist = Math.max(1 - d.daylight, dawn);
+    fu.uHDensity.value = THREE.MathUtils.lerp(0.0006, 0.0025, mist) * st.heightFog * (1 + oc);
+    fu.uHFalloff.value = 1 / Math.max(1, st.fogHeight);
+    fu.uHBase.value = this.ground + st.fogBase;
     this.flare.sunColor.copy(d.sunColor);
     this.flare.strength = 0.7 * st.flare;
-    this.bloom.threshold = THREE.MathUtils.lerp(2.5, 40, d.daylight);
-    this.bloom.strength = THREE.MathUtils.lerp(0.55, 0.3, d.daylight) * st.bloom;
+    // Light bloom: by day only glints, chrome and the sun's surroundings glow softly; at night
+    // lamps and headlights get a gentle halo.
+    this.bloom.threshold = THREE.MathUtils.lerp(2, 6, d.daylight);
+    this.bloom.strength = THREE.MathUtils.lerp(0.35, 0.12, d.daylight) * st.bloom;
     // Nitro kicks in like in Need for Speed: longer shutter, heavy streaks towards the edges.
     const kick = boost * st.nitroBlur;
     this.blur.shutter = (1 / 60) * st.blur * (1 + 1.8 * kick);

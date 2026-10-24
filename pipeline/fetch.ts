@@ -2,7 +2,8 @@
 //   node pipeline/fetch.ts saarlouis
 import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync, statSync } from 'node:fs';
 import { extractRegion } from './lib/pbf.ts';
-import { fetchLaserTiles, kmTiles } from './lib/laser.ts';
+import { farWanted } from './lib/far.ts';
+import { fetchLaserTiles } from './lib/laser.ts';
 import { loadRegion, loadWorld, paths, type RegionConfig } from './lib/region.ts';
 import { fetchTerrarium, tilesForBbox } from './lib/terrain.ts';
 
@@ -140,6 +141,33 @@ async function main() {
     console.log(`Terrain: ${tiles.length} tiles (${n} new) at z${region.terrain.zoom}`);
   }
 
+  // Far view: buildings and land cover in a wide ring (no roads), coarse terrain beyond the region.
+  if (region.far && region.osm?.extracts.length) {
+    const farFile = `${dir}far-osm.json`;
+    if (!existsSync(farFile) || process.argv.includes('--force')) {
+      const pbf = await downloadExtract(region.osm.extracts);
+      console.log(`Far view: cut ${region.far.marginMeters} m around ${region.name} …`);
+      const b = region.boundary;
+      const json = extractRegion(pbf, {
+        postalCode: b.type === 'postal_code' ? b.value : undefined,
+        bbox: b.type === 'bbox' ? b : undefined,
+        marginMeters: region.far.marginMeters,
+        keep: farWanted,
+        trees: false,
+      });
+      writeFileSync(farFile, JSON.stringify(json));
+      console.log(`  ${json.elements.length} OSM elements → ${farFile}`);
+    }
+    let west = 180, south = 90, east = -180, north = -90;
+    for (const el of JSON.parse(readFileSync(farFile, 'utf8')).elements) {
+      if (el.type !== 'node') continue;
+      west = Math.min(west, el.lon); east = Math.max(east, el.lon);
+      south = Math.min(south, el.lat); north = Math.max(north, el.lat);
+    }
+    const tiles = tilesForBbox(west, south, east, north, region.far.zoom);
+    const n = await fetchTerrarium(paths.terrain, tiles, region.far.zoom);
+    console.log(`Far terrain: ${tiles.length} tiles (${n} new) at z${region.far.zoom}`);
+  }
   if (region.laser) await fetchLaser(region.laser, JSON.parse(readFileSync(osmFile, 'utf8')));
 }
 

@@ -83,27 +83,32 @@ export function computeNormals(pos: Float32Array, idx?: Uint32Array): Float32Arr
   return nrm;
 }
 
+/** Coloured, lit terrain grid: n × n samples, step metres apart, from (ox, oz) eastwards and southwards. */
+export function gridMesh(y: Float32Array, g: Uint8Array, n: number, step: number, ox: number, oz: number): MeshArrays {
+  const pos = new Float32Array(n * n * 3);
+  const col = new Float32Array(n * n * 3);
+  const uv = new Float32Array(n * n * 2);
+  for (let r = 0; r < n; r++)
+    for (let c = 0; c < n; c++) {
+      const i = r * n + c;
+      const x = ox + c * step, z = oz + r * step;
+      pos[i * 3] = x; pos[i * 3 + 1] = y[i]; pos[i * 3 + 2] = z;
+      const base = GROUND_LINEAR[g[i]] ?? GROUND_LINEAR[Ground.grass];
+      const v = 0.92 + 0.16 * fract(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453);
+      col[i * 3] = base[0] * v; col[i * 3 + 1] = base[1] * v; col[i * 3 + 2] = base[2] * v;
+      uv[i * 2] = x / 6; uv[i * 2 + 1] = z / 6;
+    }
+  const idx = gridIndex(n);
+  return { pos, col, uv, idx, nrm: computeNormals(pos, idx) };
+}
+
 function buildTerrain(t: TileContent, w: WorldInfo): { terrain: MeshArrays; water?: MeshArrays } {
   const [ox, oz] = tileOriginLocal(w, t.ix, t.iy);
   const h = t.f32('terrain')!;
-  const y = terrainHeights(t);
   const g = t.u8('ground')!;
   const N = TERRAIN_N;
-  const pos = new Float32Array(N * N * 3);
-  const col = new Float32Array(N * N * 3);
-  const uv = new Float32Array(N * N * 2);
-  for (let r = 0; r < N; r++)
-    for (let c = 0; c < N; c++) {
-      const i = r * N + c;
-      const x = ox + c * TERRAIN_STEP, z = oz + r * TERRAIN_STEP;
-      pos[i * 3] = x; pos[i * 3 + 1] = y[i]; pos[i * 3 + 2] = z;
-      const base = GROUND_LINEAR[g[i]] ?? GROUND_LINEAR[Ground.grass];
-      const n = 0.92 + 0.16 * fract(Math.sin((ox + c * 8) * 12.9898 + (oz + r * 8) * 78.233) * 43758.5453);
-      col[i * 3] = base[0] * n; col[i * 3 + 1] = base[1] * n; col[i * 3 + 2] = base[2] * n;
-      uv[i * 2] = x / 6; uv[i * 2 + 1] = z / 6;
-    }
-  const idx = gridIndex(N);
-  const terrain: MeshArrays = { pos, col, uv, idx, nrm: computeNormals(pos, idx) };
+  const terrain = gridMesh(terrainHeights(t), g, N, TERRAIN_STEP, ox, oz);
+  const { pos, uv } = terrain as Required<MeshArrays>;
 
   let water: MeshArrays | undefined;
   if (g.some((v) => v === Ground.water)) {

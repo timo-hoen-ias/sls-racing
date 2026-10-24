@@ -7,7 +7,8 @@ export interface Materials {
   road: THREE.MeshStandardMaterial;
   marking: THREE.MeshStandardMaterial;
   building: THREE.MeshStandardMaterial;
-  water: THREE.MeshStandardMaterial;
+  /** Replaced by the water shader (render/water.ts) in main. */
+  water: THREE.Material;
   trunk: THREE.MeshStandardMaterial;
   crown: THREE.MeshStandardMaterial;
   sidewalk: THREE.MeshStandardMaterial;

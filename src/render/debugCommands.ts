@@ -99,13 +99,26 @@ export function registerRenderCommands(view: SceneSetup) {
         return `${name} = ${st[key]}`;
       },
     });
-  factor('fog', 'fx.fog', 'Nebel/Dunst-Dichte', 20);
+  factor('fog', 'fx.fog', 'Distance Fog: Dunst zum Horizont, passt sich der Sichtweite an', 20);
+  factor('heightFog', 'fx.heightfog', 'Höhennebel in Tälern und über der Saar (morgens und nachts dichter)', 20);
+  const meters = (key: 'fogHeight' | 'fogBase', name: string, help: string, min: number, max: number) =>
+    registerCommand({
+      name,
+      args: '[m]',
+      help,
+      run: ([a]) => {
+        if (a) st[key] = parseNum(a, min, max);
+        return `${name} = ${st[key]} m`;
+      },
+    });
+  meters('fogHeight', 'fx.fogheight', 'Dicke der Höhennebel-Schicht in m (Standard 35)', 1, 1000);
+  meters('fogBase', 'fx.fogbase', 'Untergrenze des Höhennebels relativ zur typischen Geländehöhe in m (Standard 0)', -300, 1000);
   factor('blur', 'fx.blur', 'Motion Blur der Kamera');
   factor('radial', 'fx.radial', 'Radial Blur (Geschwindigkeits-Streifen)');
   factor('nitroBlur', 'fx.nitroblur', 'Wie stark Nitro den Blur verstärkt');
   factor('godrays', 'fx.godrays', 'Lichtstrahlen (God Rays) durch Wolken und Gebäude');
   factor('flare', 'fx.flare', 'Lens Flare der Sonne');
-  factor('bloom', 'fx.bloom', 'Bloom/Glühen heller Lichter');
+  factor('bloom', 'fx.bloom', 'Leichtes Bloom/Glühen heller Lichter');
   reg({
     name: 'fx.clouds',
     args: '[0..1|on|off]',

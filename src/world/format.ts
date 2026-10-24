@@ -6,6 +6,12 @@ export const TILE_SIZE = 256;
 export const TERRAIN_N = 65;
 export const TERRAIN_STEP = TILE_SIZE / (TERRAIN_N - 1);
 
+/** Far view tiles (P3): edge length in metres and terrain samples per edge (32 m grid). */
+export const FAR_TILE_SIZE = 2048;
+export const FAR_N = 65;
+/** Floats per building block in a far tile: centre x, z, half length, half width, angle, base y, top y. */
+export const FAR_BLOCK = 7;
+
 /** Ground classes painted onto the terrain grid. */
 export const Ground = { urban: 0, grass: 1, forest: 2, water: 3, farmland: 4 } as const;
 
@@ -27,6 +33,8 @@ export interface WorldIndex {
   /** Global grid indices: ix = floor(E / TILE_SIZE), iy = floor(N / TILE_SIZE). */
   tiles: [number, number][];
   spawn: { x: number; y: number; z: number; heading: number };
+  /** Far view tiles far/<fx>_<fy>.bin on a FAR_TILE_SIZE grid (fx = floor(E / size)): coarse terrain + building blocks. */
+  far?: { size: number; n: number; tiles: [number, number][] };
   /** Road network for the minimap, street names and routing, relative to the index. */
   graph?: string;
   attribution: string[];

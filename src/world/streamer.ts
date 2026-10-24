@@ -1,6 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { TERRAIN_N, TERRAIN_STEP, TileContent, tileKey, tileOfLocal, tileOriginLocal, type WorldIndex } from './format.ts';
+import { waterAttributes } from '../render/water.ts';
+import { Ground, TERRAIN_N, TERRAIN_STEP, TileContent, tileKey, tileOfLocal, tileOriginLocal, type WorldIndex } from './format.ts';
 import type { Quality } from '../quality.ts';
 import type { Materials } from '../render/materials.ts';
 import { Samples } from '../debug/perf.ts';
@@ -135,7 +136,16 @@ export class WorldStreamer {
     this.lampGeo = { pole, head };
   }
 
+  /** Water surfaces of the loaded tiles (the water mirror picks its plane from them). */
+  readonly waterMeshes = new Set<THREE.Mesh>();
+
   get loadedCount() { return this.loaded.size; }
+  /** Bumped whenever a tile appears or disappears (the far view hides itself under visible tiles). */
+  visibleVersion = 0;
+
+  forEachVisible(fn: (ix: number, iy: number) => void) {
+    for (const t of this.loaded.values()) fn(t.ix, t.iy);
+  }
 
   /** Calls fn with every street lamp head of the loaded tiles. */
   forEachLamp(fn: (x: number, y: number, z: number) => void) {
@@ -339,9 +349,24 @@ export class WorldStreamer {
       o.castShadow = shadows && !!opts.cast;
       o.receiveShadow = shadows && opts.receive !== false;
       group.add(o);
+      return o;
     };
     mesh(b.terrain, this.mats.ground);
-    mesh(b.water, this.mats.water);
+    // Water surface with bank distance and flow for the water shader.
+    const wm = mesh(b.water, this.mats.water);
+    if (wm) {
+      const g = t.u8('ground')!;
+      const h = t.f32('terrain')!;
+      let level = 0, cells = 0;
+      for (let i = 0; i < g.length; i++) if (g[i] === Ground.water) { level += h[i] - 0.15; cells++; }
+      const [ox, oz] = tileOriginLocal(this.index.world, t.ix, t.iy);
+      const { shore, flow } = waterAttributes((i) => g[i] === Ground.water, TERRAIN_N, TERRAIN_STEP, ox, oz, t.f32('waterways'));
+      wm.geometry.setAttribute('shore', new THREE.BufferAttribute(shore, 1));
+      wm.geometry.setAttribute('flow', new THREE.BufferAttribute(flow, 2));
+      wm.userData.level = level / Math.max(1, cells);
+      wm.renderOrder = 1;
+      this.waterMeshes.add(wm);
+    }
     mesh(b.meshes.roads, this.mats.road);
     mesh(b.meshes.sidewalks, this.mats.sidewalk);
     mesh(b.meshes.markings, this.mats.marking);
@@ -406,6 +431,7 @@ export class WorldStreamer {
 
     this.root.add(group);
     this.loaded.set(key, { key, ix: t.ix, iy: t.iy, content: t, group, lamps: lampHeads });
+    this.visibleVersion++;
     this.stats.visualMs.push(performance.now() - t0);
     this.stats.built++;
   }
@@ -442,11 +468,13 @@ export class WorldStreamer {
     this.root.remove(t.group);
     t.group.traverse((o) => {
       const m = o as THREE.Mesh;
+      this.waterMeshes.delete(m);
       if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
       else if (m.isMesh && !m.userData.sharedGeometry) m.geometry.dispose();
     });
     this.removePhysics(t);
     this.loaded.delete(t.key);
+    this.visibleVersion++;
     this.stats.dropped++;
     for (const layer of tileLayers()) layer.removed?.(t.key);
   }

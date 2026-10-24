@@ -12,9 +12,9 @@ export interface DriveInput {
   lookBack: boolean;
 }
 
-export type InputEvent = 'reset' | 'camera' | 'mute' | 'map' | 'shiftUp' | 'shiftDown' | 'gearbox' | 'time' | 'menu';
+export type InputEvent = 'reset' | 'rewind' | 'camera' | 'mute' | 'map' | 'shiftUp' | 'shiftDown' | 'gearbox' | 'time' | 'menu';
 
-const EVENTS: InputEvent[] = ['reset', 'camera', 'mute', 'map', 'shiftUp', 'shiftDown', 'gearbox', 'time', 'menu'];
+const EVENTS: InputEvent[] = ['reset', 'rewind', 'camera', 'mute', 'map', 'shiftUp', 'shiftDown', 'gearbox', 'time', 'menu'];
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const deadzone = (v: number, d = 0.12) => (Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d));
@@ -61,7 +61,7 @@ export class Input {
         // The menu key closes the big map first.
         this.pending.push(ev === 'menu' && this.mapOpen ? 'map' : ev);
       }
-      if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab') e.preventDefault();
+      if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab' || e.code === 'Backspace') e.preventDefault();
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());

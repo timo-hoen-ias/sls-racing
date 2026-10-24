@@ -199,6 +199,11 @@ export class CarEffects {
     }
   }
 
+  /** Only lets the particles already in the air move on (replay: the car itself is not simulated). */
+  tick(dt: number, camera: THREE.PerspectiveCamera, viewHeight: number) {
+    this.particles.update(Math.min(dt, 0.05), viewHeight, camera.fov);
+  }
+
   /** Orange flame burst from the tailpipes (overrun pops). */
   backfire(pos: THREE.Vector3, quat: THREE.Quaternion, lv: { x: number; y: number; z: number }) {
     for (let e = 0; e < this.exhausts.length; e++) for (let k = 0; k < 5; k++) this.exhaust(pos, quat, lv, e, k < 2 ? '#fff1b0' : '#ff8a2a', 0.28, 0.08 + Math.random() * 0.06);

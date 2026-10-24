@@ -133,10 +133,20 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
   registerCommand({
     name: 'cam.mode',
     help: 'Kamera wechseln',
-    args: '<chase|far|hood>',
+    args: '<chase|far|hood|cockpit>',
+    complete: () => ['chase', 'far', 'hood', 'cockpit'],
     run: ([m]) => {
-      if (m !== 'chase' && m !== 'far' && m !== 'hood') throw new Error('chase, far oder hood');
+      if (m !== 'chase' && m !== 'far' && m !== 'hood' && m !== 'cockpit') throw new Error('chase, far, hood oder cockpit');
       c.cam.mode = m;
+    },
+  });
+  registerCommand({
+    name: 'cam.headbob',
+    help: 'Kopfbewegung in der Cockpit-Kamera 0..1',
+    args: '[0..1]',
+    run: ([v]) => {
+      if (v !== undefined) c.cam.headbob = Math.min(1, Math.max(0, num(v, 'wert')));
+      return `cam.headbob = ${c.cam.headbob}`;
     },
   });
   registerCommand({

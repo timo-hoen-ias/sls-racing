@@ -201,11 +201,12 @@ export function buildSportsCar(color = '#c0141c'): SportsCarModel {
   };
 
   // Body, greenhouse, painted roof.
-  add(loft(BODY, { rings: 180, around: 28, arches: true, caps: true }), paint);
+  // Panels that take dents (CarDamage deforms them in model space).
+  add(loft(BODY, { rings: 180, around: 28, arches: true, caps: true }), paint).userData.dent = true;
   // Cabin in paint, glass laid over it: windscreen, side windows, fastback rear window.
-  add(loft(CABIN, { rings: 60, around: 22, caps: true }), paint);
+  add(loft(CABIN, { rings: 60, around: 22, caps: true }), paint).userData.dent = true;
   const glassOver = (from: number, to: number, zFrom: number, zTo: number, rings = 30) =>
-    add(loft(CABIN, { rings, around: 12, from, to, inflate: 0.004, zFrom, zTo }), glass, false);
+    (add(loft(CABIN, { rings, around: 12, from, to, inflate: 0.004, zFrom, zTo }), glass, false).userData.dent = true);
   glassOver(0.42, Math.PI / 2, 0.3, 0.74);
   glassOver(0.42, Math.PI / 2, -1.9, -0.95);
   for (const s of [-1, 1]) {
@@ -218,7 +219,7 @@ export function buildSportsCar(color = '#c0141c'): SportsCarModel {
     const nrm = g.getAttribute('normal') as THREE.BufferAttribute;
     side.setAttribute('position', new THREE.Float32BufferAttribute(keep.flatMap((i) => [p.getX(i), p.getY(i), p.getZ(i)]), 3));
     side.setAttribute('normal', new THREE.Float32BufferAttribute(keep.flatMap((i) => [nrm.getX(i), nrm.getY(i), nrm.getZ(i)]), 3));
-    add(side, glass, false);
+    add(side, glass, false).userData.dent = true;
   }
 
   // Underbody fills the space between the wheels; wheel-well liners hide the inside.
@@ -234,6 +235,8 @@ export function buildSportsCar(color = '#c0141c'): SportsCarModel {
   // Front: splitter, intakes, headlights with daytime-running strips.
   const splitter = add(new THREE.BoxGeometry(1.56, 0.025, 0.26), carbon);
   splitter.position.set(0, 0.17, 2.06);
+  // Parts that can break off (CarDamage).
+  splitter.userData.part = 'splitter';
   const intake = add(new THREE.BoxGeometry(1.1, 0.12, 0.1), black, false);
   intake.position.set(0, 0.29, 2.2);
   const headlights: THREE.Vector3[] = [];
@@ -264,6 +267,7 @@ export function buildSportsCar(color = '#c0141c'): SportsCarModel {
   }
   const plate = add(new THREE.BoxGeometry(0.52, 0.12, 0.02), new THREE.MeshStandardMaterial({ color: '#e8e8e2', roughness: 0.5 }), false);
   plate.position.set(0, 0.5, -2.315);
+  plate.userData.part = 'plate';
   const diff = add(new THREE.BoxGeometry(1.36, 0.14, 0.3), carbon, false);
   diff.position.set(0, 0.25, -2.12);
   for (let i = -2; i <= 2; i++) {
@@ -283,9 +287,11 @@ export function buildSportsCar(color = '#c0141c'): SportsCarModel {
   const wing = add(new THREE.BoxGeometry(1.62, 0.025, 0.3), carbon);
   wing.position.set(0, 1.07, -1.98);
   wing.rotation.x = -0.12;
+  wing.userData.part = 'wing';
   for (const s of [-1, 1]) {
     const plate = add(new THREE.BoxGeometry(0.02, 0.14, 0.34), carbon);
     plate.position.set(s * 0.81, 1.04, -1.98);
+    plate.userData.part = 'wing';
     const strut = add(new THREE.BoxGeometry(0.03, 0.22, 0.1), carbon);
     strut.position.set(s * 0.42, 0.95, -1.96);
   }
@@ -294,9 +300,11 @@ export function buildSportsCar(color = '#c0141c'): SportsCarModel {
   for (const s of [-1, 1]) {
     const stalk = add(new THREE.BoxGeometry(0.12, 0.025, 0.05), black, false);
     stalk.position.set(s * 0.84, 0.86, 0.5);
+    stalk.userData.part = s > 0 ? 'mirrorL' : 'mirrorR';
     const cap = add(new THREE.SphereGeometry(1, 14, 8), paint);
     cap.scale.set(0.09, 0.055, 0.11);
     cap.position.set(s * 0.92, 0.88, 0.48);
+    cap.userData.part = s > 0 ? 'mirrorL' : 'mirrorR';
     const side = add(new THREE.BoxGeometry(0.02, 0.09, 0.36), black, false);
     side.position.set(s * 0.93, 0.56, -0.66);
     side.rotation.z = s * 0.1;

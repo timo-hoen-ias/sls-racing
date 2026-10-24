@@ -1,6 +1,6 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { TileContent, tileKey, tileOfLocal, tileOriginLocal, type WorldIndex } from './format.ts';
+import { TERRAIN_N, TERRAIN_STEP, TileContent, tileKey, tileOfLocal, tileOriginLocal, type WorldIndex } from './format.ts';
 import type { Quality } from '../quality.ts';
 import type { Materials } from '../render/materials.ts';
 import { Samples } from '../debug/perf.ts';
@@ -161,6 +161,18 @@ export class WorldStreamer {
       + `  Worker ${this.workerCount || 'aus'} · Laden Ø ${s.fetchMs.avg().toFixed(0)} ms · Hauptthread Ø ${s.frameMs.avg().toFixed(1)} / max ${s.frameMs.max().toFixed(1)} ms pro Frame\n`
       + `  Meshes Ø ${s.visualMs.avg().toFixed(1)} / max ${s.visualMs.max().toFixed(1)} ms · Kollider Ø ${s.physicsMs.avg().toFixed(1)} / max ${s.physicsMs.max().toFixed(1)} ms`
       + (this.loader.useWorker ? '' : ` · Dekodieren im Hauptthread Ø ${s.decodeMs.avg().toFixed(1)} / max ${s.decodeMs.max().toFixed(1)} ms`);
+  }
+
+  /** Ground class (see Ground) at the nearest terrain sample, or undefined where no tile is loaded. */
+  groundAt(x: number, z: number): number | undefined {
+    const w = this.index.world;
+    const [ix, iy] = tileOfLocal(w, x, z);
+    const t = this.loaded.get(tileKey(ix, iy));
+    if (!t) return undefined;
+    const [ox, oz] = tileOriginLocal(w, ix, iy);
+    const c = Math.min(TERRAIN_N - 1, Math.max(0, Math.round((x - ox) / TERRAIN_STEP)));
+    const r = Math.min(TERRAIN_N - 1, Math.max(0, Math.round((z - oz) / TERRAIN_STEP)));
+    return t.content.u8('ground')![r * TERRAIN_N + c];
   }
 
   /** True when the tile under (x, z) is part of the world. */

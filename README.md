@@ -85,9 +85,11 @@ Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb
 Der Sportwagen wird per Blender-Python-Skript gebaut, nicht von Hand modelliert: `tools/blender/make_sportscar.py` erzeugt Karosserie, Kabine, Räder und Anbauteile, schneidet die Radhäuser per Boolean aus und legt Scheinwerfer, Fenster, Lufteinlässe und Fugen direkt als Flächen der Karosserie an. Export als GLB mit drei Detailstufen (LOD 0/1/2 für Karosserie, 2 für Räder), danach Meshopt-Kompression (`tools/compress-model.ts`, Positionen bleiben float, damit das Schadensmodell Beulen eindrücken kann).
 
 ```bash
-npm run models:build   # braucht Blender 4.2+ im PATH, schreibt public/models/sportscar.glb
+npm run models:build   # braucht Blender 4.2+ im PATH, schreibt public/models/sportscar.glb und traffic.glb
 blender --background --factory-startup --python tools/blender/preview.py -- public/models/sportscar.glb vorschau.png
 ```
+
+Der Verkehr (und später die parkenden Autos) kommt aus `tools/blender/make_traffic.py`: drei Pkw-Varianten (Kleinwagen, Limousine, Kombi), Transporter, Linienbus und Lkw, alle ohne reale Marke. Jede Variante liefert die fünf instanzierten Teile aus `vehicleModels.ts` (Lack, Details mit Vertexfarben, Lichter, Bremslicht, Warnblinker) in zwei Detailstufen; `src/traffic/vehicleGlb.ts` lädt sie, ab 60 m Kameraabstand zeichnet die Verkehrsansicht die einfachere Stufe. Debug: `traffic.models [glb|procedural]`, `traffic.lod [auto|0|1]` (zeigt auch, wie viele Fahrzeuge nah/fern sind und die Dreiecke). Gemeinsame Bausteine der Skripte liegen in `tools/blender/carlib.py`.
 
 Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 

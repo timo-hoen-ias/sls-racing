@@ -100,8 +100,8 @@ export class RoadGraph {
       }
   }
 
-  /** Closest point on the network, or undefined when nothing is within maxDist. */
-  snap(x: number, z: number, maxDist = 60): Snap | undefined {
+  /** Closest point on the network (on edges that pass accept), or undefined when nothing is within maxDist. */
+  snap(x: number, z: number, maxDist = 60, accept?: (e: Edge) => boolean): Snap | undefined {
     let best: Snap | undefined;
     const r = Math.ceil(maxDist / CELL);
     const cx0 = Math.floor(x / CELL), cz0 = Math.floor(z / CELL);
@@ -111,6 +111,7 @@ export class RoadGraph {
         if (!list) continue;
         for (let i = 0; i < list.length; i += 2) {
           const e = this.edges[list[i]];
+          if (accept && !accept(e)) continue;
           const s = list[i + 1];
           const p = e.p;
           const ax = p[s * 3], ay = p[s * 3 + 1], az = p[s * 3 + 2];

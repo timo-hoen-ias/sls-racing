@@ -45,6 +45,7 @@ import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
@@ -215,8 +216,43 @@ async function boot() {
   };
   try { car.drivetrain.manual = localStorage.getItem('sls.gearbox') === 'manual'; } catch { /* storage blocked */ }
 
+  // Reset puts the car on the nearest road: right-hand lane, along the road in the direction it was facing
+  // (or the one-way direction), on a spot free of traffic, parked cars and street furniture.
+  const roadSpot = () => {
+    const p = car.body.translation();
+    // Real streets first (not service ways or tracks), any way as a fallback.
+    const street = (e: { rank: number }) => e.rank >= 2;
+    let s = graph.snap(p.x, p.z, 400, street) ?? graph.snap(p.x, p.z, 400);
+    if (!s) return undefined;
+    const box = new RAPIER.Cuboid(CAR.halfExtents.x + 0.3, CAR.halfExtents.y, CAR.halfExtents.z + 0.5);
+    const h = car.heading();
+    if (!s.edge.oneway && s.dx * Math.sin(h) - s.dz * Math.cos(h) < 0) s = { ...s, dx: -s.dx, dz: -s.dz };
+    const { dx, dz } = s;
+    const base = s;
+    for (let n = 0; n < 9; n++) {
+      if (n) {
+        // Try further along the road, alternating ahead and behind.
+        const step = 8 * Math.ceil(n / 2) * (n % 2 ? 1 : -1);
+        const next = graph.snap(base.x + dx * step, base.z + dz * step, 6, street);
+        if (!next) continue;
+        const flip = next.dx * dx + next.dz * dz < 0 ? -1 : 1;
+        s = { ...next, dx: next.dx * flip, dz: next.dz * flip };
+      }
+      // Right of the direction of travel (x east, z south): (-dz, dx).
+      // A little inside the lane centre, so wide cars on narrow streets keep off the kerb.
+      const off = s.edge.rightLane * 0.65;
+      const x = s.x - s.dz * off, z = s.z + s.dx * off;
+      const heading = Math.atan2(s.dx, -s.dz);
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -heading);
+      let blocked = false;
+      world.intersectionsWithShape({ x, y: s.y + 0.8, z }, q, box, () => { blocked = true; return false; }, undefined, undefined, undefined, car.body);
+      if (!blocked) return { x, y: s.y, z, heading };
+    }
+    return undefined;
+  };
   const resetCar = () => {
-    car.reset({ x: safe.x, y: safe.y + 1.2, z: safe.z }, safe.heading);
+    const r = roadSpot() ?? safe;
+    car.reset({ x: r.x, y: r.y + 1.2, z: r.z }, r.heading);
     prevVel.x = prevVel.y = prevVel.z = 0;
     hitCooldown = 0.6;
   };
@@ -230,6 +266,20 @@ async function boot() {
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
   registerDamageCommands(carView.damage, debris);
+  // Street lamps and light street furniture give way when hit fast enough: lamps go dark, poles tip over.
+  const knockdown = new Knockdown(world, car, debris);
+  knockdown.addSource(streamer, lampDebris(streamer.lampGeo, mats.lampPole, mats.lampPole), 90);
+  // Signs, bollards, bins, benches … from the street furniture layer.
+  knockdown.addSource(propSource(props), propDebris(), 30);
+  knockdown.onKnock = (_, speed, dir) => {
+    const strength = Math.min(0.6, speed / 40);
+    sound?.impact(strength);
+    worldAudio.impact(ip, car.heading(), strength);
+    input.rumble(0.5 + strength * 0.5, 160);
+    effects.impact({ x: ip.x + dir.x * 2, y: ip.y, z: ip.z + dir.z * 2 }, strength);
+    carView.damage.hit(new THREE.Vector3(dir.x, 0, dir.z).applyQuaternion(iq.clone().invert()), strength * 0.6);
+  };
+  registerKnockCommands(knockdown, streamer, () => ip);
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F6') { e.preventDefault(); if (replay.active) replay.stop(); else try { navHud.toast(replay.start().split(' · ')[0], 1.5); } catch (err) { navHud.toast((err as Error).message, 1.5); } }
     if (e.code === 'F7') { e.preventDefault(); telemetry.visible = !telemetry.visible; }
@@ -360,6 +410,7 @@ async function boot() {
         car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       }
       car.update(drive, STEP);
+      knockdown.step(STEP);
       world.step();
       capture(curr);
       const lv = car.body.linvel();

@@ -37,6 +37,7 @@ import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
+import { PropLayer } from './world/props.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
@@ -73,6 +74,9 @@ async function boot() {
   const facades = new FacadeControl(mats.building);
   const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
   view.scene.add(streamer.root);
+  const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world });
+  props.register(world);
+  view.scene.add(props.root);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -208,6 +212,7 @@ async function boot() {
   registerRenderCommands(view);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
@@ -370,6 +375,7 @@ async function boot() {
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
+    props.update(view.camera);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
@@ -450,6 +456,7 @@ async function boot() {
       $('info').textContent = `${fps} fps · Qualität ${quality.name} · ${input.lastDevice}\nUTM 32N ${e.toFixed(0)} / ${n.toFixed(0)} · Kacheln ${streamer.loadedCount}`;
     }
     (window as any).__sls = {
+      props,
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,

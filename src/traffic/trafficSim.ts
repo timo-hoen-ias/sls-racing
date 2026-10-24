@@ -4,6 +4,7 @@
 // Pure simulation without three.js, so it runs in tests.
 
 import { type Edge, type RoadGraph, pointAt, project } from '../world/roadGraph.ts';
+import { Signals } from './signals.ts';
 
 export type VehicleKind = 'car' | 'van' | 'bus' | 'truck';
 
@@ -125,6 +126,8 @@ export class TrafficSim {
   events: TrafficEvents = {};
   /** Extra things in the road that vehicles stop for (pedestrians crossing). Same shape as the player. */
   obstacles: PlayerState[] = [];
+  /** Traffic lights at signalised junctions. */
+  readonly signals: Signals;
   private graph: RoadGraph;
   private adj: number[][];
   private rng: () => number;
@@ -134,6 +137,7 @@ export class TrafficSim {
 
   constructor(graph: RoadGraph, opts: { maxAgents?: number; rng?: () => number } = {}) {
     this.graph = graph;
+    this.signals = new Signals(graph);
     this.maxAgents = opts.maxAgents ?? 60;
     this.rng = opts.rng ?? Math.random;
     this.adj = Array.from({ length: graph.nodes.length / 3 }, () => []);
@@ -158,6 +162,7 @@ export class TrafficSim {
   update(dt: number, player: PlayerState | undefined, view?: { x: number; z: number; fx: number; fz: number }) {
     if (player) this.populate(dt, player, view);
     if (this.frozen || dt <= 0) return;
+    this.signals.update(dt);
     // Decide first, then move, so every car reacts to the same snapshot.
     const acc = this.agents.map((a) => this.decide(a, player, dt));
     for (let i = 0; i < this.agents.length; i++) this.move(this.agents[i], acc[i], dt);
@@ -307,7 +312,18 @@ export class TrafficSim {
       d -= (a.spec.length + o.spec.length) / 2;
       if (d < gap) { gap = d; vLead = o.v; a.state = 'follow'; a.reason = `folgt #${o.id}`; }
     }
-    const why = a.next ? this.mustYield(a, rem) : undefined;
+    // Traffic lights: stop at red, and at yellow when there is room to stop.
+    let why: string | undefined;
+    if (a.next) {
+      const [dx, dz] = this.dirAtEnd(lane);
+      const light = this.signals.light(node(lane), dx, dz);
+      const stop = rem - this.stopOffset(a);
+      if (light && light !== 'green' && stop > -1) {
+        const canStop = stop > (a.v * a.v) / (2 * a.spec.decel * 0.9);
+        if (light !== 'yellow' || canStop) why = light === 'yellow' ? 'Gelb' : 'Rot';
+      }
+      why ??= this.mustYield(a, rem);
+    }
     if (why) {
       const stop = rem - this.stopOffset(a);
       if (stop < gap) { gap = Math.max(0.1, stop); vLead = 0; a.state = 'yield'; a.reason = why; }
@@ -413,6 +429,7 @@ export class TrafficSim {
     if (this.adj[n].length < 3) return undefined;
     // Past the line: clear the junction.
     if (rem < 2.5 && a.v > 1) return undefined;
+    const signalled = this.signals.has(n);
     const impatient = a.wait > 4 + (a.id % 7) * 0.5;
     const [nx, , nz] = [this.graph.nodes[n * 3], 0, this.graph.nodes[n * 3 + 2]];
     const [dx, dz] = this.dirAtEnd({ edge: a.edge, dir: a.dir });
@@ -432,6 +449,11 @@ export class TrafficSim {
       if (node(bLane) !== n) continue;
       const remB = b.edge.length - b.s;
       if (remB > LOOK) continue;
+      // At traffic lights only traffic with green (oncoming, for left turns) matters.
+      if (signalled) {
+        const [bx, bz] = this.dirAtEnd(bLane);
+        if (this.signals.light(n, bx, bz) !== 'green' && !(remB < 2.5 && b.v > 1)) continue;
+      }
       // Both turning right into different roads do not conflict.
       const turnB = this.turnAngle(bLane, b.next);
       if (turnA > 0.6 && turnB > 0.6 && !sameLane(a.next, b.next)) continue;

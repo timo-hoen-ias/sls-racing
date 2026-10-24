@@ -13,7 +13,9 @@ import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, type Way } from './lib/osm.ts';
 import { halfWidthAt, halfWidths } from './lib/overlap.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
-import { isDrivable, roadProfile } from './lib/roads.ts';
+import { auxLoss, isDrivable, roadProfile } from './lib/roads.ts';
+import { matchRampHeights, planRamps } from './lib/ramps.ts';
+import { roadSection } from '../src/world/roadSpec.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -48,14 +50,19 @@ async function main() {
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   const height = terrainHeight(regions, unproject(cfg.zone));
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
+  const ramps = planRamps(osm.ways);
   roadHeights(osm.ways, regions, height);
+  matchRampHeights(ramps);
 
   // Wheel tracks 1 m inside the usable road edges (narrower where a road at another height runs alongside).
   const halves = halfWidths(osm.ways, height, W);
   const laneOffset = (w: Way, dist: number, lane: number) => {
     if (!lane) return 0;
     const [l, r] = halfWidthAt(halves.get(w)!, dist);
-    return lane > 0 ? Math.max(0, l - 1) : -Math.max(0, r - 1);
+    // Carriageways placed off the OSM line (motorway junction lanes) are shifted to the right, and narrower
+    // where an auxiliary lane opens or closes.
+    const section = roadSection(w.tags)!;
+    return lane > 0 ? Math.max(0, l - section.shift - 1) : -Math.max(0, r + section.shift - auxLoss(w, section, dist) - 1);
   };
 
   // Probe points per tile: [x, y, z, way, lane (0 centre, ±1 wheel tracks), sample index].

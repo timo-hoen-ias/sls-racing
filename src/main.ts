@@ -56,6 +56,7 @@ import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { registerLandmarkCommands, registerWorldCommands } from './world/worldCommands.ts';
+import { registerRampCommands } from './world/rampCommands.ts';
 import { Landmarks } from './world/landmarks.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
@@ -379,6 +380,11 @@ async function boot() {
     teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
     print: (t) => debug.print(t, 'info'),
     tiles: (fn) => streamer.forEachContent(fn),
+  });
+  registerRampCommands({
+    scene: view.scene, mats, baseUrl: TILES_URL, pos: () => (hold ?? ip),
+    teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading.toFixed(1)}`}`),
+    print: (t) => debug.print(t, 'info'),
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.

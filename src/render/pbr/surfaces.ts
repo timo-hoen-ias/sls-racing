@@ -79,9 +79,10 @@ const ROAD = /* glsl */ `
     pbrRough = mix(pbrRough, G.r, g);
     pbrHeight = mix(pbrHeight, G.h, g);
   }
-  // Edge lines (rural roads, motorways): 0.15 m, 0.25 m on motorways; worn where the wheels run.
+  // Edge lines (rural roads, motorways): 0.15 m, 0.30 m on motorways and ramps (RMS, edgeLineWidth in roadCode.ts);
+  // worn where the wheels run.
   if (lines > 0.5 && paved > 0.5) {
-    float lw = shoulder >= 2.0 ? 0.25 : 0.15;
+    float lw = shoulder >= 2.0 ? 0.3 : 0.15;
     float r0 = shoulder;
     float l0 = lines > 1.5 ? innerL : r0;
     float pr = smoothstep(r0 - lw - fw, r0 - lw + fw, xr) * (1.0 - smoothstep(r0 - fw, r0 + fw, xr));

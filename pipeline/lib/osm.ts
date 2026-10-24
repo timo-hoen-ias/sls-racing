@@ -8,6 +8,9 @@ export interface OsmJson {
   )[];
 }
 
+/** Ids of nodes added by the pipeline (ramps.ts densifies moved ramps) lie below this; OSM ids are positive. */
+export const SYNTHETIC_NODE = -1_000_000_000;
+
 export interface Way {
   id: number;
   tags: Record<string, string>;
@@ -22,6 +25,22 @@ export interface Way {
   /** Roads: smoothed terrain height along the way (see profiles.ts), by distance from the first node. */
   profile?: { dist: Float32Array; y: Float32Array };
   closed: boolean;
+  /** Motorway ways with an auxiliary lane (see ramps.ts): where this way lies in the run of such ways. */
+  auxRun?: AuxRun;
+  /** Ramps moved onto their auxiliary lane (ramps.ts): the original nodes for the road graph. */
+  graph?: { pts: [number, number][]; ids: number[]; at: number[] };
+}
+
+/** A stretch of motorway with an added lane on the right, made of one or more consecutive ways. */
+export interface AuxRun {
+  /** Distance of this way's first node from the start of the run, metres. */
+  from: number;
+  /** Length of the whole run. */
+  length: number;
+  /** Taper where the lane opens at the start (no ramp there), metres; 0 if a ramp joins there. */
+  taperIn: number;
+  /** Taper where the lane closes at the end (no ramp leaves there), metres. */
+  taperOut: number;
 }
 
 export interface Polygon {

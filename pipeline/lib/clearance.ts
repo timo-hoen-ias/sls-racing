@@ -1,5 +1,6 @@
 import type { Way } from './osm.ts';
 import { densify, isDrivable, roadWidth } from './roads.ts';
+import { roadSection } from '../../src/world/roadSpec.ts';
 
 /** Marks the drivable road surface plus a safety margin on a 2 m grid, so trees never stand on a road. */
 export class RoadMask {
@@ -10,7 +11,8 @@ export class RoadMask {
     const C = RoadMask.CELL;
     for (const w of ways) {
       if (!isDrivable(w.tags) || !only(w.tags)) continue;
-      const r = roadWidth(w.tags)! / 2 + margin;
+      // Carriageways placed off the OSM line (motorway junction lanes) reach further to one side.
+      const r = roadWidth(w.tags)! / 2 + Math.abs(roadSection(w.tags)!.shift) + margin;
       const k = Math.ceil(r / C);
       for (const [e, n] of densify(w.pts, C)) {
         const ce = Math.round(e / C), cn = Math.round(n / C);

@@ -108,4 +108,47 @@ describe('PedSim', () => {
     for (let i = 0; i < 30 * 10; i++) sim.update(1 / 30, undefined);
     expect(p.edge).not.toBe(g.edges[0]);
   });
+
+  it('steps over to a shop window, looks in, and walks on', () => {
+    const g = graph();
+    const sim = new PedSim(g, { rng: rng(7) });
+    sim.density = 0;
+    sim.browse = 1;
+    const p = sim.spawn(g.edges[0], 1, 20, 1);
+    p.state = 'walk';
+    // A shop front 15 m ahead, set back 4 m behind the pedestrian's sidewalk, facing the street.
+    const out = Math.sign(p.z);
+    const front = { id: 7, x: p.x + 15, z: p.z + out * 4, heading: out > 0 ? Math.PI : 0 };
+    // And one across the street, facing away from this sidewalk: ignored.
+    const across = { id: 8, x: p.x + 8, z: -p.z - out * 4, heading: out > 0 ? 0 : Math.PI };
+    sim.shops = { busy: () => 0, front: (x, z, r) => [across, front].find((f) => Math.hypot(f.x - x, f.z - z) < r) };
+    let arrived = false;
+    for (let i = 0; i < 30 * 25 && !arrived; i++) {
+      sim.update(1 / 30, undefined);
+      arrived = !!p.visit && p.visit.d >= p.visit.len;
+    }
+    expect(arrived).toBe(true);
+    expect(sim.browsing()).toBe(1);
+    expect(Math.hypot(p.x - front.x, p.z - front.z)).toBeLessThan(1.5);
+    // Looking at the window: facing away from the street.
+    expect(Math.cos(p.yaw - (front.heading + Math.PI))).toBeCloseTo(1, 5);
+    for (let i = 0; i < 30 * 20 && p.visit; i++) { sim.update(1 / 30, undefined); }
+    expect(p.visit).toBeUndefined();
+    expect(p.state).not.toBe('stand');
+    // The same window only once.
+    for (let i = 0; i < 30 * 3; i++) { sim.update(1 / 30, undefined); expect(p.visit).toBeUndefined(); }
+  });
+
+  it('spawns more pedestrians along shopping streets', () => {
+    const g = graph();
+    const count = (busy: (x: number, z: number) => number) => {
+      const sim = new PedSim(g, { rng: rng(9), maxPeds: 200 });
+      sim.density = 1;
+      sim.shops = { busy, front: () => undefined };
+      for (let i = 0; i < 40; i++) sim.update(0.25, { x: 0, z: 30 });
+      return sim.peds.filter((p) => p.edge === g.edges[2]).length / sim.peds.length;
+    };
+    // Shops only along the side street: its share of pedestrians goes up.
+    expect(count((x) => (Math.abs(x) < 5 ? 3 : 0))).toBeGreaterThan(count(() => 0) * 1.5);
+  });
 });

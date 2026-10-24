@@ -9,12 +9,22 @@ const WALKABLE = new Set([2, 3, 5, 6, 7]);
 /** Carriageway width per rank, as in the pipeline. */
 const ROAD_WIDTH = [3, 4, 5, 6, 5.5, 7, 7.5, 8.5, 10, 11];
 const SIDEWALK = 2.2;
+/** Shop fronts this close (m) to the sidewalk draw pedestrians over to the window. */
+const WINDOW_REACH = 12;
 
 export type PedState = 'walk' | 'cross' | 'wait' | 'dodge' | 'down' | 'stand';
 
 /** Traffic lights as the pedestrians see them: the light for traffic arriving at node in direction (dx, dz). */
 export interface PedSignals {
   light(node: number, dx: number, dz: number): string | undefined;
+}
+
+/** Shop fronts as the pedestrians see them (src/world/shops.ts). */
+export interface PedShops {
+  /** How busy the shopping street around (x, z) is: 0 without shops, up to about 3 in the old town. */
+  busy(x: number, z: number): number;
+  /** Nearest shop front within r of (x, z): its foot point and the direction it faces (atan2(dx, dz)). */
+  front(x: number, z: number, r: number): { id: number; x: number; z: number; heading: number } | undefined;
 }
 
 export interface Ped {
@@ -48,6 +58,10 @@ export interface Ped {
   yaw: number;
   /** 0 standing … 1 lying on the ground. */
   fall: number;
+  /** Last shop front walked past (looked into or not), so each is considered once. */
+  browsed?: number;
+  /** Over to a shop window and back: path point it left from, window spot, progress (m) out of len. */
+  visit?: { x: number; z: number; tx: number; tz: number; yaw: number; d: number; len: number; back: boolean };
 }
 
 export interface Threat {
@@ -76,6 +90,10 @@ export class PedSim {
   signals?: PedSignals;
   /** Pedestrians ignore red lights (debug). */
   jaywalk = false;
+  /** Shop fronts: shopping streets are busier and people stop at the windows. */
+  shops?: PedShops;
+  /** Chance to stop at a shop window when walking past one. */
+  browse = 0.3;
   readonly graph: RoadGraph;
   private adj: number[][];
   private rng: () => number;
@@ -143,17 +161,24 @@ export class PedSim {
     this.spawnTimer = 0.2;
     const edges: Edge[] = [];
     let total = 0;
+    const weights: number[] = [];
     this.graph.forEachEdgeNear(f.x, f.z, this.spawnMax, (e) => {
       if (!PedSim.walkable(e)) return;
+      // Busier on bigger streets, in pedestrian zones and along shops.
+      let w = e.length * (e.rank === 2 ? 3 : e.rank >= 5 ? 1.5 : 1);
+      if (this.shops) {
+        const [x, , z] = pointAt(e.p, e.cum, e.length / 2);
+        w *= 1 + this.shops.busy(x, z);
+      }
       edges.push(e);
-      // Busier on bigger streets and in pedestrian zones.
-      total += e.length * (e.rank === 2 ? 3 : e.rank >= 5 ? 1.5 : 1);
+      weights.push(w);
+      total += w;
     });
     if (!edges.length) return;
     for (let tries = burst ? 60 : 4, made = 0; tries > 0 && made < Math.min(missing, burst ? 15 : 1); tries--) {
       let r = this.rng() * total;
       let e = edges[0];
-      for (const c of edges) { r -= c.length * (c.rank === 2 ? 3 : c.rank >= 5 ? 1.5 : 1); if (r <= 0) { e = c; break; } }
+      for (let i = 0; i < edges.length; i++) { r -= weights[i]; if (r <= 0) { e = edges[i]; break; } }
       const s = 2 + this.rng() * (e.length - 4);
       const [x, , z] = pointAt(e.p, e.cum, s);
       const d = Math.hypot(x - f.x, z - f.z);
@@ -182,6 +207,7 @@ export class PedSim {
       const dist = Math.hypot(rx, rz);
       if (v > 2 && dist < 2 + threat.halfWidth && this.isHit(p, threat)) {
         p.state = 'down';
+        p.visit = undefined;
         p.timer = 3 + this.rng() * 2;
         p.yaw = Math.atan2(threat.vx, threat.vz);
         this.events.knocked?.(p, v);
@@ -198,6 +224,7 @@ export class PedSim {
           p.dodgeX = -uz * away;
           p.dodgeZ = ux * away;
           p.state = 'dodge';
+          p.visit = undefined;
           p.timer = 0.55;
           p.dodged = 0;
           this.events.dodged?.(p);
@@ -213,6 +240,10 @@ export class PedSim {
       p.z += p.dodgeZ * k;
       p.phase += dt * 16;
       if (p.timer <= 0) { p.state = 'stand'; p.timer = 1 + this.rng() * 1.5; }
+      return;
+    }
+    if (p.state === 'stand' && p.visit) {
+      this.visiting(p, dt);
       return;
     }
     if (p.state === 'stand') {
@@ -247,6 +278,56 @@ export class PedSim {
     // Crossing the junction area at either end of the edge.
     p.state = p.s < corner * 0.6 || rem < corner * 0.6 ? 'cross' : 'walk';
     this.place(p);
+    if (p.state === 'walk') this.window(p);
+  }
+
+  /** Walking past a shop front on their side of the street: now and then step over and look into the window. */
+  private window(p: Ped) {
+    const f = this.shops?.front(p.x, p.z, WINDOW_REACH);
+    if (!f || f.id === p.browsed) return;
+    const fx = Math.sin(f.heading), fz = Math.cos(f.heading);
+    // Only fronts facing this sidewalk from behind it, not across the street.
+    if ((p.x - f.x) * fx + (p.z - f.z) * fz <= 0) return;
+    const e = p.edge, [cx, , cz] = pointAt(e.p, e.cum, p.dir > 0 ? p.s : e.length - p.s);
+    const sx = p.x - cx, sz = p.z - cz;
+    if ((f.x - cx) * sx + (f.z - cz) * sz < sx * sx + sz * sz) return;
+    // Turn off once it is beside them.
+    if (Math.abs((f.x - p.x) * Math.sin(p.yaw) + (f.z - p.z) * Math.cos(p.yaw)) > 2.5) return;
+    p.browsed = f.id;
+    if (this.rng() >= this.browse) return;
+    // A spot a little in front of the window, off to one side.
+    const side = (this.rng() - 0.5) * 2;
+    const tx = f.x + fx * 0.8 + fz * side, tz = f.z + fz * 0.8 - fx * side;
+    p.state = 'stand';
+    p.timer = 4 + this.rng() * 8;
+    p.visit = { x: p.x, z: p.z, tx, tz, yaw: f.heading + Math.PI, d: 0, len: Math.hypot(tx - p.x, tz - p.z), back: false };
+  }
+
+  private visiting(p: Ped, dt: number) {
+    const v = p.visit!;
+    const atWindow = !v.back && v.d >= v.len;
+    if (atWindow) {
+      p.yaw = v.yaw;
+      p.timer -= dt;
+      if (p.timer <= 0) v.back = true;
+      return;
+    }
+    v.d = Math.max(0, Math.min(v.len, v.d + (v.back ? -1 : 1) * p.speed * 0.8 * dt));
+    const k = v.len > 0 ? v.d / v.len : 1;
+    p.x = v.x + (v.tx - v.x) * k;
+    p.z = v.z + (v.tz - v.z) * k;
+    p.yaw = Math.atan2((v.tx - v.x) * (v.back ? -1 : 1), (v.tz - v.z) * (v.back ? -1 : 1));
+    p.phase += dt * p.speed * 4.2;
+    if (!v.back && v.d >= v.len) p.yaw = v.yaw;
+    if (v.back && v.d <= 0) {
+      p.visit = undefined;
+      p.state = 'walk';
+    }
+  }
+
+  /** Pedestrians looking into a shop window right now. */
+  browsing() {
+    return this.peds.filter((p) => p.visit).length;
   }
 
   private mustWait(p: Ped, corner: number, dt: number) {

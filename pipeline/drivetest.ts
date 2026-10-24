@@ -24,6 +24,8 @@ const ROUTES = +arg('routes', '60');
 const SEED = +arg('seed', '1');
 const ONLY = arg('way', '');
 const TRACE = process.argv.includes('--trace');
+/** Speed factor on the autopilot's target speeds (1 = cautious 18–50 km/h). */
+const PACE = +arg('pace', '1');
 const STEP = 1 / 60;
 
 const index: WorldIndex = JSON.parse(readFileSync(`${paths.out}index.json`, 'utf8'));
@@ -66,6 +68,9 @@ function groundAt(x: number, z: number): number | undefined {
 
 interface Result { ok: boolean; why?: string; at?: [number, number]; dist: number; len: number }
 
+/** Handling over all routes: largest drift angle (rad) and distance from the route (m), top speed (m/s). */
+const handling = { drift: 0, off: 0, offSum: 0, offN: 0, top: 0 };
+
 function driveRoute(pts: [number, number][], startY: number): Result {
   const route = densify(pts.map(([e, n]) => utmToLocal(W, e, n)), 4);
   const len = route.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - route[i - 1][0], p[1] - route[i - 1][1]) : 0), 0);
@@ -105,7 +110,7 @@ function driveRoute(pts: [number, number][], startY: number): Result {
       const a2 = Math.atan2(route[i + 1][0] - route[i][0], route[i + 1][1] - route[i][1]);
       bend = Math.max(bend, Math.abs(Math.atan2(Math.sin(a2 - a1), Math.cos(a2 - a1))));
     }
-    const speedGoal = bend > 0.5 ? 5 : bend > 0.25 ? 8 : 14;
+    const speedGoal = (bend > 0.5 ? 5 : bend > 0.25 ? 8 : 14) * PACE;
     const input = {
       throttle: car.speed < speedGoal ? 1 : 0, brake: car.speed > speedGoal + 2 ? 1 : 0,
       steer: Math.max(-1, Math.min(1, d * 2.5)), nitro: false, handbrake: false, lookBack: false,
@@ -141,6 +146,15 @@ function driveRoute(pts: [number, number][], startY: number): Result {
     let off = Infinity;
     for (let i = Math.max(0, target - 3); i < Math.min(route.length, target + 3); i++) off = Math.min(off, Math.hypot(route[i][0] - q.x, route[i][1] - q.z));
     if (off > 25) return fail('off route');
+    if (car.speed > 5) {
+      const lv = car.body.linvel();
+      const f = car.heading();
+      handling.drift = Math.max(handling.drift, Math.abs(Math.atan2(Math.sin(Math.atan2(lv.x, -lv.z) - f), Math.cos(Math.atan2(lv.x, -lv.z) - f))));
+      handling.off = Math.max(handling.off, off);
+      handling.offSum += off;
+      handling.offN++;
+    }
+    handling.top = Math.max(handling.top, car.speed);
   }
   return { ok: false, why: 'timeout', at: [car.body.translation().x, car.body.translation().z], dist: travelled, len };
 }
@@ -178,6 +192,7 @@ async function main() {
     }
   }
   console.log(`Drive test: ${ok}/${pool.length} routes completed`);
+  console.log(`Handling (pace ${PACE}): top ${(handling.top * 3.6).toFixed(0)} km/h · max drift ${((handling.drift * 180) / Math.PI).toFixed(1)}° · off route Ø ${(handling.offSum / Math.max(1, handling.offN)).toFixed(2)} / max ${handling.off.toFixed(1)} m`);
   for (const f of fails) console.log(f);
   if (ok < pool.length * 0.9) process.exitCode = 1;
 }

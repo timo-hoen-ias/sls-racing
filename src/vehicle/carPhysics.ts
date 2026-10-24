@@ -16,6 +16,9 @@ export const CAR_GROUPS = (0x0001 << 16) | (0xffff & ~0x0004);
 export const ROAD_GROUPS = (0x0004 << 16) | 0xffff;
 export const DEBRIS_GROUPS = (0x0002 << 16) | 0xfffe;
 
+/** Approximate roll inertia of the chassis box (kg·m²). */
+const ROLL_INERTIA = (CAR.mass * ((2 * CAR.halfExtents.x) ** 2 + (2 * CAR.halfExtents.y) ** 2)) / 12;
+
 /** Approximate yaw inertia of the chassis box (kg·m²). */
 const YAW_INERTIA = (CAR.mass * ((2 * CAR.halfExtents.x) ** 2 + (2 * CAR.halfExtents.z) ** 2)) / 12;
 /** Static load on one wheel (N): the reference load of the tyre model. */
@@ -258,12 +261,19 @@ export class CarPhysics {
       if (as.esp > 0) {
         const w = body.angvel();
         const yawRate = w.x * up.x + w.y * up.y + w.z * up.z;
-        // Without the handbrake no more than the tyres can hold (~1.4 g at this speed), so turn-in does not overshoot.
-        const maxYaw = input.handbrake ? 2.4 : Math.min(1.7, 13.5 / Math.max(absV, 1));
+        // Without the handbrake no more than the tyres can hold (a bit over their grip at this speed), so turn-in does not overshoot.
+        const maxYaw = input.handbrake ? 2.4 : Math.min(1.9, (1.3 * CAR.tyre.mu * 9.81) / Math.max(absV, 1));
         if (Math.abs(yawRate) > maxYaw) {
           const k = -(yawRate - Math.sign(yawRate) * maxYaw) * YAW_INERTIA * 0.5 * as.esp;
           body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
         }
+      }
+      // Roll damping (with stability control): kerb strikes and hard turn-ins rock the car but do not tip it over.
+      if (as.esp > 0) {
+        const w = body.angvel();
+        const rollRate = w.x * fwd.x + w.y * fwd.y + w.z * fwd.z;
+        const k = -rollRate * ROLL_INERTIA * Math.min(1, 8 * as.esp * dt);
+        body.applyTorqueImpulse({ x: fwd.x * k, y: fwd.y * k, z: fwd.z * k }, true);
       }
     } else {
       // Air control: pitch with throttle/brake, yaw with steering.
@@ -330,9 +340,10 @@ export class CarPhysics {
     const capY = [0, 0, 0, 0];
     const tractionBoost = this.boosting ? CAR.nitro.traction : 1;
     for (let i = 0; i < 4; i++) {
-      const mu = loadedMu(spec, loads[i], REF_LOAD) * sf.grip * this.wheelGrip[i] * (i >= 2 ? ty.rearMu : 1);
-      capX[i] = mu * loads[i] * sf.traction * tractionBoost;
-      capY[i] = mu * loads[i] * sf.side;
+      const mu = loadedMu(spec, loads[i], REF_LOAD) * this.wheelGrip[i] * (i >= 2 ? ty.rearMu : 1);
+      // The weather's grip, traction and side factors describe the same road, so they do not stack.
+      capX[i] = mu * loads[i] * Math.min(sf.grip, sf.traction) * tractionBoost;
+      capY[i] = mu * loads[i] * Math.min(sf.grip, sf.side);
     }
 
     // Centre split, then a limited-slip diff per axle.

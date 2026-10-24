@@ -3,7 +3,7 @@
 // slope at a bridge end. Real roads are smooth, so each road gets a profile sampled from the terrain,
 // filtered, and pinned to one height per node so that roads meeting at a node (and bridges) meet exactly.
 import type { Way } from './osm.ts';
-import { densify, isBridge, isDrivable } from './roads.ts';
+import { densify, isBridge, isDrivable, roadWidth } from './roads.ts';
 
 /** Spacing of profile samples (m). */
 export const PROFILE_STEP = 2;
@@ -13,6 +13,8 @@ const MEDIAN = 3, SMOOTH = 3;
 const NODE_REACH = 6;
 /** Steepest ramp used to bring a profile to its node height (rise per metre). */
 const RAMP_GRADE = 0.05;
+/** Past the junction plateau the road blends back into its own profile over this length (m). */
+const JUNCTION_BLEND = 10;
 
 const median = (vs: number[]) => {
   const s = vs.slice().sort((a, b) => a - b);
@@ -70,6 +72,20 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
   const nodeH = new Map(anchors);
   for (const [id, vs] of near) nodeH.set(id, median(vs));
 
+  // Junctions: nodes where roads meet or cross (three or more road ends). Each road through one is flat at
+  // the node height across the widest road there, so the crossing surfaces coincide instead of forming a
+  // ridge where their slopes differ.
+  const degree = new Map<number, number>();
+  const widest = new Map<number, number>();
+  for (const w of roads) {
+    const hw = roadWidth(w.tags)! / 2;
+    w.ids.forEach((id, i) => {
+      degree.set(id, (degree.get(id) ?? 0) + (i === 0 || i === w.ids.length - 1 ? 1 : 2));
+      widest.set(id, Math.max(widest.get(id) ?? 0, hw));
+    });
+  }
+  const isJunction = (id: number) => (degree.get(id) ?? 0) >= 3 && !anchors.has(id);
+
   let maxCorrection = 0;
   for (const w of roads) {
     const { ys, nodeAt } = raw.get(w)!;
@@ -98,6 +114,18 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
         if (t > 0) prof[k] += delta * t;
       }
     }
+    const flats = w.ids.flatMap((id, i) => (isJunction(id) ? [{ at: nodeAt[i], y: nodeH.get(id)!, r: widest.get(id)! + 0.5 }] : []));
+    if (flats.length)
+      for (let k = 0; k < prof.length; k++) {
+        let wt = 0, y = 0;
+        for (const f of flats) {
+          const off = Math.abs(d[k] - f.at);
+          const t = off <= f.r ? 1 : Math.max(0, 1 - (off - f.r) / JUNCTION_BLEND);
+          if (t > wt) { wt = t; y = f.y; }
+        }
+        // Smoothstep so the grade changes gently into and out of the plateau.
+        if (wt > 0) prof[k] += (y - prof[k]) * wt * wt * (3 - 2 * wt);
+      }
     w.profile = { dist: Float32Array.from(d), y: Float32Array.from(prof) };
   }
   return { roads: roads.length, nodes: nodeH.size, maxCorrection };

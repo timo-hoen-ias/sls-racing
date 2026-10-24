@@ -9,9 +9,10 @@ import { gunzipSync } from 'node:zlib';
 import { TileContent, isGzip, tileKey, tileOfLocal, type WorldIndex } from '../src/world/format.ts';
 import { addTileColliders } from '../src/world/tileColliders.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
-import { readOsm } from './lib/osm.ts';
+import { readOsm, type Way } from './lib/osm.ts';
+import { halfWidthAt, halfWidths } from './lib/overlap.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
-import { isDrivable, roadProfile, roadWidth } from './lib/roads.ts';
+import { isDrivable, roadProfile } from './lib/roads.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -47,6 +48,14 @@ async function main() {
   const height = terrainHeight(regions, unproject(cfg.zone));
   roadHeights(osm.ways, regions, height);
 
+  // Wheel tracks 1 m inside the usable road edges (narrower where a road at another height runs alongside).
+  const halves = halfWidths(osm.ways, height, W);
+  const laneOffset = (w: Way, dist: number, lane: number) => {
+    if (!lane) return 0;
+    const [l, r] = halfWidthAt(halves.get(w)!, dist);
+    return lane > 0 ? Math.max(0, l - 1) : -Math.max(0, r - 1);
+  };
+
   // Probe points per tile: [x, y, z, way, lane (0 centre, ±1 wheel tracks), sample index].
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
@@ -54,11 +63,10 @@ async function main() {
   let nProbes = 0;
   for (const w of osm.ways) {
     if (!isDrivable(w.tags)) continue;
-    const hw = roadWidth(w.tags)! / 2;
     const prof = roadProfile(w, height, W, 2);
     prof.forEach((p, i) => {
       for (const lane of [0, -1, 1]) {
-        const o = lane * Math.max(0, hw - 1);
+        const o = laneOffset(w, p.dist, lane);
         const e = p.e - p.dy * o, n = p.n + p.dx * o;
         const k = tileKey(Math.floor(e / T), Math.floor(n / T));
         if (!inWorld.has(k)) continue;
@@ -100,14 +108,13 @@ async function main() {
   const issues: Issue[] = [];
   for (const w of osm.ways) {
     if (!isDrivable(w.tags)) continue;
-    const hw = roadWidth(w.tags)! / 2;
     const prof = roadProfile(w, height, W, 2);
     for (const lane of [0, -1, 1]) {
-      const o = lane * Math.max(0, hw - 1);
       let prev: { y: number; road: number } | undefined;
       prof.forEach((p, i) => {
         if (!hits.has(`${w.id}:${lane}:${i}`)) { prev = undefined; return; }
         const h = hits.get(`${w.id}:${lane}:${i}`);
+        const o = laneOffset(w, p.dist, lane);
         const x = p.x - p.dy * o, z = p.z - p.dx * o;
         const add = (kind: Kind, size: number, what: string) => issues.push({ x, y: p.y, z, kind, size, way: w.id, what, lane });
         if (!h || h.y < p.y - 2.4) { add('hole', 2.5, h?.what ?? 'nothing'); prev = undefined; return; }

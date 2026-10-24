@@ -12,6 +12,7 @@ import {
 import { buildBuildings } from './lib/buildings.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { RoadMask } from './lib/clearance.ts';
+import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
@@ -55,7 +56,7 @@ function main() {
   roadHeights(osm.ways, regions, height, console.log);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const carve = new RoadCarve(TERRAIN_STEP);
-  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve);
+  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n) });

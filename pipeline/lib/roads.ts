@@ -1,6 +1,7 @@
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
 import type { RoadCarve } from './carve.ts';
+import type { HalfWidths } from './overlap.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
@@ -36,6 +37,8 @@ export const ROAD_CLASSES: Record<string, RoadClass> = {
 const LANE_WIDTH = 3.25;
 const STEP = 4; // metres between road samples
 export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
+/** Road collision lies this far under the drawn surface. */
+const STRIP_DROP = 0.05;
 const SIDEWALK = { width: 2.2, height: 0.14 };
 const LAMP_SPACING = 32;
 
@@ -175,7 +178,7 @@ class JunctionIndex {
  */
 export function buildRoads(
   ways: Way[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap, junctions: Junction[],
-  carve?: RoadCarve,
+  carve?: RoadCarve, halves?: Map<Way, HalfWidths>,
 ): RoadSample[] {
   const samples: RoadSample[] = [];
   const jIndex = new JunctionIndex(junctions);
@@ -187,6 +190,10 @@ export function buildRoads(
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
     const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
+    // Usable half width per sample, narrower where a road at another height runs alongside (overlap.ts).
+    const half = halves?.get(way);
+    const L = new Map(ring.map((p, i) => [p, half?.left[i] ?? width / 2]));
+    const R = new Map(ring.map((p, i) => [p, half?.right[i] ?? width / 2]));
 
     for (const r of ring) samples.push({ x: r.x, z: r.z, y: r.y, heading: Math.atan2(r.dx, r.dy) });
 
@@ -196,11 +203,12 @@ export function buildRoads(
       const tile = tiles.at((a.e + b.e) / 2, (a.n + b.n) / 2);
       // Point at signed offset `o` (left positive) from a sample, in local coordinates.
       const off = (p: typeof a, o: number) => utmToLocal(world, p.e - p.dy * o, p.n + p.dx * o);
-      // Quad between offsets o0 and o1 (left of o0 means o1 > o0) facing up, with heights per corner.
-      const strip = (buf: MeshBuf, o0: number, o1: number, ya: [number, number], yb: [number, number], uv?: (p: typeof a, side: 0 | 1) => [number, number]) => {
+      // Quad between offsets o0 and o1 (left of o0 means o1 > o0; fixed or per sample) facing up, with heights per corner.
+      type Offset = number | ((p: typeof a) => number);
+      const strip = (buf: MeshBuf, o0: Offset, o1: Offset, ya: [number, number], yb: [number, number], uv?: (p: typeof a, side: 0 | 1) => [number, number]) => {
         const v: number[] = [];
         for (const [p, o, side, y] of [[a, o0, 0, ya[0]], [a, o1, 1, ya[1]], [b, o0, 0, yb[0]], [b, o1, 1, yb[1]]] as const) {
-          const [x, z] = off(p, o);
+          const [x, z] = off(p, typeof o === 'number' ? o : o(p));
           v.push(buf.vertex(x, y, z, uv ? { uv: uv(p, side) } : {}));
         }
         // Winding chosen so faces point up (+y) or away from the road centre.
@@ -208,21 +216,24 @@ export function buildRoads(
         buf.tri(v[1], v[2], v[3]);
       };
       const hw = width / 2;
-      strip(tile.roads, -hw, hw, [a.y, a.y], [b.y, b.y], (p, s) => [s, p.dist / width]);
+      const left = (p: typeof a) => L.get(p)!, right = (p: typeof a) => -R.get(p)!;
+      strip(tile.roads, right, left, [a.y, a.y], [b.y, b.y], (p, s) => [s, p.dist / width]);
       // Lifted road on an embankment: own collision, and retaining walls down to the terrain.
       const above = !bridge && way.raise ? Math.max(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) : 0;
-      if (bridge || above > ROAD_LIFT + 0.1) {
-        // Where a deck or ramp is close to the ground, sink its collision into the terrain so its edge is no kerb.
-        const cy = (p: typeof a) => p.y - Math.max(0, 0.6 - (p.y - height(p.e, p.n)));
-        strip(tile.collide, -hw - 0.5, hw + 0.5, [cy(a), cy(a)], [cy(b), cy(b)]);
-      } else if (carve) {
-        // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the
-        // edges down to the terrain mesh, which is fitted below it (carve.ts).
-        carve.add(a.e, a.n, a.y, b.e, b.n, b.y, hw);
+      // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the edges
+      // down to the terrain mesh, which is fitted below it (carve.ts). Decks and lifted roads only push the
+      // terrain down.
+      const lifted = bridge || above > ROAD_LIFT + 0.1;
+      if (carve || lifted) {
+        carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, Math.min(L.get(a)!, R.get(a)!, L.get(b)!, R.get(b)!), !lifted);
         const c = (p: typeof a, d: number) => p.y - d;
-        strip(tile.collide, -hw, hw, [c(a, 0.05), c(a, 0.05)], [c(b, 0.05), c(b, 0.05)]);
-        strip(tile.collide, hw, hw + 1, [c(a, 0.05), c(a, ROAD_LIFT + 0.1)], [c(b, 0.05), c(b, ROAD_LIFT + 0.1)]);
-        strip(tile.collide, -hw - 1, -hw, [c(a, ROAD_LIFT + 0.1), c(a, 0.05)], [c(b, ROAD_LIFT + 0.1), c(b, 0.05)]);
+        const extra = lifted ? 0.5 : 0;
+        const lw = (p: typeof a) => left(p) + extra, rw = (p: typeof a) => right(p) - extra;
+        strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
+        if (!lifted) {
+          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), c(a, ROAD_LIFT + 0.1)], [c(b, STRIP_DROP), c(b, ROAD_LIFT + 0.1)]);
+          strip(tile.collide, (p) => rw(p) - 1, rw, [c(a, ROAD_LIFT + 0.1), c(a, STRIP_DROP)], [c(b, ROAD_LIFT + 0.1), c(b, STRIP_DROP)]);
+        }
       }
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
       if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
@@ -252,6 +263,9 @@ export function buildRoads(
         };
         const tuv = (p: typeof a, s: 0 | 1) => [p.dist / 2, s * (sw / 2)] as [number, number];
         for (const side of [1, -1]) {
+          // No sidewalk where the road had to give way to another road alongside.
+          const full = (p: typeof a) => (side > 0 ? L : R).get(p)! >= hw - 0.05;
+          if (!full(a) || !full(b)) continue;
           const inner = side * hw;
           const outer = side * (hw + sw);
           const [i0, i1] = side > 0 ? [inner, outer] : [outer, inner];
@@ -272,7 +286,7 @@ export function buildRoads(
         const ext = Math.min(hw, 4) * dir;
         const tip = { e: p.e + p.dx * ext, n: p.n + p.dy * ext };
         const corner = (q: { e: number; n: number }, o: number) => utmToLocal(world, q.e - p.dy * o, q.n + p.dx * o);
-        const y = p.y - 0.05;
+        const y = p.y - STRIP_DROP;
         const t = tiles.at(p.e, p.n).collide;
         const v = [corner(p, -hw), corner(p, hw), corner(tip, -hw), corner(tip, hw)].map(([x, z]) => t.vertex(x, y, z, {}));
         // Upward-facing whichever way the cap points.
@@ -288,6 +302,7 @@ export function buildRoads(
         if (r.dist < next) continue;
         next += LAMP_SPACING;
         side = -side;
+        if ((side > 0 ? L : R).get(r)! < width / 2 - 0.05) continue;
         const o = side * (width / 2 + (sidewalk ? SIDEWALK.width - 0.5 : 0.8));
         const [x, z] = utmToLocal(world, r.e - r.dy * o, r.n + r.dx * o);
         if (jIndex.near(x, z, 4)) continue;

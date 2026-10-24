@@ -4,3 +4,4 @@ data/raw/
 public/tiles/
 *.log
 .DS_Store
+.wrangler/

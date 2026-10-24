@@ -3,6 +3,7 @@
 // Method: ground model from class 2, canopy height model from vegetation points (class 20) on a 1 m grid,
 // tree tops as local maxima with a height dependent window, crowns grown downhill from the tops (watershed).
 import { existsSync, readFileSync } from 'node:fs';
+import { readDerived } from './derived.ts';
 import type { LasPoints } from './laz.ts';
 
 /** ASPRS/AdV classes in the Saarland 2025 flight: 2 ground, 6 building, 20 vegetation (non-ground). */
@@ -24,10 +25,13 @@ export interface LidarFile {
 
 export const LIDAR_ATTRIBUTION = '© GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0';
 
-/** Reads data/raw/<region>/lidar.json, or undefined when the LiDAR step has not run. */
+/** Reads a lidar.json file, or undefined when it does not exist. */
 export function readLidar(file: string): LidarFile | undefined {
   return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as LidarFile) : undefined;
 }
+
+/** LiDAR trees of a region: fresh from data/raw, else the committed copy in data/derived. */
+export const loadLidar = (region: string) => readDerived<LidarFile>(region, 'lidar');
 
 export interface TreeOptions {
   /** Lowest tree top above ground (default 3 m; lower vegetation is bushes and hedges). */
@@ -143,17 +147,27 @@ export function extractTrees(p: LasPoints, x0: number, y0: number, size = 1000, 
     const cx = k % N, cy = (k - cx) / N;
     trees.push([r1(x0 + (cx + 0.5) * CELL), r1(y0 + (cy + 0.5) * CELL), r1(h), r1(r), leaf]);
   });
-  // In closed woods every tree grows tall and narrow; a columnar shape only means poplar where trees stand apart
-  // (rows along roads and fields have at most two neighbours this close).
+  return reclassifyPoplars(trees);
+}
+
+/**
+ * In closed woods every tree grows tall and narrow; a columnar shape only means poplar where trees stand apart
+ * (rows along roads and fields have at most two neighbours within 10 m). Others become broadleaf.
+ */
+export function reclassifyPoplars(trees: LidarTree[], radius = 10): LidarTree[] {
   const near = new Map<string, LidarTree[]>();
-  const gk = (e: number, n: number) => `${Math.floor(e / 6)}_${Math.floor(n / 6)}`;
-  for (const t of trees) (near.get(gk(t[0], t[1])) ?? near.set(gk(t[0], t[1]), []).get(gk(t[0], t[1]))!).push(t);
+  const key = (e: number, n: number) => `${Math.floor(e / radius)}_${Math.floor(n / radius)}`;
+  for (const t of trees) {
+    const k = key(t[0], t[1]);
+    if (!near.has(k)) near.set(k, []);
+    near.get(k)!.push(t);
+  }
   for (const t of trees) {
     if (t[4] !== Leaf.poplar) continue;
     let count = 0;
-    const ce = Math.floor(t[0] / 6), cn = Math.floor(t[1] / 6);
+    const ce = Math.floor(t[0] / radius), cn = Math.floor(t[1] / radius);
     for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++)
-      for (const u of near.get(`${ce + a}_${cn + b}`) ?? []) if (u !== t && Math.hypot(u[0] - t[0], u[1] - t[1]) < 6) count++;
+      for (const u of near.get(`${ce + a}_${cn + b}`) ?? []) if (u !== t && Math.hypot(u[0] - t[0], u[1] - t[1]) < radius) count++;
     if (count > 2) t[4] = Leaf.broadleaf;
   }
   return trees;

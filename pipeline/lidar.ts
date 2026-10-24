@@ -6,7 +6,8 @@
 // data/raw/<region>/lidar/, so a rerun only processes new tiles. The LAZ files themselves are not kept.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readLaz } from './lib/laz.ts';
-import { CLS_BUILDING, CLS_GROUND, CLS_VEG, LIDAR_ATTRIBUTION, dedupeBorders, extractTrees, type LidarFile, type LidarTree } from './lib/lidar.ts';
+import { writeDerived } from './lib/derived.ts';
+import { CLS_BUILDING, CLS_GROUND, CLS_VEG, LIDAR_ATTRIBUTION, dedupeBorders, extractTrees, reclassifyPoplars, type LidarFile, type LidarTree } from './lib/lidar.ts';
 import { pointInRing, readOsm } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths } from './lib/region.ts';
 import { RemoteZip, type ZipEntry } from './lib/remotezip.ts';
@@ -87,9 +88,9 @@ async function main() {
     trees.push(...(JSON.parse(readFileSync(`${cache}${k}.json`, 'utf8')) as LidarTree[]));
   }
   const before = trees.length;
-  trees = dedupeBorders(trees);
+  trees = reclassifyPoplars(dedupeBorders(trees));
   const out: LidarFile = { crs: 'EPSG:25832', attribution: LIDAR_ATTRIBUTION, coverage, trees };
-  writeFileSync(`${dir}lidar.json`, JSON.stringify(out));
+  writeDerived(id, 'lidar', out);
   const kinds = [0, 1, 2].map((l) => trees.filter((t) => t[4] === l).length);
   console.log(`LiDAR: ${trees.length} trees (${before - trees.length} border duplicates removed; broadleaf ${kinds[0]}, conifer ${kinds[1]}, poplar ${kinds[2]}) on ${coverage.length} km² → ${dir}lidar.json`);
 }

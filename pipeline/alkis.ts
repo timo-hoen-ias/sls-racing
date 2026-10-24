@@ -8,6 +8,7 @@ import { ALKIS_ATTRIBUTION, StreetArea, measureStreets, type AlkisRoads } from '
 import { readOsm } from './lib/osm.ts';
 import { loadWorld, paths } from './lib/region.ts';
 import { readDbf, readShpPolygons } from './lib/shp.ts';
+import { writeDerived } from './lib/derived.ts';
 
 const SHARE = 'https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_ALKIS_shp_LK/';
 const LANDKREISE = ['44_Saarlouis', '41_Regionalverband_Saarbr%c3%bccken', '42_Merzig-Wadern', '43_Neunkirchen', '45_Saarpfalz-Kreis', '46_St.Wendel'];
@@ -73,7 +74,7 @@ async function main() {
 
   const ways = measureStreets(osm.ways, new StreetArea(polys));
   const out: AlkisRoads = { crs: 'EPSG:25832', attribution: ALKIS_ATTRIBUTION, ways };
-  writeFileSync(`${dir}alkis-roads.json`, JSON.stringify(out));
+  writeDerived(id, 'alkis-roads', out);
   const vals = Object.values(ways).map((w) => w.street).sort((a, b) => a - b);
   console.log(`ALKIS: street space measured for ${vals.length} ways (median ${vals[vals.length >> 1]} m) → ${dir}alkis-roads.json`);
 }

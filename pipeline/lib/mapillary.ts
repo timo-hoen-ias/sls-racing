@@ -1,6 +1,7 @@
 // Street furniture detected by Mapillary in street-level photos (map features, CC BY-SA 4.0).
 // Mapillary needs a free access token; it is read from MAPILLARY_TOKEN and never stored.
 import { existsSync, readFileSync } from 'node:fs';
+import { readDerived } from './derived.ts';
 
 export const MAPILLARY_ATTRIBUTION = 'Mapillary contributors, CC BY-SA 4.0';
 
@@ -16,6 +17,9 @@ export interface MapillaryFile {
 export function readMapillary(file: string): MapillaryFile | undefined {
   return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as MapillaryFile) : undefined;
 }
+
+/** Mapillary features of a region: fresh from data/raw, else the committed copy in data/derived. */
+export const loadMapillary = (region: string) => readDerived<MapillaryFile>(region, 'mapillary');
 
 /** Game categories for the Mapillary values that matter for a street scene. */
 export type FeatureCategory = 'trafficLight' | 'pedestrianLight' | 'streetLight' | 'stopSign' | 'giveWay' | 'sign' | 'bench' | 'bin' | 'hydrant' | 'pole';

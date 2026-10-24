@@ -4,6 +4,7 @@
 // the measured value is the street space; measuredWidth() derives a carriageway estimate from it for town
 // streets only. The pipeline thread decides where roads.ts uses it.
 import { existsSync, readFileSync } from 'node:fs';
+import { readDerived } from './derived.ts';
 import type { Way } from './osm.ts';
 import { isDrivable, roadWidth, ROAD_CLASSES } from './roads.ts';
 
@@ -19,6 +20,9 @@ export interface AlkisRoads {
 export function readAlkisRoads(file: string): AlkisRoads | undefined {
   return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as AlkisRoads) : undefined;
 }
+
+/** ALKIS street widths of a region: fresh from data/raw, else the committed copy in data/derived. */
+export const loadAlkisRoads = (region: string) => readDerived<AlkisRoads>(region, 'alkis-roads');
 
 /** Street space (property line to property line) of a way in metres, if ALKIS measured it reliably. */
 export function streetSpace(way: Way, data: AlkisRoads | undefined): number | undefined {

@@ -13,6 +13,7 @@
     "world:lidar": "node pipeline/lidar.ts saarlouis",
     "world:alkis": "node pipeline/alkis.ts saarlouis",
     "world:mapillary": "node pipeline/mapillary.ts saarlouis",
+    "world:addresses": "node pipeline/addresses.ts saarlouis",
     "world:build": "node pipeline/build.ts saarlouis",
     "world:fixture": "node pipeline/build.ts fixture",
     "world:drivetest": "node pipeline/drivetest.ts saarlouis",

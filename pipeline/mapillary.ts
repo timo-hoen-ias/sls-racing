@@ -2,10 +2,11 @@
 //   MAPILLARY_TOKEN=MLY|... node pipeline/mapillary.ts saarlouis
 // Needs data/raw/<region>/osm.json (pipeline/fetch.ts). Output: data/raw/<region>/mapillary.json
 // (see MapillaryFile in lib/mapillary.ts). Only features with a game category are kept.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { MAPILLARY_ATTRIBUTION, categorize, type MapillaryFeature, type MapillaryFile } from './lib/mapillary.ts';
 import { readOsm } from './lib/osm.ts';
 import { loadWorld, paths, unproject } from './lib/region.ts';
+import { writeDerived } from './lib/derived.ts';
 
 const API = 'https://graph.mapillary.com/map_features';
 /** The API returns at most 2000 features per request, so the region is queried in small cells. */
@@ -70,7 +71,7 @@ async function main() {
   await Promise.all([work(), work(), work(), work()]);
 
   const out: MapillaryFile = { crs: 'EPSG:25832', attribution: MAPILLARY_ATTRIBUTION, features };
-  writeFileSync(`${dir}mapillary.json`, JSON.stringify(out));
+  writeDerived(id, 'mapillary', out);
   const count = new Map<string, number>();
   for (const f of features) count.set(categorize(f[2])!, (count.get(categorize(f[2])!) ?? 0) + 1);
   console.log(`Mapillary: ${features.length} of ${raw} features kept (${[...count].map(([k, v]) => `${k} ${v}`).join(', ')}) → ${dir}mapillary.json`);

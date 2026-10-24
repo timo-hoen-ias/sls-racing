@@ -77,3 +77,15 @@ export function roadSection(tags: Record<string, string>): RoadSection | undefin
   const rightLane = oneway ? left + (lanes - 0.5) * lane : lanes >= 2 ? (Math.floor(lanes / 2) - 0.5) * lane + (lanes % 2 ? lane / 2 : 0) : width / 4;
   return { width, lanes, lane, oneway, dividers, rightLane, outer: s.outer * k, inner: s.inner * k, source: explicit ? 'width' : tagged > 0 && tagged < 10 ? 'lanes' : 'default' };
 }
+
+/** Kerb and pavement dimensions (RASt 06: Hochbord 10–12 cm, abgesenkt 3 cm at crossings and driveways). */
+export const KERB = {
+  /** Raised kerb above the carriageway, metres. */
+  height: 0.12,
+  /** Lowered kerb (Bordsteinabsenkung) at crossings and where the pavement ends at a junction. */
+  lowered: 0.03,
+  /** Pavement width beside the carriageway. */
+  width: 2.2,
+  /** Lowered stretch around a mapped crossing, metres either side. */
+  crossing: 2.5,
+};

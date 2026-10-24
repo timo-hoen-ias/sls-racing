@@ -49,6 +49,8 @@ import { WorldAudio } from './audio/worldAudio.ts';
 import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
+import { RailLayer } from './world/rails.ts';
+import { registerRoadsideCommands } from './world/roadsideCommands.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
@@ -117,6 +119,9 @@ async function boot() {
   view.scene.add(far.root);
   const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world, carBoxes: quality.lod.cars });
   props.register(world);
+  // Guard rails: drawn per tile; their colliders come with the tile physics.
+  const rails = new RailLayer();
+  rails.register();
   const shops = new ShopLayer(index.world);
   shops.register();
   const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
@@ -374,6 +379,8 @@ async function boot() {
   };
   registerGameCommands({ R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar, teleport }, debugState);
   registerAddressCommands({ world: index.world, graph, nav, pos: ip, teleport: (x, z, heading) => teleport(x, z, heading, true) });
+  rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
+  registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
   const perf = new PerfMonitor($('perf'), view.renderer);
@@ -522,6 +529,7 @@ async function boot() {
     const night = 1 - view.daylight.daylight;
     const braking = drive.brake > 0 && car.speed > 1;
     carView.setNight(night);
+    props.setNight(night);
     const rs = replay.active ? replay.update(dt) : null;
     if (rs) {
       for (let i = 0; i < 4; i++) {

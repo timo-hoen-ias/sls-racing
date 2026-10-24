@@ -116,7 +116,8 @@ export class PedSim {
   }
 
   static walkable(e: Edge) {
-    return WALKABLE.has(e.rank) && e.length > 8;
+    // Living streets and pedestrian zones (rank 2) are walked across their width; streets need a pavement.
+    return WALKABLE.has(e.rank) && e.length > 8 && (e.rank === 2 || e.kerb !== 0);
   }
 
   /** Pedestrians crossing a road right now, as obstacles for traffic. */
@@ -398,7 +399,7 @@ export class PedSim {
       p.x = ox;
       p.z = oz;
     }
-    p.y = y + (e.rank === 2 ? 0 : 0.14);
+    p.y = y + (e.rank === 2 ? 0 : 0.12);
     if (p.state !== 'down') p.yaw = Math.atan2(dx, dz);
   }
 }

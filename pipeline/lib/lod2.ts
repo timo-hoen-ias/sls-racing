@@ -75,6 +75,8 @@ export function parseLod2(xml: string): Lod2Building[] {
   return out;
 }
 
+export const lod2TileCount = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.gml.deflate')).length : 0);
+
 /** Every LoD2 building stored for a region (data/raw/lod2/), tile by tile. */
 export function* lod2Buildings(dir: string): Generator<Lod2Building> {
   if (!existsSync(dir)) return;

@@ -37,6 +37,8 @@ export const pbrUniforms = {
   uPbrTiling: { value: 1 },
   /** Large-scale brightness and wear variation (tex.macro). */
   uPbrMacro: { value: 1 },
+  /** Terrain: 0 = scan colours as calibrated, 1 = the scan's detail in the map's class colour (tex.groundtint). */
+  uPbrGroundTint: { value: 0.85 },
   /** Road wear: 0 = all fresh asphalt, 1 = as built, 2 = everything worn (tex.wear). */
   uPbrWear: { value: 1 },
   /** Debug view (tex.debug): 0 off, 1 albedo, 2 normal, 3 roughness, 4 height, 5 cells, 6 uv grid. */

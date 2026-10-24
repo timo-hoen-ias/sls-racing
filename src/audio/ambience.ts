@@ -234,6 +234,17 @@ export class Ambience {
     }
   }
 
+  /** One axle over a bridge expansion joint: two short knocks, the gap's two edges. */
+  joint(strength: number) {
+    const t = this.ctx.currentTime;
+    const k = Math.min(1, Math.max(0.05, strength));
+    for (const dt of [0, 0.028]) {
+      this.burst(t + dt, 0.07, 0.5 * k, 'lowpass', 520, 0.001);
+      this.tone(t + dt, 70, 0.09, 0.45 * k);
+    }
+    this.burst(t, 0.04, 0.12 * k, 'bandpass', 2400, 0.001);
+  }
+
   private tone(t: number, f: number, dur: number, gain: number) {
     const o = this.ctx.createOscillator();
     o.frequency.value = f;

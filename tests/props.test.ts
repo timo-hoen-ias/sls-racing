@@ -74,6 +74,15 @@ describe('street furniture', () => {
     expect(records(run({ ways: [street({ 'parking:both': 'no' })] }).tiles).filter((p) => p[0] === Prop.parkedCar)).toHaveLength(0);
   });
 
+  it('keeps kerb parkers off narrow lanes and to one side of tight streets', () => {
+    const parked = (width: string) => records(run({ ways: [street({ 'parking:both': 'lane', width })] }).tiles).filter((p) => p[0] === Prop.parkedCar);
+    expect(parked('3.5')).toHaveLength(0);
+    const tight = parked('5.4');
+    expect(tight.length).toBeGreaterThan(4);
+    // Only the right-hand (south, z > 0) side of the eastbound street.
+    for (const p of tight) expect(p[3]).toBeGreaterThan(0);
+  });
+
   it('cuts fences into pieces of at most 4 m along the way', () => {
     const fence: Way = { id: 2, tags: { barrier: 'fence' }, pts: [[E, N + 30], [E + 30, N + 30]], ids: [1, 2], closed: false };
     const pieces = records(run({ ways: [fence] }).tiles).filter((p) => p[0] === Prop.fence);

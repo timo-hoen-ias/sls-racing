@@ -168,20 +168,25 @@ const GROUND = /* glsl */ `
   float soil = smoothstep(0.45, 0.55, pbrNoise(floor(wp / 60.0) + 0.5));
   float urbanPatch = smoothstep(0.35, 0.65, mid);
   float w[8] = float[](wg * (1.0 - meadow), wg * meadow + wfi * (1.0 - soil), wf, wu * urbanPatch, wfi * soil, 0.0, wm, wu * (1.0 - urbanPatch));
-  vec3 acc = vec3(0.0); vec2 accN = vec2(0.0); float accR = 0.0, accH = 0.0, accW = 0.0;
+  vec3 acc = vec3(0.0), accM = vec3(0.0); vec2 accN = vec2(0.0); float accR = 0.0, accH = 0.0, accW = 0.0;
   for (int i = 0; i < 8; i++) {
     if (w[i] < 0.02) continue;
     float c = float(i);
     float m = pbrNatureMetres[i];
     PbrTexel t = pbrNature(c, wp / m, gx / m, gy / m);
     float k = w[i] * pow(0.35 + t.h, 4.0);
-    acc += t.a * k; accN += t.n * k; accR += t.r * k; accH += t.h * k; accW += k;
+    acc += t.a * k; accM += pbrNatureMean(c) * k; accN += t.n * k; accR += t.r * k; accH += t.h * k; accW += k;
     if (k > accW * 0.5) pbrCell = c;
   }
   accW = max(accW, 1e-4);
   pbrAlbedo = acc / accW;
+  // The scans are darker and less saturated than the map's class colours, which read grey under a bright
+  // sky. Keep their detail but move their mean onto the vertex colour (tex.groundtint).
+  pbrAlbedo = mix(pbrAlbedo, pbrAlbedo * vc / max(accM / accW, vec3(1e-3)), uPbrGroundTint);
   pbrN = pbrDecodeN(accN / accW);
-  pbrRough = accR / accW;
+  // Grass and soil are rough and self-shadowed; scan roughness around 0.7 made grazing sky reflections wash
+  // the ground grey.
+  pbrRough = mix(0.97, 1.0, accR / accW);
   pbrHeight = accH / accW;
   pbrUv = wp;
   pbrAlbedo *= 0.88 + 0.24 * mid * uPbrMacro + (big - 0.5) * 0.1 * uPbrMacro;

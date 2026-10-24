@@ -11,21 +11,22 @@ import {
 } from '../src/world/format.ts';
 import { buildBuildings, buildLod2 } from './lib/buildings.ts';
 import { landmarkArea, landmarkList, readLandmarks } from './lib/landmarks.ts';
-import { Footprints, isTrafficStructure, lod2Buildings, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
+import { Footprints, isTrafficStructure, lod2Buildings, lod2TileCount, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
 import { buildGuideSigns, type Place } from './lib/guideSigns.ts';
+import { type ShopBuilding, buildShops } from './lib/shops.ts';
 import { signalJunctions } from './lib/signals.ts';
-import { RoadMask } from './lib/clearance.ts';
+import { RoadLines, RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
-import { roadHeights, terrainHeight } from './lib/heights.ts';
+import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
-import { buildRoads } from './lib/roads.ts';
+import { buildRoads, type Railing } from './lib/roads.ts';
 import { terrariumSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
@@ -37,6 +38,7 @@ import { areaDensity, areaTreeKind, treeKindOf } from './lib/vegetation.ts';
 import { loadLidar } from './lib/lidar.ts';
 import { categorize, loadMapillary } from './lib/mapillary.ts';
 import { placeLidarTrees, type MeasuredTree } from './lib/lidarTrees.ts';
+import { waterLevels, type TileGrid } from './lib/waterLevel.ts';
 
 function main() {
   const { cfg, info, project } = loadWorld();
@@ -71,14 +73,17 @@ function main() {
   roadHeights(osm.ways, regions, height, console.log);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const carve = new RoadCarve(TERRAIN_STEP);
-  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
+  // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
+  const real = regions.some((r) => r.boundary.type !== 'fixture');
+  const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
+  const railings: Railing[] = [];
+  const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
+  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings });
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
   const lod2Dir = regions.some((r) => r.lod2?.length) ? paths.lod2 : undefined;
-  // Landmark models replace the generic buildings on their footprints (real regions only).
-  const real = regions.some((r) => r.boundary.type !== 'fixture');
-  const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
+  if (lod2Dir && !lod2TileCount(lod2Dir)) throw missing('LoD2', lod2Dir, regions);
   const landmarkFoot = landmarkArea(landmarks);
   const centre = (r: [number, number][]) => r.reduce(([a, b], [e, n]) => [a + e / r.length, b + n / r.length], [0, 0]);
   const footprints = new Footprints();
@@ -91,9 +96,19 @@ function main() {
     const r = b.ground[0] ?? [];
     return !r.length || !used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`);
   };
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) });
-  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM`);
+  // Buildings a road runs through (canopies, garages, passages the survey models solid) would block it.
+  const lines = new RoadLines(osm.ways);
+  let blocking = 0;
+  const blocks = (rings: [number, number][][]) => {
+    const hit = rings.some((r) => lines.through(r) !== undefined);
+    if (hit) blocking++;
+    return hit;
+  };
+  const shopBuildings: ShopBuilding[] = [];
+  const onBuilding = (b: ShopBuilding) => shopBuildings.push(b);
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding });
+  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM, ${blocking} left out on roads`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
   const T = info.tileSize;
@@ -186,15 +201,17 @@ function main() {
   console.log(`Guide signs: ${Object.entries(guide.counts).map(([k, c]) => `${k} ${c}`).join(', ')} (${farPlaces.length} places beyond the region) · skipped: ${Object.entries(guide.skipped).map(([k, c]) => `${k} ${c}`).join(', ')}`);
   // Mapped place-name signs replace the generic ones where roads cross the postal boundary.
   const cityLimits = guide.counts.ort === 0;
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits });
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
+  const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
+  console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
-  let bytes = 0;
-  const index: [number, number][] = [];
-  for (const k of [...want].sort()) {
+  // Terrain and ground classes of all tiles first: water levels are smoothed across tile borders.
+  const grids = new Map<string, TileGrid>();
+  for (const k of want) {
     const [ix, iy] = k.split('_').map(Number);
     const E0 = ix * T;
     const N0 = (iy + 1) * T;
@@ -206,8 +223,25 @@ function main() {
         const n = N0 - r * TERRAIN_STEP;
         h[r * TERRAIN_N + c] = Math.round(carve.apply(e, n, height.raw(e, n)) * 100) / 100;
         // Brooks become water cells, except under roads (culverts), where the mesh must stay level.
-        const cls = water.has(e, n) && !onRoad.has(e, n) ? Ground.water : ground.at(e, n, Ground.grass);
-        g[r * TERRAIN_N + c] = cls;
+        g[r * TERRAIN_N + c] = water.has(e, n) && !onRoad.has(e, n) ? Ground.water : ground.at(e, n, Ground.grass);
+      }
+    grids.set(k, { h, g });
+  }
+  const levels = waterLevels(grids, TERRAIN_N, Ground.water);
+  console.log(`Water: smooth levels in ${levels.size} tiles`);
+
+  let bytes = 0;
+  const index: [number, number][] = [];
+  for (const k of [...want].sort()) {
+    const [ix, iy] = k.split('_').map(Number);
+    const E0 = ix * T;
+    const N0 = (iy + 1) * T;
+    const { h, g } = grids.get(k)!;
+    for (let r = 0; r < TERRAIN_N; r++)
+      for (let c = 0; c < TERRAIN_N; c++) {
+        const e = E0 + c * TERRAIN_STEP;
+        const n = N0 - r * TERRAIN_STEP;
+        const cls = g[r * TERRAIN_N + c];
         // Scatter trees and bushes in woods, scrub and parks, away from roads. Densities are per 8 m cell and area type, whatever the mesh step.
         if (r % TREE_EVERY === 0 && c % TREE_EVERY === 0 && r < TERRAIN_N - 1 && c < TERRAIN_N - 1 && (cls === Ground.forest || cls === Ground.grass)) {
           const tags = ground.tagsAt(e + TREE_CELL / 2, n - TREE_CELL / 2);
@@ -237,6 +271,8 @@ function main() {
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const bi = lod2.info.get(k);
     if (bi) tile.bldInfo = encode(new Float32Array(bi));
+    const wl = levels.get(k);
+    if (wl) tile.waterLevel = encode(wl);
     const ww = waterways.get(k);
     if (ww) tile.waterways = encode(new Float32Array(ww));
     const trees = treesByTile.get(k);
@@ -247,6 +283,8 @@ function main() {
     if (crowns?.some((c) => c > 0)) tile.treeCrowns = encode(new Uint8Array(crowns));
     const bushes = bushesByTile.get(k);
     if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
+    const tileShops = shops.tiles.get(k);
+    if (tileShops) tile.shops = encode(new Float32Array(tileShops));
     const tileProps = props.tiles.get(k);
     if (tileProps) tile.props = encode(new Float32Array(tileProps));
     // Gzipped here because static hosting does not compress application/octet-stream; the client inflates it.

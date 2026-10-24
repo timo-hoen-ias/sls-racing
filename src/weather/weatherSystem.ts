@@ -13,6 +13,8 @@ import { WeatherSound } from './weatherSound.ts';
 /** Hook into the lighting (sky, sun, fog, clouds), when it offers one. */
 interface Daylight {
   setOvercast(v: number): void;
+  /** 0 at night .. 1 by day. */
+  daylight?: number;
 }
 
 export const WEATHER_NAMES: Record<WeatherKind, string> = { clear: 'Klar', rain: 'Regen', snow: 'Schnee' };
@@ -96,7 +98,9 @@ export class WeatherSystem {
     if (daylight?.setOvercast) daylight.setOvercast(w.overcast);
     else this.overcastFallback(w.overcast, w.snow > w.rain);
 
-    this.precipitation.update(time, w.rain, w.snow, 1 - 0.35 * w.overcast, camera, viewHeight);
+    // Drops are lit by the sky: bright by day, nearly invisible at night outside lamp and headlight light.
+    const sky = daylight?.daylight ?? 1;
+    this.precipitation.update(time, w.rain, w.snow, (0.03 + 0.97 * sky * sky) * (1 - 0.35 * w.overcast), camera, viewHeight);
     this.sound?.update({ rain: w.rain, snow: w.snow, wet: w.wet, speed: Math.abs(car.speed), puddle: this.puddle });
 
     const hint = w.hint(this.aqua);

@@ -49,6 +49,14 @@ export class ChaseCamera {
     this.initialised = false;
   }
 
+  /** Jump straight to the resting position behind the car on the next update (after teleports and resets), instead of gliding there. */
+  snap() {
+    this.initialised = false;
+    this.yaw = 0;
+    this.head.set(0, 0, 0);
+    this.headVel.set(0, 0, 0);
+  }
+
   next() {
     this.mode = MODES[(MODES.indexOf(this.mode) + 1) % MODES.length];
   }

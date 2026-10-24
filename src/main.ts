@@ -255,6 +255,11 @@ async function boot() {
     car.reset({ x: r.x, y: r.y + 1.2, z: r.z }, r.heading);
     prevVel.x = prevVel.y = prevVel.z = 0;
     hitCooldown = 0.6;
+    // No interpolation between the old and the new spot, and no camera flight across town.
+    capture(curr);
+    prev.p.copy(curr.p);
+    prev.q.copy(curr.q);
+    cam.snap();
   };
 
   loadAssists(car);
@@ -382,6 +387,7 @@ async function boot() {
         capture(curr);
         prev.p.copy(curr.p);
         prev.q.copy(curr.q);
+        cam.snap();
       }
       $('loading').hidden = worldReady;
     } else {

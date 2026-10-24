@@ -45,6 +45,7 @@ export class Pedestrians {
         return `Figuren: ${this.view.models} (${this.view.figureCount} Varianten)`;
       },
     });
+    registerValue('peds.browse', 'Wahrscheinlichkeit, an einem Schaufenster stehen zu bleiben 0..1', () => sim.browse, (v) => (sim.browse = v), [0, 1]);
     registerToggle('peds.jaywalk', 'Fußgänger gehen auch bei Rot über die Ampel', () => sim.jaywalk, (v) => (sim.jaywalk = v));
     registerToggle('peds.freeze', 'Fußgänger anhalten', () => sim.frozen, (v) => (sim.frozen = v));
     registerToggle('peds', 'Fußgänger anzeigen', () => this.visible, (v) => (this.visible = v));
@@ -70,7 +71,7 @@ export class Pedestrians {
       run: () => {
         const st: Partial<Record<PedState, number>> = {};
         for (const p of sim.peds) st[p.state] = (st[p.state] ?? 0) + 1;
-        return `${sim.peds.length}/${sim.target} Fußgänger · ${Object.entries(st).map(([k, c]) => `${k} ${c}`).join(', ') || '–'} · ${this.traffic?.obstacles.length ?? 0} queren gerade · ${sim.waiting()} warten an Ampeln`;
+        return `${sim.peds.length}/${sim.target} Fußgänger · ${Object.entries(st).map(([k, c]) => `${k} ${c}`).join(', ') || '–'} · ${this.traffic?.obstacles.length ?? 0} queren gerade · ${sim.waiting()} warten an Ampeln · ${sim.browsing()} schauen ins Schaufenster`;
       },
     });
   }

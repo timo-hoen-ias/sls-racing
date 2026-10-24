@@ -50,6 +50,7 @@ export function registerTextureCommands(tex: PbrTextures) {
   registerToggle('tex.enabled', 'Foto-Texturen an/aus (aus = flache Mittelwertfarben zum Vergleich)', () => u.uPbrOn.value > 0.5, (v) => (u.uPbrOn.value = v ? 1 : 0), { aliases: ['tex.on'] });
   registerToggle('tex.tiling', 'Anti-Kachelung (versetzte Überblendung gegen sichtbare Wiederholung)', () => u.uPbrTiling.value > 0.5, (v) => (u.uPbrTiling.value = v ? 1 : 0));
   registerValue('tex.macro', 'Großflächige Variation (Helligkeit, Abnutzung, Flicken) 0..2', () => u.uPbrMacro.value, (v) => (u.uPbrMacro.value = v), [0, 2]);
+  registerValue('tex.groundtint', 'Gelände: 0 = Scanfarben, 1 = Scan-Details in der Kartenfarbe (Wiese grün, Acker gelblich)', () => u.uPbrGroundTint.value, (v) => (u.uPbrGroundTint.value = v), [0, 1]);
   registerValue('tex.wear', 'Straßenabnutzung: 0 = alles neu, 1 = wie gebaut, 2 = alles verschlissen', () => u.uPbrWear.value, (v) => (u.uPbrWear.value = v), [0, 2]);
   const surfaces = Object.keys(SURFACE);
   registerCommand({

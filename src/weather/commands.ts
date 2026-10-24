@@ -38,6 +38,19 @@ export function weatherCommands(sys: WeatherSystem): DebugCommand[] {
   const completeKind = (a: string[]) => (a.length <= 1 ? KIND_LIST.filter((k) => k.startsWith(a[0] ?? '')) : []);
   return [
     {
+      name: 'weather.droplight',
+      args: '[faktor]',
+      help: 'Wie hell Laternen und Scheinwerfer Regentropfen und Flocken anleuchten (Standard 0.05, 0 = nachts unsichtbar)',
+      run: ([v]) => {
+        if (v !== undefined) {
+          const n = Number(v.replace(',', '.'));
+          if (!Number.isFinite(n) || n < 0 || n > 1) throw new Error('Wert zwischen 0 und 1 erwartet');
+          sys.precipitation.dropLight = n;
+        }
+        return `weather.droplight = ${sys.precipitation.dropLight}`;
+      },
+    },
+    {
       name: 'weather',
       aliases: ['wetter'],
       args: '[klar|regen|schnee] [stärke 0..1]',

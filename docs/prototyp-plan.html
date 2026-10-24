@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Saarlouis Racer Prototyp</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: eine ruhige Lesespalte wie ein Technik-Lastenheft, Kopf mit Koordinaten-Leiste, Tabellen für Quellen und Meilensteine */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --fg: #16191f;
+  --muted: #5b6270;
+  --line: #d9dce3;
+  --accent: #0b5fd6;      /* Nitro-Blau */
+  --accent-soft: #e3edfc;
+  --warn: #a35a00;
+  --warn-soft: #fbefdc;
+  --ok: #1f7a4a;
+  --ok-soft: #e1f3e8;
+  --font-display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12151b; --surface: #1a1e26; --fg: #e7e9ee; --muted: #9aa2b1; --line: #2c323d;
+  --accent: #5b9dff; --accent-soft: #1b2a44; --warn: #f0a94a; --warn-soft: #3a2a14;
+  --ok: #5fcf8f; --ok-soft: #16301f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12151b; --surface: #1a1e26; --fg: #e7e9ee; --muted: #9aa2b1; --line: #2c323d;
+  --accent: #5b9dff; --accent-soft: #1b2a44; --warn: #f0a94a; --warn-soft: #3a2a14;
+  --ok: #5fcf8f; --ok-soft: #16301f; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 860px; margin: 0 auto; padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 44px; }
+header { display: flex; flex-direction: column; gap: 14px; }
+.coords { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); letter-spacing: .04em;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; border-top: 2px solid var(--fg); padding-top: 10px; }
+.coords b { color: var(--fg); font-weight: 500; }
+h1 { font-family: var(--font-display); font-weight: 800; font-size: clamp(36px, 7vw, 58px); line-height: 1.02; margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h1 span { color: var(--accent); }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+h2 { font-family: var(--font-display); font-weight: 800; font-size: 28px; line-height: 1.1; margin: 0; text-wrap: balance; }
+h3 { font-size: 16px; font-weight: 600; margin: 0; }
+section { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+p { margin: 0; max-width: 68ch; }
+ul, ol { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; max-width: 70ch; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+code, .mono { font-family: var(--font-mono); font-size: .9em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+
+.verdict { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.verdict p { max-width: none; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-mono); font-size: 11.5px; font-weight: 500; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td.n { font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--font-mono); font-size: 13px; }
+
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; font-weight: 500; }
+.p-ok { background: var(--ok-soft); color: var(--ok); }
+.p-warn { background: var(--warn-soft); color: var(--warn); }
+.p-acc { background: var(--accent-soft); color: var(--accent); }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.box { background: var(--surface); border: 1px solid var(--line); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.box ul { font-size: 14.5px; }
+
+.caveat { background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.caveat h3 { color: var(--warn); }
+.caveat ul { font-size: 14.5px; }
+
+pre.mermaid { background: var(--surface); border: 1px solid var(--line); padding: 16px; overflow-x: auto; margin: 0; }
+
+.ms { display: flex; flex-direction: column; border-left: 2px solid var(--line); margin-left: 6px; }
+.ms-item { position: relative; padding: 0 0 22px 22px; display: flex; flex-direction: column; gap: 6px; }
+.ms-item::before { content: ""; position: absolute; left: -7px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--accent); }
+.ms-item.mvp::before { background: var(--accent); }
+.ms-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.ms-head .mono { color: var(--muted); font-size: 12.5px; }
+.ms-item ul { font-size: 14.5px; }
+.ms-item .done { font-size: 14px; color: var(--muted); }
+
+.questions ol { gap: 10px; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+@media (max-width: 480px) { .wrap { padding-block: 24px 60px; gap: 34px; } .lede { font-size: 16.5px; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="coords"><span>PLZ <b>66740 Saarlouis</b></span><span>Ursprung <b>49.3133° N · 6.7517° E</b> (Großer Markt)</span><span>Projektion <b>ETRS89 / UTM 32N · EPSG:25832</b></span><span>Maßstab <b>1 Einheit = 1 m</b></span></div>
+  <h1>Saarlouis Racer: <span>Prototyp-Plan</span></h1>
+  <p class="lede">Ein Open-World-Arcade-Racer im Browser mit Three.js, spielbar auf Handy (Touch) und PC (Tastatur und Gamepad). Die Stadt wird aus echten Geodaten im Maßstab 1:1 aufgebaut und ist frei befahrbar. Saarlouis ist die erste Region, weitere Städte und Erweiterungen kommen über dieselbe Pipeline dazu. Das Fahren ist arcadelastig mit Nitro, und die Architektur ist von Anfang an auf späteres Online-Spiel ausgelegt.</p>
+</header>
+
+<section>
+  <div class="eyebrow">Kurzfassung</div>
+  <h2>Empfehlung</h2>
+  <div class="verdict">
+    <p><b>Die Welt baut sich aus offenen Daten, Google ist nur eine optionale Schicht.</b> Straßen, Gebäude, Gelände und Kollision kommen aus OpenStreetMap und den offenen Geodaten des Saarlandes. Daraus erzeugt ein eigenes Build-Skript gestreamte 3D-Kacheln. Das gibt fahrbare, saubere Straßen, volle Kontrolle über Grafik und Physik und keine laufenden API-Kosten.</p>
+    <p>Google Photorealistic 3D Tiles sehen spektakulär aus, taugen aber nicht als Fundament: Die Meshes sind photogrammetrisch (holprige Straßen, Autos und Bäume in die Geometrie „eingebacken“), die Nutzungsbedingungen verbieten das Speichern und Weiterverarbeiten, und jede Spielsitzung kostet API-Kontingent. Wir binden sie im Prototyp als umschaltbaren „Foto-Modus“ ein, um den Look zu vergleichen.</p>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Daten</div>
+  <h2>Datenquellen für Saarlouis</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Ebene</th><th>Quelle</th><th>Nutzen im Spiel</th><th>Lizenz / Status</th></tr></thead>
+    <tbody>
+      <tr><td>Straßennetz</td><td>OpenStreetMap, Extrakt <code>saarland-latest.osm.pbf</code> von Geofabrik</td><td>Fahrbahn-Meshes mit echter Breite, Spuren, Kreuzungen, Kreisel, Brücken; Routen für Rennen; Minimap</td><td><span class="pill p-ok">ODbL</span> Namensnennung</td></tr>
+      <tr><td>Gebäude</td><td>OSM-Grundrisse + Höhe/Etagen; besser: <b>LoD2-Gebäudemodelle</b> des Saarlandes (LVGL)</td><td>Echte Dachformen statt Klötze, Kollision</td><td><span class="pill p-warn">prüfen</span> Open-Data-Status LoD2</td></tr>
+      <tr><td>Gelände</td><td>Saarland <b>DGM1</b> (1-m-Raster, LVGL); Fallback Copernicus DEM GLO-30</td><td>Höhenprofil, Saarufer, Böschungen; Straßen werden ins Gelände „eingeschnitten“</td><td><span class="pill p-warn">prüfen</span> Lizenz DGM1 · <span class="pill p-ok">Copernicus frei</span></td></tr>
+      <tr><td>Luftbild</td><td>Saarland <b>DOP20</b> Orthophotos (20 cm)</td><td>Bodentexturen, Farbreferenz für Fassaden, Platzierung von Grünflächen</td><td><span class="pill p-warn">prüfen</span></td></tr>
+      <tr><td>Details</td><td>OSM: Bäume, Ampeln, Laternen, Bushaltestellen, Landnutzung, Wasser (Saar, Festungsgraben)</td><td>Prozedurale Deko, Parks, Wasserflächen</td><td><span class="pill p-ok">ODbL</span></td></tr>
+      <tr><td>Foto-Modus</td><td>Google Photorealistic 3D Tiles (Map Tiles API)</td><td>Optionale fotorealistische Kulisse, nur zum Vergleich</td><td><span class="pill p-warn">API-Key, Kosten, ToS</span></td></tr>
+      <tr><td>Alternative</td><td>Cesium ion (World Terrain, OSM Buildings)</td><td>Schneller Start ohne eigene Pipeline</td><td><span class="pill p-acc">Account, Free-Tier</span></td></tr>
+    </tbody>
+  </table></div>
+  <p>Die Overpass API nutzen wir nur für schnelle Experimente. Für die echte Pipeline laden wir den Saarland-Extrakt einmal herunter und schneiden das Gebiet über die OSM-Grenze mit <code>postal_code=66740</code> aus. Overpass hat Fair-Use-Grenzen und ist für Spieler-Traffic nicht gedacht.</p>
+</section>
+
+<section>
+  <div class="eyebrow">Rechtliches</div>
+  <h2>Lizenzen und API-Keys</h2>
+  <div class="grid2">
+    <div class="caveat">
+      <h3>Google Photorealistic 3D Tiles</h3>
+      <ul>
+        <li>Braucht ein Google-Cloud-Projekt mit Abrechnung und einen API-Key, der im Browser sichtbar ist. Key per HTTP-Referrer und Kontingent begrenzen.</li>
+        <li>Abrechnung pro Root-Tileset-Abruf (eine Sitzung), mit kostenlosem Monatskontingent. Aktuelle Preise vor Start im Google-Preisblatt prüfen.</li>
+        <li>Kein Caching über die erlaubte Dauer hinaus, kein Export, kein Ableiten von Kollisionsdaten, Google-Logo und Copyright-Zeilen immer sichtbar.</li>
+        <li>Abdeckung von Saarlouis ist nicht garantiert. Prüfen wir im ersten Daten-Spike.</li>
+      </ul>
+    </div>
+    <div class="caveat">
+      <h3>OpenStreetMap und Landesdaten</h3>
+      <ul>
+        <li>ODbL: sichtbare Namensnennung „© OpenStreetMap-Mitwirkende“ im Spiel.</li>
+        <li>Unsere abgeleitete Datenbank (z.&nbsp;B. bereinigtes Straßennetz) fällt unter Share-Alike, die gerenderten Spiel-Kacheln als „Produced Work“ nicht.</li>
+        <li>Saarland-Geodaten (LVGL) stehen nach meinem Stand unter einer offenen Lizenz mit Namensnennung. Genaue Lizenz je Datensatz prüfen wir vor der Nutzung.</li>
+        <li>Autos: keine echten Marken und Modelle ohne Lizenz. Wir nutzen fiktive Fahrzeuge oder CC-lizenzierte Modelle. Sounds: selbst aufgenommen oder CC0/gekauft.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Technik</div>
+  <h2>Tech-Stack</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Bereich</th><th>Wahl</th><th>Warum</th></tr></thead>
+    <tbody>
+      <tr><td>Sprache, Build</td><td>TypeScript, Vite</td><td>Schnelle Iteration, saubere Module, später geteilter Code mit dem Server</td></tr>
+      <tr><td>Rendering</td><td>Three.js mit <code>WebGPURenderer</code> (Fallback WebGL2), TSL-Shader</td><td>Moderne Pipeline, Compute für Partikel und Nitro-Effekte</td></tr>
+      <tr><td>Grafik</td><td>PBR-Materialien, HDR-Himmel, kaskadierte Schatten, SSAO, Bloom, Motion Blur, Tone Mapping (AgX), Regen/Nacht später</td><td>„Realistisch“ entsteht vor allem durch Licht und Post-Processing</td></tr>
+      <tr><td>Streaming</td><td>Eigene glTF-Kacheln (256 × 256 m) mit Meshopt und KTX2; <code>3d-tiles-renderer</code> für den Google-Modus</td><td>Nur laden, was um das Auto herum liegt; mehrere LOD-Stufen</td></tr>
+      <tr><td>Physik</td><td>Rapier (WASM) mit eigenem Raycast-Fahrzeug</td><td>Schnell, deterministisch genug für Netcode, gute Kollision mit Trimesh-Kacheln</td></tr>
+      <tr><td>Fahrmodell</td><td>Arcade-Tuning über Rapier: Grip-Kurven, Drift-Assistent, Nitro-Boost, Lenkhilfe, Luftkontrolle</td><td>Spaß vor Simulation, wie bei The Crew</td></tr>
+      <tr><td>Audio</td><td>Web Audio API: RPM-basiertes Crossfading mehrerer Motor-Loops, Turbo, Nitro, Reifenquietschen, Kollisionen, Hall per Umgebung</td><td>Glaubwürdiger Motorsound ohne Engine-Middleware</td></tr>
+      <tr><td>Daten-Pipeline</td><td>Node-Skripte mit osmium/pyosmium, proj4, GDAL für DGM; Ausgabe glTF-Kacheln</td><td>Läuft offline einmal pro Stadt, neue Städte per Konfiguration</td></tr>
+      <tr><td>Online (später)</td><td>Node-Server mit Colyseus oder eigener WebSocket/WebTransport-Schicht</td><td>Räume, Matchmaking, autoritativer Server, Client-Prediction</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="eyebrow">Open World</div>
+  <h2>Eine Welt, beliebig viele Städte</h2>
+  <p>Die Karte ist keine einzelne Strecke, sondern eine durchgehende Welt aus Kacheln. Jede Kachel hat eine feste Adresse aus ihrer echten Lage, nicht aus der Stadt, zu der sie gehört. Dadurch passen neue Gebiete nahtlos an die vorhandenen an.</p>
+  <div class="grid2">
+    <div class="box"><h3>Welt-Raster</h3><ul><li>Kacheln 256 × 256 m im UTM-Raster, adressiert über Zone und Rasterposition. Zone 32N deckt das Saarland und fast ganz Westdeutschland ab.</li><li>Gebiete in anderen UTM-Zonen bekommen einen eigenen Weltursprung; der Floating Origin macht den Übergang unsichtbar.</li></ul></div>
+    <div class="box"><h3>Regionen als Konfiguration</h3><ul><li>Eine Region ist eine Datei: Grenze (PLZ, Gemeinde oder Polygon), Datenquellen, Detailstufe.</li><li>Zuerst <code>regions/saarlouis.json</code>, später z.&nbsp;B. Dillingen, Wallerfangen oder Saarbrücken. Die Pipeline baut nur fehlende oder geänderte Kacheln.</li></ul></div>
+    <div class="box"><h3>Saarlouis erweitern</h3><ul><li>Grenze vergrößern (z.&nbsp;B. alle Stadtteile außerhalb 66740 oder Nachbarorte), Pipeline neu laufen lassen, fertig.</li><li>Verbindungsstraßen (B51, A8, A620) werden mitgebaut, sodass man zwischen Städten durchfahren kann.</li></ul></div>
+    <div class="box"><h3>Was je Kachel gespeichert wird</h3><ul><li>Render-Mesh in 3 LOD-Stufen, Kollisions-Mesh, Straßengraph-Ausschnitt, Deko-Instanzen.</li><li>Ein Welt-Index listet alle Kacheln. Rennen referenzieren Straßenknoten, nicht Kacheln, und überleben so Neuaufbauten.</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Plattformen</div>
+  <h2>Handy und PC</h2>
+  <div class="grid2">
+    <div class="box"><h3>Steuerung</h3><ul><li>Eine Eingabe-Schicht mit Aktionen (Gas, Bremse, Lenken, Nitro, Handbremse, Kamera), dahinter Tastatur, Gamepad API und Touch.</li><li>Touch: Lenken per Neigung oder virtuellem Stick, Pedale und Nitro als große Tasten, Lenkhilfe stärker.</li><li>Gamepad mit analogem Gas und Vibration, wo der Browser es kann.</li></ul></div>
+    <div class="box"><h3>Leistung</h3><ul><li>Qualitätsstufen Niedrig/Mittel/Hoch, automatisch nach Gerät und Bildrate.</li><li>Handy: kleineres Streaming-Radius, LOD früher, weniger Post-Processing, dynamische Auflösung.</li><li>WebGPU wo verfügbar (Chrome, Edge, aktuelles Safari), sonst WebGL2. Ziel 60 fps am PC, 30+ fps auf Mittelklasse-Handys.</li><li>Als installierbare Web-App (PWA) im Vollbild und Querformat.</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Architektur</div>
+  <h2>Aufbau</h2>
+  <pre class="mermaid">
+flowchart LR
+  subgraph Pipeline["Daten-Pipeline (offline)"]
+    OSM["OSM-Extrakt Saarland"] --> Clip["Zuschnitt PLZ 66740"]
+    DGM["DGM1 / Copernicus"] --> Terrain["Gelände-Mesh"]
+    LOD2["LoD2-Gebäude"] --> Build["Gebäude-Mesh"]
+    Clip --> Roads["Straßen + Kreuzungen"]
+    Clip --> Props["Bäume, Laternen, Wasser"]
+    Roads --> Tiles["glTF-Kacheln 256 m + Kollision + Routen"]
+    Terrain --> Tiles
+    Build --> Tiles
+    Props --> Tiles
+  end
+  subgraph Client["Browser-Client"]
+    Stream["Kachel-Streamer + LOD"] --> Render["Three.js WebGPU"]
+    Stream --> Phys["Rapier-Physik"]
+    Input["Tastatur / Gamepad"] --> Car["Fahrzeug + Nitro"]
+    Car --> Phys
+    Car --> Audio["Web Audio"]
+    Race["Rennlogik: Checkpoints, Zeit, Ghost"] --> Car
+    Google["Google 3D Tiles (optional)"] -.-> Render
+  end
+  Tiles --> Stream
+  Client -. später .-> Server["Spielserver: Räume, Sync, Bestzeiten"]
+  </pre>
+  <div class="grid2">
+    <div class="box"><h3>1:1 ohne Zittern</h3><ul><li>Lokaler Ursprung am Großen Markt, alle Daten in Metern in UTM 32N.</li><li>Floating Origin: Die Welt wird verschoben, sobald das Auto sich weit vom Ursprung entfernt. So bleibt die Float-Genauigkeit erhalten.</li><li>Saarlouis ist rund 43 km² groß. Das ist für Streaming gut handhabbar.</li></ul></div>
+    <div class="box"><h3>Online von Anfang an mitdenken</h3><ul><li>Feste Physik-Schrittweite (60 Hz), Eingaben als Datenpakete.</li><li>Spielzustand getrennt von Darstellung (einfaches ECS).</li><li>Ghost-Replays nutzen dasselbe Eingabeformat wie später der Netcode.</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Fahrplan</div>
+  <h2>Meilensteine</h2>
+  <p>Zeitangaben sind grobe Schätzungen bei einer Person in Teilzeit mit Claude als Entwickler. Gefüllte Punkte gehören zum MVP.</p>
+  <div class="ms">
+    <div class="ms-item mvp"><div class="ms-head"><h3>M0 · Daten-Spike</h3><span class="mono">ca. 1 Woche</span></div>
+      <ul><li>OSM-Extrakt laden, Gebiet 66740 ausschneiden, Straßen und Gebäude als graue Meshes in Three.js anzeigen.</li><li>Lizenzen von DGM1, DOP20 und LoD2 klären, Google-Abdeckung für Saarlouis testen.</li></ul>
+      <div class="done">Fertig, wenn: die Innenstadt mit dem Festungsring in 1:1 im Browser zu sehen ist.</div></div>
+    <div class="ms-item mvp"><div class="ms-head"><h3>M1 · Fahrbare Stadt</h3><span class="mono">ca. 2 Wochen</span></div>
+      <ul><li>Straßen-Meshes mit Breiten, Kreuzungen und Bordsteinen, Gelände aus DGM.</li><li>Kachel-Streaming und Kollision, Floating Origin.</li></ul>
+      <div class="done">Fertig, wenn: man ohne Ruckler von der Innenstadt nach Roden fahren kann.</div></div>
+    <div class="ms-item mvp"><div class="ms-head"><h3>M2 · Fahrgefühl und Nitro</h3><span class="mono">ca. 2 Wochen</span></div>
+      <ul><li>Raycast-Fahrzeug mit Arcade-Tuning, Drift, Nitro-Leiste und Boost-Effekt.</li><li>Verfolger-Kamera mit Geschwindigkeitsgefühl (FOV, Kamerawackeln).</li><li>Eingabe-Schicht für Tastatur, Gamepad und Touch, früh auf einem echten Handy getestet.</li></ul>
+      <div class="done">Fertig, wenn: eine Runde um den Festungsring Spaß macht.</div></div>
+    <div class="ms-item mvp"><div class="ms-head"><h3>M3 · Grafik-Pass</h3><span class="mono">ca. 2–3 Wochen</span></div>
+      <ul><li>PBR-Fassaden, Asphalt mit Markierungen, Bäume, Laternen, Wasser der Saar.</li><li>Himmel, Tageszeit, Schatten, Post-Processing. Optionaler Google-Foto-Modus.</li></ul></div>
+    <div class="ms-item mvp"><div class="ms-head"><h3>M4 · Sound</h3><span class="mono">ca. 1 Woche</span></div>
+      <ul><li>Motor-Loops nach Drehzahl und Last, Schaltvorgänge, Nitro-Zischen, Reifen, Crashs, Stadtatmosphäre.</li></ul></div>
+    <div class="ms-item mvp"><div class="ms-head"><h3>M5 · Rennen</h3><span class="mono">ca. 1–2 Wochen</span></div>
+      <ul><li>Checkpoint-Rennen und Zeitfahren auf echten Straßen, Routen-Editor auf Basis des OSM-Graphen.</li><li>HUD mit Tacho, Minimap, Nitro, Rundenzeit. Lokale Bestzeiten und Ghost.</li></ul>
+      <div class="done">Fertig, wenn: das MVP spielbar ist.</div></div>
+    <div class="ms-item"><div class="ms-head"><h3>M6 · Online-Vorbereitung</h3><span class="mono">ca. 2 Wochen</span></div>
+      <ul><li>Online-Bestenlisten und Ghost-Download, Accounts.</li></ul></div>
+    <div class="ms-item"><div class="ms-head"><h3>M7 · Multiplayer</h3><span class="mono">ca. 4+ Wochen</span></div>
+      <ul><li>Gemeinsames Free-Roam und Rennen mit 2–8 Spielern, autoritativer Server, Interpolation und Prediction.</li><li>Danach: KI-Verkehr, weitere Städte (Saarbrücken, Dillingen) über dieselbe Pipeline.</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Umfang</div>
+  <h2>MVP-Scope</h2>
+  <div class="grid2">
+    <div class="box"><h3>Drin</h3><ul>
+      <li>Ganz Saarlouis (PLZ 66740) befahrbar, Fokus auf Innenstadt und Festungsring</li>
+      <li>Ein fiktives Auto, Tastatur, Gamepad und Touch</li>
+      <li>PC-Browser und Handy (Android Chrome, iOS Safari) mit Qualitätsstufen</li>
+      <li>Welt-Raster und Regions-Konfiguration, sodass eine zweite Stadt nur einen Pipeline-Lauf braucht</li>
+      <li>Arcade-Fahrmodell mit Drift und Nitro</li>
+      <li>Tageslicht mit realistischer Beleuchtung</li>
+      <li>Motor- und Umgebungssound</li>
+      <li>Free-Roam, 3 Checkpoint-Rennen, Zeitfahren mit Ghost</li>
+    </ul></div>
+    <div class="box"><h3>Bewusst noch nicht</h3><ul>
+      <li>Multiplayer und Accounts</li>
+      <li>KI-Verkehr und Fußgänger</li>
+      <li>Schadensmodell, Tuning, mehrere Autos</li>
+      <li>Wetter und Nacht</li>
+      <li>Weitere Städte (die Pipeline kann es, gebaut wird zuerst nur Saarlouis)</li>
+    </ul></div>
+  </div>
+</section>
+
+<section class="questions">
+  <div class="eyebrow">Vor dem Start</div>
+  <h2>Offene Fragen</h2>
+  <ol>
+    <li><b>Google 3D Tiles:</b> Willst du den Foto-Modus im Prototyp? Dann brauche ich einen Google-Cloud-API-Key mit Abrechnung und Kostenlimit.</li>
+    <li><b>Hosting:</b> Reicht GitHub Pages für die spielbare Version? Die Kacheln für Saarlouis werden geschätzt einige hundert MB groß, dafür eignet sich eher ein Objektspeicher mit CDN (z.&nbsp;B. Cloudflare R2).</li>
+    <li><b>Assets:</b> Darf ich für das erste Auto und die Sounds freie CC-lizenzierte Assets verwenden, bis eigene da sind?</li>
+  </ol>
+</section>
+
+<footer>Stand 24.10.2026. Lizenz- und Preisangaben bitte vor Nutzung bei der jeweiligen Quelle prüfen. Kartendaten © OpenStreetMap-Mitwirkende (ODbL).</footer>
+</div>
+</body>
+</html>

@@ -30,7 +30,7 @@ export class Input {
 
   constructor() {
     addEventListener('keydown', (e) => {
-      if (e.repeat) return;
+      if (e.repeat || e.target instanceof HTMLInputElement) return;
       this.keys.add(e.code);
       this.lastDevice = 'keyboard';
       if (e.code === 'KeyR') this.pending.push('reset');
@@ -133,6 +133,11 @@ export class Input {
     }
 
     Object.assign(this.state, { throttle, brake, steer: clamp(steer, -1, 1), nitro, handbrake, lookBack });
+  }
+
+  /** Forgets held keys, e.g. when a text field takes the keyboard. */
+  releaseAll() {
+    this.keys.clear();
   }
 
   takeEvents(): InputEvent[] {

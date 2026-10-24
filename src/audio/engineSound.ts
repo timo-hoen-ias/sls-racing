@@ -76,6 +76,10 @@ export class EngineSound {
   private popCooldown = 0;
   private lastT = 0;
   muted = false;
+  /** Player volume (options menu): master scales everything, car only the car's own sounds. */
+  private levels = { master: 1, car: 1 };
+  /** Bus for the car's own sounds (engine, tyres, wind, effects), so their volume is separate from the world's. */
+  private carBus: GainNode;
   /** Input for world sounds (traffic, ambience): mixed with the car, muted with it and sent through the reverb. */
   readonly world: GainNode;
   /** Environment reverb, when the quality setting has it. */
@@ -105,6 +109,8 @@ export class EngineSound {
     this.master.connect(comp).connect(ctx.destination);
     // Reflections off house fronts, bridges and tunnel walls, following the surroundings (envReverb.ts).
     if (reverb) this.reverb = new EnvReverb(ctx, this.master, comp);
+    this.carBus = ctx.createGain();
+    this.carBus.connect(this.master);
 
     // Engine: pulses → drive → resonances → low-pass → level.
     this.engine = createEngineSource(ctx, VOICE, this.noise, worklet);
@@ -129,10 +135,10 @@ export class EngineSound {
     this.lp.Q.value = 0.9;
     this.motorGain = ctx.createGain();
     this.motorGain.gain.value = 0;
-    last.connect(this.lp).connect(this.motorGain).connect(this.master);
+    last.connect(this.lp).connect(this.motorGain).connect(this.carBus);
 
     this.fx = ctx.createGain();
-    this.fx.connect(this.master);
+    this.fx.connect(this.carBus);
     this.world = ctx.createGain();
     this.world.connect(this.master);
 
@@ -147,7 +153,7 @@ export class EngineSound {
       f.Q.value = q;
       const g = ctx.createGain();
       g.gain.value = 0;
-      noise.connect(f).connect(g).connect(this.master);
+      noise.connect(f).connect(g).connect(this.carBus);
       return { f, g };
     };
 
@@ -157,7 +163,7 @@ export class EngineSound {
     this.turbo.frequency.value = 1500;
     this.turboGain = ctx.createGain();
     this.turboGain.gain.value = 0;
-    this.turbo.connect(this.turboGain).connect(this.master);
+    this.turbo.connect(this.turboGain).connect(this.carBus);
     this.turbo.start();
     const intake = noiseLayer('bandpass', 1800, 2.2);
     this.intakeGain = intake.g;
@@ -166,7 +172,7 @@ export class EngineSound {
     // Tyre squeal: two narrow bands that wobble like a real howl.
     this.squealGain = ctx.createGain();
     this.squealGain.gain.value = 0;
-    this.squealGain.connect(this.master);
+    this.squealGain.connect(this.carBus);
     for (const [f, q] of [[1050, 14], [1680, 11]]) {
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
@@ -200,7 +206,19 @@ export class EngineSound {
 
   toggleMute() {
     this.muted = !this.muted;
-    this.master.gain.setTargetAtTime(this.muted ? 0 : VOLUME, this.ctx.currentTime, 0.05);
+    this.applyLevels();
+  }
+
+  /** Master volume (everything through this context) and the car's own sounds, each 0..2. */
+  setLevels(master: number, car: number) {
+    this.levels = { master, car };
+    this.applyLevels();
+  }
+
+  private applyLevels() {
+    const t = this.ctx.currentTime;
+    this.master.gain.setTargetAtTime(this.muted ? 0 : VOLUME * this.levels.master, t, 0.05);
+    this.carBus.gain.setTargetAtTime(this.levels.car, t, 0.05);
   }
 
   update(s: SoundState) {

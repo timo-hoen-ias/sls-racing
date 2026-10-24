@@ -5,7 +5,7 @@ import { CAR } from '../vehicle/tuning.ts';
 import { type WorldInfo, localToUtm } from './format.ts';
 import type { RoadGraph } from './roadGraph.ts';
 
-// Debug commands to check that the world is 1:1: projection, car and camera (scale.info), road widths (road.width), FOV (cam.fov).
+// Debug commands to check that the world is 1:1: projection, car and camera (scale.info), road widths (road.width), base FOV (cam.basefov).
 
 export interface ScaleDebugContext {
   world: WorldInfo;
@@ -44,7 +44,7 @@ export function registerScaleCommands(c: ScaleDebugContext) {
       return [
         `Projektion: UTM Zone ${c.world.zone}, Maßstabsfaktor ${k.toFixed(6)} (${((k - 1) * 100).toFixed(4)} %, ${((k - 1) * 1000).toFixed(2)} m pro km)`,
         `Auto Physik: ${(2 * h.z).toFixed(2)} × ${(2 * h.x).toFixed(2)} m · Karosserie: ${Math.max(size.x, size.z).toFixed(2)} × ${Math.min(size.x, size.z).toFixed(2)} × ${size.y.toFixed(2)} m ohne Spiegel (real Sportwagen ≈ 4,5 × 1,95 × 1,25 m)`,
-        `Kamera ${c.cam.mode}: FOV ${cam.fov.toFixed(1)}° vertikal = ${hFov(cam.fov, cam.aspect).toFixed(0)}° horizontal (Basis ${c.cam.fov.chase}°/${c.cam.fov.cockpit}°)`,
+        `Kamera ${c.cam.mode}: FOV ${cam.fov.toFixed(1)}° vertikal = ${hFov(cam.fov, cam.aspect).toFixed(0)}° horizontal (Basis ${c.cam.fov.chase}°/${c.cam.fov.cockpit}°, Optionen ${c.cam.fovOffset >= 0 ? '+' : ''}${c.cam.fovOffset}°)`,
         `Laternen 7 m · Gehweg 2,2 m · Stockwerk 3 m`,
         roadText(c.graph, p.x, p.z),
       ].join('\n');
@@ -60,15 +60,15 @@ export function registerScaleCommands(c: ScaleDebugContext) {
     },
   });
   registerCommand({
-    name: 'cam.fov',
-    help: 'Grund-Sichtfeld (vertikal, Grad) für Verfolger- und Cockpitkamera',
+    name: 'cam.basefov',
+    help: 'Grund-Sichtfeld (vertikal, Grad) für Verfolger- und Cockpitkamera; cam.fov im Optionsmenü addiert dazu',
     args: '[verfolger] [cockpit]',
     complete: () => ['45', '52', '58', '62'],
     run: ([chase, cockpit]) => {
       if (chase !== undefined) c.cam.fov.chase = parseNum(chase, 'FOV', 20, 110);
       if (cockpit !== undefined) c.cam.fov.cockpit = parseNum(cockpit, 'FOV', 20, 110);
       const a = c.camera.aspect;
-      return `cam.fov Verfolger ${c.cam.fov.chase}° (${hFov(c.cam.fov.chase, a).toFixed(0)}° horizontal) · Cockpit ${c.cam.fov.cockpit}° (${hFov(c.cam.fov.cockpit, a).toFixed(0)}° horizontal)`;
+      return `cam.basefov Verfolger ${c.cam.fov.chase}° (${hFov(c.cam.fov.chase, a).toFixed(0)}° horizontal) · Cockpit ${c.cam.fov.cockpit}° (${hFov(c.cam.fov.cockpit, a).toFixed(0)}° horizontal)`;
     },
   });
 }

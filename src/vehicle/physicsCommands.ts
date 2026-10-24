@@ -42,7 +42,7 @@ function registerTable(name: string, help: string, table: () => Num, after?: () 
 
 export function registerPhysicsCommands(car: CarPhysics) {
   const as = car.assists;
-  const assistLine = () => `ABS ${as.abs ? 'an' : 'aus'} · TCS ${as.tcs} · ESP ${as.esp} · Drift ${as.drift}`;
+  const assistLine = () => `ABS ${as.abs ? 'an' : 'aus'} · TCS ${as.tcs} · ESP ${as.esp} · Drift ${as.drift} · Lenkhilfe ${as.steer}`;
 
   registerCommand({
     name: 'phys.model',
@@ -58,11 +58,12 @@ export function registerPhysicsCommands(car: CarPhysics) {
   });
   registerCommand({ name: 'assist.info', help: 'Alle Fahrhilfen anzeigen', run: assistLine });
   registerToggle('assist.abs', 'Antiblockiersystem (Fußbremse blockiert nie)', () => as.abs, (v) => { as.abs = v; saveAssists(car); });
-  const aid = (key: 'tcs' | 'esp' | 'drift', help: string) =>
+  const aid = (key: 'tcs' | 'esp' | 'drift' | 'steer', help: string) =>
     registerValue(`assist.${key}`, help, () => as[key], (v) => { as[key] = v; saveAssists(car); }, [0, 1]);
   aid('tcs', 'Traktionskontrolle 0..1 (0 = Räder drehen frei durch)');
   aid('esp', 'Stabilitätskontrolle 0..1 (begrenzt Gierrate und Driftwinkel)');
   aid('drift', 'Driftassistent 0..1 (Extra-Gier beim Einlenken, hält Tempo im Drift)');
+  aid('steer', 'Lenkhilfe 0..1 (Vorderräder bleiben am Grip-Maximum statt zu schieben)');
 
   registerCommand({
     name: 'tire.info',

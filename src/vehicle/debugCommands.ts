@@ -76,19 +76,19 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
   });
   registerCommand({
     name: 'car.model',
-    help: 'Nur die Optik: GLB des gewählten Autos (glb), Hot Hatch (hothatch) oder prozedurales Coupé; ganzes Auto wechseln mit car.select',
-    args: '[glb|hothatch|procedural]',
-    complete: () => ['glb', 'hothatch', 'procedural'],
+    help: 'Nur die Optik (Fahrwerk bleibt): GLB des gewählten Autos (glb), Hot Hatch, GT oder prozedurales Coupé; ganzes Auto wechseln mit car.select',
+    args: '[glb|hothatch|gt|procedural]',
+    complete: () => ['glb', 'hothatch', 'gt', 'procedural'],
     run: ([m]) => {
       const v = c.view;
       if (m === undefined) return `${v.kind} · ${triangleCount(v.model)} Dreiecke (volle Detailstufe)`;
-      if (m !== 'glb' && m !== 'hothatch' && m !== 'procedural') throw new Error('glb, hothatch oder procedural');
+      if (m !== 'glb' && m !== 'hothatch' && m !== 'gt' && m !== 'procedural') throw new Error('glb, hothatch, gt oder procedural');
       const color = '#' + v.paintColor.getHexString();
       if (m === 'procedural') {
         v.setModel(buildSportsCar(color), 'procedural');
         return 'prozedurales Coupé';
       }
-      const url = m === 'hothatch' ? `${import.meta.env.BASE_URL}models/cars/hothatch.glb` : c.carUrl?.();
+      const url = m === 'glb' ? c.carUrl?.() : `${import.meta.env.BASE_URL}models/cars/${m}.glb`;
       loadSportsCar(color, url).then(
         (model) => { v.setModel(model, 'glb'); console.info('[car] GLB geladen'); },
         (e) => console.warn('[car] GLB nicht geladen', e),

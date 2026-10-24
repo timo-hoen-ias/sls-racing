@@ -18,13 +18,14 @@
     "world:fixture": "node pipeline/build.ts fixture",
     "world:drivetest": "node pipeline/drivetest.ts saarlouis",
     "world:gaps": "node pipeline/gapcheck.ts saarlouis",
-    "models:build": "blender --background --factory-startup --python tools/blender/make_sportscar.py -- public/models/sportscar.raw.glb && node tools/compress-model.ts public/models/sportscar.raw.glb public/models/sportscar.glb && blender --background --factory-startup --python tools/blender/make_traffic.py -- public/models/traffic.raw.glb && node tools/compress-model.ts public/models/traffic.raw.glb public/models/traffic.glb && npm run models:cars && npm run models:landmarks && npm run models:vegetation && npm run models:props",
+    "models:build": "blender --background --factory-startup --python tools/blender/make_sportscar.py -- public/models/sportscar.raw.glb && node tools/compress-model.ts public/models/sportscar.raw.glb public/models/sportscar.glb && blender --background --factory-startup --python tools/blender/make_traffic.py -- public/models/traffic.raw.glb && node tools/compress-model.ts public/models/traffic.raw.glb public/models/traffic.glb && npm run models:cars && npm run models:landmarks && npm run models:vegetation && npm run models:props && npm run models:shops",
     "textures:build": "node tools/textures/build-textures.ts",
     "models:landmarks": "blender --background --factory-startup --python tools/blender/make_landmarks.py && for f in public/models/landmarks/*.raw.glb; do node tools/compress-model.ts \"$f\" \"${f%.raw.glb}.glb\"; done",
     "models:vegetation": "blender --background --factory-startup --python tools/blender/make_vegetation.py && node tools/compress-model.ts public/models/vegetation.raw.glb public/models/vegetation.glb",
     "models:props": "blender --background --factory-startup --python tools/blender/make_props.py && node tools/compress-model.ts public/models/props.raw.glb public/models/props.glb",
     "models:bridges": "blender --background --factory-startup --python tools/blender/make_bridges.py && for f in public/models/landmarks/bruecke-*.raw.glb; do node tools/compress-model.ts \"$f\" \"${f%.raw.glb}.glb\"; done",
-    "models:cars": "blender --background --factory-startup --python tools/blender/make_hothatch.py && node tools/compress-model.ts public/models/cars/hothatch.raw.glb public/models/cars/hothatch.glb"
+    "models:cars": "blender --background --factory-startup --python tools/blender/make_hothatch.py && blender --background --factory-startup --python tools/blender/make_gt.py && for c in hothatch gt; do node tools/compress-model.ts public/models/cars/$c.raw.glb public/models/cars/$c.glb; done",
+    "models:shops": "blender --background --factory-startup --python tools/blender/make_shops.py && node tools/compress-model.ts public/models/shops.raw.glb public/models/shops.glb"
   },
   "engines": {
     "node": ">=22.18"

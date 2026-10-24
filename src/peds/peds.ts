@@ -16,6 +16,7 @@ export class Pedestrians {
     this.sim = new PedSim(graph, { maxPeds: opts.maxPeds });
     this.view = new PedView(opts.maxPeds + 30, opts.shadows);
     this.traffic = opts.traffic;
+    if (opts.traffic) this.sim.signals = opts.traffic.signals;
   }
 
   update(dt: number, focus: { x: number; z: number } | undefined, threat: Threat | undefined, camera: THREE.Camera) {
@@ -31,7 +32,20 @@ export class Pedestrians {
     const sim = this.sim;
     registerValue('peds.density', 'Fußgängerdichte 0..1 (Anteil der maximalen Zahl)', () => sim.density, (v) => (sim.density = v), [0, 1]);
     registerValue('peds.max', 'Maximale Zahl der Fußgänger um den Spieler', () => sim.maxPeds, (v) => (sim.maxPeds = Math.round(v)), [0, 400]);
-    registerToggle('peds.debug', 'Zustand über jedem Fußgänger: grün geht, gelb quert, orange springt weg, rot liegt, blau steht', () => this.view.debug, (v) => (this.view.debug = v));
+    registerToggle('peds.debug', 'Zustand über jedem Fußgänger: grün geht, gelb quert, pink wartet an der Ampel, orange springt weg, rot liegt, blau steht', () => this.view.debug, (v) => (this.view.debug = v));
+    registerCommand({
+      name: 'peds.models', help: 'Figuren: glb (Blender, vier Varianten) oder procedural', args: '[glb|procedural]',
+      complete: () => ['glb', 'procedural'],
+      run: ([m]) => {
+        if (m === 'procedural') this.view.setProcedural();
+        else if (m === 'glb') {
+          if (!this.view.variants) throw new Error('props.glb ist nicht geladen');
+          this.view.setVariants(this.view.variants);
+        } else if (m !== undefined) throw new Error('glb oder procedural');
+        return `Figuren: ${this.view.models} (${this.view.figureCount} Varianten)`;
+      },
+    });
+    registerToggle('peds.jaywalk', 'Fußgänger gehen auch bei Rot über die Ampel', () => sim.jaywalk, (v) => (sim.jaywalk = v));
     registerToggle('peds.freeze', 'Fußgänger anhalten', () => sim.frozen, (v) => (sim.frozen = v));
     registerToggle('peds', 'Fußgänger anzeigen', () => this.visible, (v) => (this.visible = v));
     registerCommand({
@@ -56,7 +70,7 @@ export class Pedestrians {
       run: () => {
         const st: Partial<Record<PedState, number>> = {};
         for (const p of sim.peds) st[p.state] = (st[p.state] ?? 0) + 1;
-        return `${sim.peds.length}/${sim.target} Fußgänger · ${Object.entries(st).map(([k, c]) => `${k} ${c}`).join(', ') || '–'} · ${this.traffic?.obstacles.length ?? 0} queren gerade`;
+        return `${sim.peds.length}/${sim.target} Fußgänger · ${Object.entries(st).map(([k, c]) => `${k} ${c}`).join(', ') || '–'} · ${this.traffic?.obstacles.length ?? 0} queren gerade · ${sim.waiting()} warten an Ampeln`;
       },
     });
   }

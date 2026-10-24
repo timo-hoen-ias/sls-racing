@@ -1,5 +1,8 @@
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
+import { encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
+import type { RoadCarve } from './carve.ts';
+import type { HalfWidths } from './overlap.ts';
 import { roadSection } from '../../src/world/roadSpec.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
@@ -34,6 +37,8 @@ export const ROAD_CLASSES: Record<string, RoadClass> = {
 
 const STEP = 4; // metres between road samples
 export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
+/** Road collision lies this far under the drawn surface. */
+const STRIP_DROP = 0.05;
 const SIDEWALK = { width: 2.2, height: 0.14 };
 const LAMP_SPACING = 32;
 
@@ -79,9 +84,29 @@ function surface(way: Way, height: (e: number, n: number) => number) {
     const t = Math.min(1, Math.max(0, (dist - cum[seg]) / (cum[seg + 1] - cum[seg] || 1)));
     return raise[seg] + (raise[seg + 1] - raise[seg]) * t;
   };
+  const prof = way.profile;
+  let pseg = 0;
+  const ground = (e: number, n: number, dist: number) => {
+    if (!prof) return height(e, n);
+    const d = prof.dist;
+    if (dist < d[pseg]) pseg = 0;
+    while (pseg < d.length - 2 && dist > d[pseg + 1]) pseg++;
+    const t = Math.min(1, Math.max(0, (dist - d[pseg]) / (d[pseg + 1] - d[pseg] || 1)));
+    return prof.y[pseg] + (prof.y[pseg + 1] - prof.y[pseg]) * t;
+  };
+  const deck = way.deck;
+  let dseg = 0;
+  // Measured deck heights per node (from the surface model), else a straight span between the ends.
+  const span = (dist: number) => {
+    if (!deck) return h0 + (h1 - h0) * (dist / (len || 1)) + ROAD_LIFT;
+    if (dist < cum[dseg]) dseg = 0;
+    while (dseg < cum.length - 2 && dist > cum[dseg + 1]) dseg++;
+    const t = Math.min(1, Math.max(0, (dist - cum[dseg]) / (cum[dseg + 1] - cum[dseg] || 1)));
+    return deck[dseg] + (deck[dseg + 1] - deck[dseg]) * t + ROAD_LIFT;
+  };
   return isBridge(way.tags)
-    ? (_e: number, _n: number, dist: number) => h0 + (h1 - h0) * (dist / (len || 1)) + 0.4 + raised(dist)
-    : (e: number, n: number, dist: number) => height(e, n) + lift + raised(dist);
+    ? (_e: number, _n: number, dist: number) => span(dist) + raised(dist)
+    : (e: number, n: number, dist: number) => ground(e, n, dist) + lift + raised(dist);
 }
 
 /** Surface height at each original node of a way (for the road graph). */
@@ -91,6 +116,26 @@ export function roadSurfaceHeights(way: Way, height: (e: number, n: number) => n
   return way.pts.map((p, i) => {
     if (i) dist += Math.hypot(p[0] - way.pts[i - 1][0], p[1] - way.pts[i - 1][1]);
     return y(p[0], p[1], dist);
+  });
+}
+
+/** Centreline samples every STEP metres with direction, distance and surface height, as the road is drawn. */
+export function roadProfile(way: Way, height: (e: number, n: number) => number, world: WorldInfo, step = STEP) {
+  const pts = densify(way.pts, step);
+  if (pts.length < 2) return [];
+  const ySurf = surface(way, height);
+  let dist = 0;
+  return pts.map((p, i) => {
+    if (i) dist += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(pts.length - 1, i + 1)];
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    const dl = Math.hypot(dx, dy) || 1;
+    dx /= dl;
+    dy /= dl;
+    const [x, z] = utmToLocal(world, p[0], p[1]);
+    return { e: p[0], n: p[1], x, z, dx, dy, y: ySurf(p[0], p[1], dist), dist };
   });
 }
 
@@ -122,15 +167,46 @@ class JunctionIndex {
   }
 }
 
+/** Carriageways of all roads, to keep sidewalks off other roads where they meet at an angle. */
+class CarriagewayIndex {
+  private cells = new Map<string, { way: Way; x0: number; z0: number; x1: number; z1: number; hw: number }[]>();
+  add(way: Way, ring: { x: number; z: number }[], hw: number) {
+    for (let i = 1; i < ring.length; i++) {
+      const [a, b] = [ring[i - 1], ring[i]];
+      const s = { way, x0: a.x, z0: a.z, x1: b.x, z1: b.z, hw };
+      for (let cx = Math.floor((Math.min(a.x, b.x) - hw) / 16); cx <= Math.floor((Math.max(a.x, b.x) + hw) / 16); cx++)
+        for (let cz = Math.floor((Math.min(a.z, b.z) - hw) / 16); cz <= Math.floor((Math.max(a.z, b.z) + hw) / 16); cz++) {
+          const k = `${cx}_${cz}`;
+          if (!this.cells.has(k)) this.cells.set(k, []);
+          this.cells.get(k)!.push(s);
+        }
+    }
+  }
+  /** Whether (x, z) lies on the carriageway of a road other than `self` (plus a margin). */
+  onOther(self: Way, x: number, z: number, margin: number) {
+    for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
+      if (s.way === self) continue;
+      const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+      const t = Math.min(1, Math.max(0, ((x - s.x0) * dx + (z - s.z0) * dz) / (dx * dx + dz * dz || 1)));
+      if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw + margin) return true;
+    }
+    return false;
+  }
+}
+
 /**
  * Emits road ribbons, dashed centre lines, sidewalks and street lamps into the tiles they cross.
  * Returns all centreline samples so callers can pick a spawn point.
  */
 export function buildRoads(
   ways: Way[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap, junctions: Junction[],
+  carve?: RoadCarve, halves?: Map<Way, HalfWidths>,
 ): RoadSample[] {
   const samples: RoadSample[] = [];
   const jIndex = new JunctionIndex(junctions);
+  const rings = new Map(ways.filter((w) => isDrivable(w.tags)).map((w) => [w, roadProfile(w, height, world)]));
+  const carriageways = new CarriagewayIndex();
+  for (const [w, r] of rings) carriageways.add(w, r, roadWidth(w.tags)! / 2);
   for (const way of ways) {
     if (!isDrivable(way.tags)) continue;
     const section = roadSection(way.tags)!;
@@ -138,25 +214,16 @@ export function buildRoads(
     const cls = ROAD_CLASSES[way.tags.highway];
     // Lane lines: long dashes on motorways (6 m line, 12 m gap), short ones elsewhere (3 m, 6 m).
     const dash = cls.rank >= 8 ? { period: 18, on: 6 } : { period: 9, on: 3 };
-    const pts = densify(way.pts);
-    if (pts.length < 2) continue;
+    const ring = rings.get(way)!;
+    if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
-    const ySurf = surface(way, height);
     const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
-
-    let dist = 0;
-    const ring = pts.map((p, i) => {
-      if (i) dist += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
-      const a = pts[Math.max(0, i - 1)];
-      const b = pts[Math.min(pts.length - 1, i + 1)];
-      let dx = b[0] - a[0];
-      let dy = b[1] - a[1];
-      const dl = Math.hypot(dx, dy) || 1;
-      dx /= dl;
-      dy /= dl;
-      const [x, z] = utmToLocal(world, p[0], p[1]);
-      return { e: p[0], n: p[1], x, z, dx, dy, y: ySurf(p[0], p[1], dist), dist };
-    });
+    // Surface, wear, edge lines and gutters for the road shader (src/render/pbr/roadCode.ts).
+    const look = encodeRoad(roadLook(way.tags, way.id, section, sidewalk));
+    // Usable half width per sample, narrower where a road at another height runs alongside (overlap.ts).
+    const half = halves?.get(way);
+    const L = new Map(ring.map((p, i) => [p, half?.left[i] ?? width / 2]));
+    const R = new Map(ring.map((p, i) => [p, half?.right[i] ?? width / 2]));
 
     for (const r of ring) samples.push({ x: r.x, z: r.z, y: r.y, heading: Math.atan2(r.dx, r.dy) });
 
@@ -166,11 +233,12 @@ export function buildRoads(
       const tile = tiles.at((a.e + b.e) / 2, (a.n + b.n) / 2);
       // Point at signed offset `o` (left positive) from a sample, in local coordinates.
       const off = (p: typeof a, o: number) => utmToLocal(world, p.e - p.dy * o, p.n + p.dx * o);
-      // Quad between offsets o0 and o1 (left of o0 means o1 > o0) facing up, with heights per corner.
-      const strip = (buf: MeshBuf, o0: number, o1: number, ya: [number, number], yb: [number, number], uv?: (p: typeof a, side: 0 | 1) => [number, number]) => {
+      // Quad between offsets o0 and o1 (left of o0 means o1 > o0; fixed or per sample) facing up, with heights per corner.
+      type Offset = number | ((p: typeof a) => number);
+      const strip = (buf: MeshBuf, o0: Offset, o1: Offset, ya: [number, number], yb: [number, number], uv?: (p: typeof a, side: 0 | 1) => [number, number]) => {
         const v: number[] = [];
         for (const [p, o, side, y] of [[a, o0, 0, ya[0]], [a, o1, 1, ya[1]], [b, o0, 0, yb[0]], [b, o1, 1, yb[1]]] as const) {
-          const [x, z] = off(p, o);
+          const [x, z] = off(p, typeof o === 'number' ? o : o(p));
           v.push(buf.vertex(x, y, z, uv ? { uv: uv(p, side) } : {}));
         }
         // Winding chosen so faces point up (+y) or away from the road centre.
@@ -178,18 +246,30 @@ export function buildRoads(
         buf.tri(v[1], v[2], v[3]);
       };
       const hw = width / 2;
-      strip(tile.roads, -hw, hw, [a.y, a.y], [b.y, b.y], (p, s) => [s, p.dist / width]);
+      const left = (p: typeof a) => L.get(p)!, right = (p: typeof a) => -R.get(p)!;
+      // uv.x: 0 at the full right edge, 1 at the full left edge, so narrowed stretches keep their lines in place.
+      strip(tile.roads, right, left, [a.y, a.y], [b.y, b.y], (p, s) => [(s ? left(p) : right(p)) / width + 0.5, look]);
       // Lifted road on an embankment: own collision, and retaining walls down to the terrain.
       const above = !bridge && way.raise ? Math.max(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) : 0;
-      if (bridge || above > ROAD_LIFT + 0.1) {
-        // Where a deck or ramp is close to the ground, sink its collision into the terrain so its edge is no kerb.
-        const cy = (p: typeof a) => p.y - Math.max(0, 0.6 - (p.y - height(p.e, p.n)));
-        strip(tile.collide, -hw - 0.5, hw + 0.5, [cy(a), cy(a)], [cy(b), cy(b)]);
+      // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the edges
+      // down to the terrain mesh, which is fitted below it (carve.ts). Decks and lifted roads only push the
+      // terrain down.
+      const lifted = bridge || above > ROAD_LIFT + 0.1;
+      if (carve || lifted) {
+        carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, Math.min(L.get(a)!, R.get(a)!, L.get(b)!, R.get(b)!), !lifted);
+        const c = (p: typeof a, d: number) => p.y - d;
+        const extra = lifted ? 0.5 : 0;
+        const lw = (p: typeof a) => left(p) + extra, rw = (p: typeof a) => right(p) - extra;
+        strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
+        if (!lifted) {
+          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), c(a, ROAD_LIFT + 0.1)], [c(b, STRIP_DROP), c(b, ROAD_LIFT + 0.1)]);
+          strip(tile.collide, (p) => rw(p) - 1, rw, [c(a, ROAD_LIFT + 0.1), c(a, STRIP_DROP)], [c(b, ROAD_LIFT + 0.1), c(b, STRIP_DROP)]);
+        }
       }
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
       if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
         const o = hw + 0.5;
-        strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1]);
+        strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1], () => [0, 0]);
         wall(tile.sidewalks, off(a, o), off(b, o), a.y - 1, a.y, b.y - 1, b.y, true);
         wall(tile.sidewalks, off(a, -o), off(b, -o), a.y - 1, a.y, b.y - 1, b.y, false);
       }
@@ -219,8 +299,14 @@ export function buildRoads(
         };
         const tuv = (p: typeof a, s: 0 | 1) => [p.dist / 2, s * (sw / 2)] as [number, number];
         for (const side of [1, -1]) {
+          // No sidewalk where the road had to give way to another road alongside.
+          const full = (p: typeof a) => (side > 0 ? L : R).get(p)! >= hw - 0.05;
+          if (!full(a) || !full(b)) continue;
           const inner = side * hw;
           const outer = side * (hw + sw);
+          // Nor where it would reach onto another road (roads meeting at a shallow angle).
+          const corners = [off(a, outer), off(b, outer), off(a, side * (hw + sw / 2)), off(b, side * (hw + sw / 2))];
+          if (corners.some(([x, z]) => carriageways.onOther(way, x, z, 0.3))) continue;
           const [i0, i1] = side > 0 ? [inner, outer] : [outer, inner];
           // Top surface.
           strip(tile.sidewalks, i0, i1, [top(a), top(a)], [top(b), top(b)], tuv);
@@ -231,6 +317,25 @@ export function buildRoads(
       }
     }
 
+    // Where two roads meet at an angle, their collision strips end square to each road and leave a wedge
+    // open on the outside of the bend; continue each strip a little past both ends so they overlap.
+    if (carve || bridge)
+      for (const [p, dir] of [[ring[0], -1], [ring[ring.length - 1], 1]] as const) {
+        const hw = width / 2 + (bridge ? 0.5 : 0);
+        const ext = Math.min(hw, 4) * dir;
+        const tip = { e: p.e + p.dx * ext, n: p.n + p.dy * ext };
+        const corner = (q: { e: number; n: number }, o: number) => utmToLocal(world, q.e - p.dy * o, q.n + p.dx * o);
+        // The cap keeps the road's grade: flat, it would stick up out of a road continuing downhill.
+        const q = dir > 0 ? ring[ring.length - 2] : ring[1];
+        const grade = (p.y - q.y) / (Math.abs(p.dist - q.dist) || 1);
+        const y = p.y - STRIP_DROP, yt = y + grade * Math.abs(ext);
+        const t = tiles.at(p.e, p.n).collide;
+        const v = [corner(p, -hw), corner(p, hw), corner(tip, -hw), corner(tip, hw)].map(([x, z], i) => t.vertex(x, i < 2 ? y : yt, z, {}));
+        // Upward-facing whichever way the cap points.
+        if (dir > 0) { t.tri(v[0], v[2], v[1]); t.tri(v[1], v[2], v[3]); }
+        else { t.tri(v[0], v[1], v[2]); t.tri(v[1], v[3], v[2]); }
+      }
+
     // Street lamps, alternating sides.
     if (cls.street && cls.rank >= 3 && !bridge) {
       let next = LAMP_SPACING / 2;
@@ -239,6 +344,7 @@ export function buildRoads(
         if (r.dist < next) continue;
         next += LAMP_SPACING;
         side = -side;
+        if ((side > 0 ? L : R).get(r)! < width / 2 - 0.05) continue;
         const o = side * (width / 2 + (sidewalk ? SIDEWALK.width - 0.5 : 0.8));
         const [x, z] = utmToLocal(world, r.e - r.dy * o, r.n + r.dx * o);
         if (jIndex.near(x, z, 4)) continue;

@@ -4,7 +4,7 @@
 // Output: per tile Float32 records (see src/world/propKinds.ts).
 
 import { type WorldInfo, tileKey, utmToLocal } from '../../src/world/format.ts';
-import { PROP_STRIDE, Prop, type PropKind } from '../../src/world/propKinds.ts';
+import { PROP_STRIDE, Prop, type PropKind, SIGN_TYPES, type SignType } from '../../src/world/propKinds.ts';
 import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
@@ -99,7 +99,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     if (t.highway === 'bus_stop') { kind = Prop.busStop; size = t.shelter === 'yes' ? 1 : 0; }
     else if (t.highway === 'stop') kind = Prop.stopSign;
     else if (t.highway === 'give_way') kind = Prop.giveWay;
-    else if (t.traffic_sign) kind = Prop.sign;
+    else if (t.traffic_sign) { kind = Prop.sign; size = signSize(osmSignType(t.traffic_sign)); }
     else if (t.barrier === 'bollard') kind = Prop.bollard;
     else if (t.barrier === 'block') kind = Prop.block;
     else if (t.amenity === 'bench') kind = Prop.bench;
@@ -292,3 +292,30 @@ const r2 = (v: number) => Math.round(v * 100) / 100;
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
 export { PROP_STRIDE };
+
+/** Size field of a sign record: index into SIGN_TYPES + 1, 0 when unknown. */
+export const signSize = (type: SignType | undefined) => (type ? SIGN_TYPES.indexOf(type) + 1 : 0);
+
+/** Sign type from an OSM traffic_sign value such as "DE:306", "DE:274[50]" or "DE:205,1020-30" (first known one). */
+export function osmSignType(value: string): SignType | undefined {
+  if (value === 'city_limit') return 'ortsschild';
+  for (const part of value.split(/[;,]/)) {
+    const m = /^(?:DE:)?(\d{3})(\.\d+)?(?:[-[](\d+))?/.exec(part.trim());
+    if (!m) continue;
+    const [, code, sub, arg] = m;
+    if (code === '306') return 'vorfahrtstrasse';
+    if (code === '301') return 'vorfahrt';
+    if (code === '205') return 'vorfahrt-achten';
+    if (code === '206') return 'stop';
+    if (code === '267') return 'einfahrt-verboten';
+    if (code === '274') {
+      // 274.1 is the 30 zone; plain 274 carries the limit as argument.
+      const v = sub === '.1' ? 30 : Number(arg);
+      if (!v) continue;
+      return v <= 30 ? 'tempo-30' : v <= 50 ? 'tempo-50' : v <= 70 ? 'tempo-70' : 'tempo-100';
+    }
+    if (code === '350') return 'fussgaenger';
+    if (code === '310') return 'ortsschild';
+  }
+  return undefined;
+}

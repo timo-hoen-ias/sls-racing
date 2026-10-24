@@ -76,7 +76,7 @@ export class LensFlarePass extends Pass {
             float r = length(d);
             float ang = atan(d.y, d.x);
             // wide glare + hot core + starburst rays
-            float glare = exp(-r * 4.5) * 0.3 + exp(-r * 22.0) * 1.4 + exp(-r * 120.0) * 3.0;
+            float glare = exp(-r * 6.0) * 0.06 + exp(-r * 22.0) * 0.8 + exp(-r * 120.0) * 3.0;
             float star = pow(abs(cos(ang * 3.0)), 60.0) + pow(abs(cos(ang * 3.0 + 0.52)), 60.0) * 0.6;
             glare += star * exp(-r * 7.0) * 0.9;
             col += uSunCol * glare * vis;

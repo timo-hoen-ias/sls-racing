@@ -1,5 +1,5 @@
 import type { EngineSound } from '../audio/engineSound.ts';
-import { registerCommand } from '../debug/registry.ts';
+import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { ChaseCamera } from '../render/chaseCamera.ts';
 import { type CarPhysics, maxSteerAngle } from './carPhysics.ts';
 import type { CarView } from './carView.ts';
@@ -16,6 +16,8 @@ export interface VehicleDebugContext {
   sound: () => EngineSound | undefined;
   setManual(on: boolean): void;
   reset(): void;
+  /** GLB of the selected car (car.select). */
+  carUrl?: () => string;
 }
 
 const num = (s: string | undefined, name: string) => {
@@ -74,25 +76,27 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
   });
   registerCommand({
     name: 'car.model',
-    help: 'Automodell: Blender-GLB oder prozedurales Coupé',
-    args: '[glb|procedural]',
-    complete: () => ['glb', 'procedural'],
+    help: 'Nur die Optik (Fahrwerk bleibt): GLB des gewählten Autos (glb), Hot Hatch, GT oder prozedurales Coupé; ganzes Auto wechseln mit car.select',
+    args: '[glb|hothatch|gt|procedural]',
+    complete: () => ['glb', 'hothatch', 'gt', 'procedural'],
     run: ([m]) => {
       const v = c.view;
       if (m === undefined) return `${v.kind} · ${triangleCount(v.model)} Dreiecke (volle Detailstufe)`;
-      if (m !== 'glb' && m !== 'procedural') throw new Error('glb oder procedural');
+      if (m !== 'glb' && m !== 'hothatch' && m !== 'gt' && m !== 'procedural') throw new Error('glb, hothatch, gt oder procedural');
       const color = '#' + v.paintColor.getHexString();
       if (m === 'procedural') {
         v.setModel(buildSportsCar(color), 'procedural');
         return 'prozedurales Coupé';
       }
-      loadSportsCar(color).then(
+      const url = m === 'glb' ? c.carUrl?.() : `${import.meta.env.BASE_URL}models/cars/${m}.glb`;
+      loadSportsCar(color, url).then(
         (model) => { v.setModel(model, 'glb'); console.info('[car] GLB geladen'); },
         (e) => console.warn('[car] GLB nicht geladen', e),
       );
       return 'lade GLB …';
     },
   });
+  registerToggle('car.wheelinst', 'Räder instanziert zeichnen (weniger Draw-Calls); aus = jedes Radteil einzeln', () => c.view.wheelSet.enabled, (v) => { c.view.wheelSet.enabled = v; });
   registerCommand({
     name: 'car.lod',
     help: 'Detailstufe von Karosserie und Rädern erzwingen (0 = voll) oder auto',

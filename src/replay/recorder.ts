@@ -60,6 +60,12 @@ export class Recorder {
     }
   }
 
+  /** Drops everything recorded after time t (rewinding: the car carries on from there). */
+  truncate(t: number) {
+    while (this.count > 1 && this.value(this.count - 1, 't') > t) this.count--;
+    this.lastT = this.count ? this.value(this.count - 1, 't') : -Infinity;
+  }
+
   /** Raw value of row i (0 = oldest). */
   value(i: number, c: Channel) {
     return this.data[((this.start + i) % this.cap) * W + COL[c]];

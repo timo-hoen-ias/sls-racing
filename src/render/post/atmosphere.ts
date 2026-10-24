@@ -38,6 +38,8 @@ export class AtmospherePass extends Pass {
       /** Fade to the horizon between these distances: the streamed world ends there. */
       uEdge: { value: new THREE.Vector2(radius * 0.5, radius * 1.02) },
       uMaxSky: { value: 30 },
+      /** Haze is lit like the scene: its colour is the sky's, its brightness at most this luminance. */
+      uMaxLum: { value: 30 },
     };
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -50,7 +52,7 @@ export class AtmospherePass extends Pass {
         uniform samplerCube tSky;
         uniform mat4 uInvViewProj;
         uniform vec3 uCamPos;
-        uniform float uDensity, uFalloff, uGround, uMaxSky, uHDensity, uHFalloff, uHBase;
+        uniform float uDensity, uFalloff, uGround, uMaxSky, uMaxLum, uHDensity, uHFalloff, uHBase;
         uniform vec2 uEdge;
         varying vec2 vUv;
         vec3 worldAt(vec2 uv, float d) {
@@ -86,6 +88,7 @@ export class AtmospherePass extends Pass {
           vec3 horizon = skyAt(vec3(rd.x, 0.0, rd.z));
           vec3 mist = mix(horizon, vec3(dot(horizon, vec3(0.333))), 0.35);
           vec3 fogCol = mix(skyAt(rd), mist, odH / max(odD + odH, 1e-5));
+          fogCol *= min(1.0, uMaxLum / max(dot(fogCol, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
           float edge = smoothstep(uEdge.x, uEdge.y, dist);
           col.rgb = mix(col.rgb, fogCol, f);
           col.rgb = mix(col.rgb, skyAt(rd), edge);

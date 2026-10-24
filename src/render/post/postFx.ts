@@ -12,6 +12,9 @@ import { AtmospherePass } from './atmosphere.ts';
 import { CloudPass } from './clouds.ts';
 import { LensFlarePass } from './lensFlare.ts';
 import { MotionBlurPass } from './motionBlur.ts';
+import { SSRPass } from './ssr.ts';
+import { BeamPass } from './beams.ts';
+import { weatherUniforms } from '../../weather/weatherMaterials.ts';
 
 /** Objects on this layer (the player car) are kept sharp by the motion blur. */
 export const CAR_LAYER = 2;
@@ -65,6 +68,10 @@ export interface FxSettings {
   nitroBlur: number;
   /** Distance fog (aerial perspective) density. */
   fog: number;
+  /** Screen-space reflections on wet roads. */
+  ssr: number;
+  /** Light shafts of headlights and lamps in the air. */
+  beams: number;
   /** Height fog (valley mist) density. */
   heightFog: number;
   /** Height fog layer thickness in m. */
@@ -79,11 +86,17 @@ export interface FxSettings {
 }
 
 export class PostFX {
-  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1 };
+  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, ssr: 1, beams: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1 };
   readonly ao?: GTAOPass;
   readonly smaaPass?: SMAAPass;
   readonly clouds: CloudPass;
   readonly fog: AtmospherePass;
+  readonly ssr: SSRPass;
+  /** Headlight cones and lamp halos in mist and rain. */
+  readonly beams: BeamPass;
+  /** Brightest haze relative to the daylight fog colour (fx.hazegain). */
+  hazeGain = 1.5;
+  private flareOff = false;
   readonly blur: MotionBlurPass;
   readonly flare: LensFlarePass;
   readonly bloom: UnrealBloomPass;
@@ -119,6 +132,9 @@ export class PostFX {
     const c = (this.composer = new EffectComposer(renderer, target));
     c.addPass(new RenderPass(scene, camera));
     c.addPass(this.grab);
+    // Wet-road reflections first, so AO, fog and blur apply to them like to the rest of the image.
+    this.ssr = new SSRPass(camera);
+    c.addPass(this.ssr);
     if (high && !off.has('ao')) {
       const ao = new GTAOPass(scene, camera, 1, 1);
       ao.blendIntensity = 0.8;
@@ -133,20 +149,26 @@ export class PostFX {
     c.addPass(this.clouds);
     this.fog = new AtmospherePass(camera, daylight.skyCube.texture, ground, q.radius);
     c.addPass(this.fog);
+    this.beams = new BeamPass(camera);
+    c.addPass(this.beams);
     this.blur = new MotionBlurPass(camera, this.mask.texture);
     c.addPass(this.blur);
     this.flare = new LensFlarePass(camera, daylight.sunDir);
     c.addPass(this.flare);
     // Subtle bloom; threshold and strength follow the time of day in render().
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.12, 0.5, 6);
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.08, 0.25, 16);
     c.addPass(this.bloom);
     c.addPass(new OutputPass());
     const depth = () => this.grab.depth;
-    this.clouds.depth = this.fog.depth = this.blur.depth = this.flare.depth = depth;
+    this.ssr.depth = this.beams.depth = this.clouds.depth = this.fog.depth = this.blur.depth = this.flare.depth = depth;
     this.cloudsOn = !off.has('clouds');
     this.fog.enabled = !off.has('fog');
+    this.ssr.enabled = !off.has('ssr');
+    this.beams.enabled = !off.has('beams');
     this.blur.enabled = !off.has('blur');
-    this.flare.enabled = !off.has('flare');
+    // The flare pass also scrubs NaN pixels before the bloom smears them across the screen,
+    // so ?nofx=flare only switches the glare off, not the pass.
+    this.flareOff = off.has('flare');
     this.bloom.enabled = !off.has('bloom');
     if (high && !off.has('smaa')) {
       // MSAA resolves before tone mapping, so bright edges still alias; SMAA cleans that up.
@@ -176,25 +198,32 @@ export class PostFX {
     cl.fogColor.copy(d.fogColor);
     const st = this.settings;
     const oc = d.overcast;
-    cl.rayStrength = 0.4 * st.godrays;
+    cl.rayStrength = 0.12 * st.godrays;
     cl.setWeather({ base: this.ground + 1200 - oc * 500, top: this.ground + 2600, coverage: THREE.MathUtils.lerp(st.clouds, 0.97, oc), density: 1 + oc });
     if (!this.cloudsOn) cl.enabled = false;
     // Distance fog scales with the view distance: a blue haze over kilometres when the far view
     // reaches the horizon, a little denser when the world ends after a few hundred metres.
     const fu = this.fog.uniforms;
-    fu.uDensity.value = THREE.MathUtils.clamp(1.4 / fu.uEdge.value.y, 0.00012, 0.0006) * st.fog * (1 + oc * 4);
+    fu.uDensity.value = THREE.MathUtils.clamp(0.9 / fu.uEdge.value.y, 0.0001, 0.0005) * st.fog * (1 + oc * 2);
     // Valley mist: thick at dawn and at night, a light veil in the afternoon.
     const dawn = Math.exp(-(((d.hours - 7) % 24) ** 2) / 4);
     const mist = Math.max(1 - d.daylight, dawn);
-    fu.uHDensity.value = THREE.MathUtils.lerp(0.0006, 0.0025, mist) * st.heightFog * (1 + oc);
+    fu.uHDensity.value = THREE.MathUtils.lerp(0.0006, 0.0025, mist) * st.heightFog * (1 + oc * 0.5);
     fu.uHFalloff.value = 1 / Math.max(1, st.fogHeight);
     fu.uHBase.value = this.ground + st.fogBase;
+    // Light shafts: faint in clear air, strong in mist and rain.
+    this.beams.density = st.beams * (0.0003 + fu.uHDensity.value * 0.4 + weatherUniforms.uWxRain.value * 0.0025);
+    // The sky cube is far brighter than lit ground under clouds; keep the haze from glowing.
+    const fc = d.fogColor;
+    fu.uMaxLum.value = (0.2126 * fc.r + 0.7152 * fc.g + 0.0722 * fc.b) * this.hazeGain;
+    this.ssr.strength = st.ssr;
     this.flare.sunColor.copy(d.sunColor);
-    this.flare.strength = 0.7 * st.flare;
+    this.flare.strength = this.flareOff ? 0 : 0.7 * st.flare;
     // Light bloom: by day only glints, chrome and the sun's surroundings glow softly; at night
     // lamps and headlights get a gentle halo.
-    this.bloom.threshold = THREE.MathUtils.lerp(2, 6, d.daylight);
-    this.bloom.strength = THREE.MathUtils.lerp(0.35, 0.12, d.daylight) * st.bloom;
+    this.bloom.threshold = THREE.MathUtils.lerp(2, 16, d.daylight);
+    this.bloom.strength = THREE.MathUtils.lerp(0.35, 0.08, d.daylight) * st.bloom;
+    this.bloom.radius = THREE.MathUtils.lerp(0.5, 0.25, d.daylight);
     // Nitro kicks in like in Need for Speed: longer shutter, heavy streaks towards the edges.
     const kick = boost * st.nitroBlur;
     this.blur.shutter = (1 / 60) * st.blur * (1 + 1.8 * kick);

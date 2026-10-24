@@ -3,11 +3,14 @@ import * as THREE from 'three';
 import { EngineSound } from './audio/engineSound.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
+import { registerAddressCommands } from './nav/addressCommands.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
 import { createMaterials } from './render/materials.ts';
+import { PbrTextures } from './render/pbr/pbrTextures.ts';
+import { registerTextureCommands } from './render/pbr/texCommands.ts';
 import { CarLights, LampLights } from './render/lights.ts';
 import { markCar } from './render/post/postFx.ts';
 import { createScene } from './render/scene.ts';
@@ -24,10 +27,12 @@ import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { registerCommand, runCommand } from './debug/registry.ts';
 import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
+import { Garage, registerGarageCommands } from './vehicle/garage.ts';
 import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
 import { registerReplayCommands } from './replay/commands.ts';
 import { Recorder } from './replay/recorder.ts';
+import { Rescue, registerRescueCommands } from './vehicle/rescue.ts';
 import { ReplayPlayer } from './replay/replayPlayer.ts';
 import { Telemetry } from './ui/telemetry.ts';
 import { Debris } from './render/debris.ts';
@@ -44,9 +49,13 @@ import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
+import { loadVegetation } from './world/vegGlb.ts';
+import { loadProps } from './world/propGlb.ts';
+import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
+import { registerWorldCommands } from './world/worldCommands.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
@@ -89,6 +98,10 @@ async function boot() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
   const mats = createMaterials();
+  // PBR atlases (KTX2); the world renders with stand-ins until they are in.
+  const textures = new PbrTextures(view.renderer, quality.name);
+  textures.load().catch((e) => console.warn('[tex] PBR-Texturen nicht geladen', e));
+  registerTextureCommands(textures);
   const water = new Water(view.renderer, view.scene, view.camera, view.daylight, quality);
   mats.water = water.material;
   patchWorldMaterials(mats);
@@ -98,9 +111,9 @@ async function boot() {
   view.scene.add(streamer.root);
   const far = new FarField(TILES_URL, index, streamer, FAR_DIST[quality.name]);
   view.scene.add(far.root);
-  const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world });
+  const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world, carBoxes: quality.lod.cars });
   props.register(world);
-  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass });
+  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
   view.scene.add(props.root);
@@ -113,6 +126,7 @@ async function boot() {
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
   const lampLights = new LampLights(quality, mats.lampHead);
   view.scene.add(lampLights.root);
+  view.post?.beams.sources.push(...carLights.heads, ...lampLights.pool);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
@@ -146,9 +160,21 @@ async function boot() {
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
   // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  loadVegetation().then((set) => {
+    vegetation.setModels(set);
+    const hedge = set.species.hecke;
+    if (hedge) props.setModel(Prop.hedge, hedge.lod0);
+  }, (e) => console.warn('[veg] GLB nicht geladen, nehme die prozeduralen Bäume', e));
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
+  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root);
+  // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
+  loadProps().then((set) => {
+    props.setPropSet(set);
+    if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
+    peds.view.setVariants(set.peds);
+  }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   peds.sim.events.knocked = (_, v) => {
     sound?.impact(Math.min(0.5, v / 30));
     input.rumble(0.5, 150);
@@ -183,7 +209,8 @@ async function boot() {
   let safeTimer = 0;
   let worldReady = false;
   // The car waits here until the ground under it exists (start and teleports). Without y, it drops onto the ground.
-  let hold: { x: number; y?: number; z: number; heading: number; frames: number } | null = { ...spawn, frames: 0 };
+  // With road set, the car goes onto the nearest free road spot (as on reset) once the colliders there exist.
+  let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean } | null = { ...spawn, frames: 0 };
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
     groundRay.origin = { x, y: 2000, z };
@@ -218,14 +245,12 @@ async function boot() {
 
   // Reset puts the car on the nearest road: right-hand lane, along the road in the direction it was facing
   // (or the one-way direction), on a spot free of traffic, parked cars and street furniture.
-  const roadSpot = () => {
-    const p = car.body.translation();
+  const roadSpot = (p: { x: number; z: number } = car.body.translation(), h = car.heading()) => {
     // Real streets first (not service ways or tracks), any way as a fallback.
     const street = (e: { rank: number }) => e.rank >= 2;
     let s = graph.snap(p.x, p.z, 400, street) ?? graph.snap(p.x, p.z, 400);
     if (!s) return undefined;
     const box = new RAPIER.Cuboid(CAR.halfExtents.x + 0.3, CAR.halfExtents.y, CAR.halfExtents.z + 0.5);
-    const h = car.heading();
     if (!s.edge.oneway && s.dx * Math.sin(h) - s.dz * Math.cos(h) < 0) s = { ...s, dx: -s.dx, dz: -s.dz };
     const { dx, dz } = s;
     const base = s;
@@ -271,6 +296,18 @@ async function boot() {
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
   registerDamageCommands(carView.damage, debris);
+  // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
+  const rescue = new Rescue();
+  const rewind = () => {
+    if (replay.active) return 'nicht während der Wiederholung';
+    if (!rescue.rewind(car, recorder)) return 'noch nichts aufgezeichnet';
+    const v = car.body.linvel();
+    prevVel.x = v.x; prevVel.y = v.y; prevVel.z = v.z;
+    hitCooldown = 0.6;
+    navHud.toast(`⏪ ${rescue.rewindSeconds} s zurück`, 1);
+    return `${rescue.rewindSeconds} s zurückgespult`;
+  };
+  registerRescueCommands(rescue, rewind);
   // Street lamps and light street furniture give way when hit fast enough: lamps go dark, poles tip over.
   const knockdown = new Knockdown(world, car, debris);
   knockdown.addSource(streamer, lampDebris(streamer.lampGeo, mats.lampPole, mats.lampPole), 90);
@@ -299,7 +336,10 @@ async function boot() {
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
-  const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
+  const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
+  registerGarageCommands(garage);
+  void garage.probe();
+  const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
 
   let acc = 0;
   let last = performance.now();
@@ -312,17 +352,18 @@ async function boot() {
   let frozenAt: { p: { x: number; y: number; z: number }; q: { x: number; y: number; z: number; w: number } } | null = null;
   const debug = new DebugConsole();
   debug.onToggle = () => input.releaseAll();
-  registerGameCommands({
-    R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar,
-    teleport: (x, z, heading = car.heading()) => {
-      if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
-      hold = { x, z, heading, frames: 0 };
-      worldReady = false;
-    },
-  }, debugState);
+  bigMap.onTeleport = () => debug.exec('tp ziel');
+  const teleport = (x: number, z: number, heading = car.heading(), road = false) => {
+    if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
+    hold = { x, z, heading, frames: 0, road };
+    worldReady = false;
+  };
+  registerGameCommands({ R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar, teleport }, debugState);
+  registerAddressCommands({ world: index.world, graph, nav, pos: ip, teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
   const perf = new PerfMonitor($('perf'), view.renderer);
+  perf.camera = view.camera;
   perf.addSource('Kacheln', () => streamer.statsLine());
   perf.addSource('Physik', () => `${world.colliders.len()} Kollider · ${quality.physicsHz} Hz`);
   const physDebug = new PhysicsDebugView(world);
@@ -330,6 +371,11 @@ async function boot() {
   registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
   registerStreamCommands(streamer, quality, () => (hold ?? ip));
   const viewDist = createViewDistance(view, quality, far);
+  registerWorldCommands({
+    R: RAPIER, world, scene: view.scene, mats, index, baseUrl: TILES_URL, pos: () => (hold ?? ip),
+    teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
+    print: (t) => debug.print(t, 'info'),
+  });
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();
   registerGameSettings({ view, quality, cam, car, setManual, weather, input, tacho, water });
@@ -357,7 +403,8 @@ async function boot() {
       // The open menu reads the gamepad itself and eats the keyboard.
       if (menu.open) continue;
       if (e === 'menu' && !debug.open) menu.toggle(true);
-      if (e === 'reset') resetCar();
+      if (e === 'reset') { resetCar(); rescue.clear(car); }
+      if (e === 'rewind') rewind();
       if (e === 'camera') cam.next();
       if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
       if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
@@ -379,6 +426,11 @@ async function boot() {
       streamer.update(h.x, h.z, true);
       // Give fresh colliders a couple of physics steps before casting against them.
       if (streamer.isLoadedAround(h.x, h.z)) h.frames++;
+      if (h.frames > 2 && h.road) {
+        const r = roadSpot(h, h.heading);
+        if (r) Object.assign(h, { x: r.x, z: r.z, heading: r.heading, y: r.y + 1.2 });
+        h.road = false;
+      }
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
       car.reset({ x: h.x, y: h.y ?? car.body.translation().y, z: h.z }, h.heading);
       // While the world appears the camera waits behind the held car, not somewhere between old and new place.
@@ -444,6 +496,11 @@ async function boot() {
       safeTimer = 0;
     }
     if (worldReady && (ip.y < spawn.y - 150 || !streamer.hasTileAt(ip.x, ip.z))) resetCar();
+    const stuck = worldReady && !replay.active ? rescue.update(car, drive, dt * debugState.timeScale) : null;
+    if (stuck) {
+      resetCar();
+      navHud.toast(stuck === 'flip' ? 'Aufs Dach gelegt: zurück auf die Straße' : 'Festgefahren: zurück auf die Straße', 1.8);
+    }
 
     facades.update(view.daylight.daylight);
     const night = 1 - view.daylight.daylight;

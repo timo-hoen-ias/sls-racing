@@ -4,7 +4,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 
-interface Landmark { id: string; glb: string; e: number; n: number; heading: number; footprint: [number, number][] }
+interface Landmark { id: string; glb: string; e: number; n: number; heading: number; footprint: [number, number][]; y?: number; bridge?: number }
 const manifest: Landmark[] = JSON.parse(readFileSync(new URL('../pipeline/landmarks.json', import.meta.url), 'utf8'));
 const MATERIAL = /^(stone|plaster|roof|slate|copper|glass|wood)/;
 
@@ -26,10 +26,18 @@ describe('landmarks', () => {
     for (const l of manifest) {
       expect(existsSync(new URL(`../public/${l.glb}`, import.meta.url))).toBe(true);
       expect(l.e).toBeGreaterThan(330000);
-      expect(l.n).toBeGreaterThan(5460000);
-      const cx = l.footprint.reduce((s, p) => s + p[0], 0) / l.footprint.length;
-      const cy = l.footprint.reduce((s, p) => s + p[1], 0) / l.footprint.length;
-      expect(Math.hypot(cx - l.e, cy - l.n)).toBeLessThan(15);
+      expect(l.n).toBeGreaterThan(5450000);
+      // (e, n) is the area centroid of the footprint (bridges: a point on the deck centreline, with y on the deck top).
+      if (l.bridge !== undefined) { expect(l.y).toBeDefined(); continue; }
+      let a = 0, cx = 0, cy = 0;
+      const [ox, oy] = l.footprint[0];
+      const rel = l.footprint.map(([x, y]) => [x - ox, y - oy]);
+      rel.forEach(([x0, y0], i) => {
+        const [x1, y1] = rel[(i + 1) % rel.length];
+        const c = x0 * y1 - x1 * y0;
+        a += c; cx += (x0 + x1) * c; cy += (y0 + y1) * c;
+      });
+      expect(Math.hypot(ox + cx / (3 * a) - l.e, oy + cy / (3 * a) - l.n)).toBeLessThan(0.05);
     }
   });
 

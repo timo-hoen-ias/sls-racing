@@ -172,7 +172,7 @@ uniform float uUseMirror;
 uniform float uTime;
 uniform float uFlow, uWaves, uFoam, uDistortion, uDebug;
 uniform vec3 uLightDir, uLightColor, uSunDir;
-uniform float uSunI, uMaxSky;
+uniform float uSunI, uMaxSky, uSkyLum;
 uniform vec3 uDeep, uShallow;
 uniform vec2 uEdge;
 uniform float uWxRain, uWxTime;
@@ -235,7 +235,13 @@ void main() {
 
   vec3 R = reflect(-V, N);
   vec3 skyR = min(textureLod(tSky, normalize(vec3(R.x, max(R.y, 0.02), R.z)), 0.0).rgb, vec3(uMaxSky));
-  vec3 refl = skyR;
+  // The sky cube's horizon is far brighter than the lit world; keep the mirrored sky in step.
+  skyR *= min(1.0, uSkyLum / max(dot(skyR, vec3(0.2126, 0.7152, 0.0722)), 1e-4));
+  // Without the mirror, low reflections would show the bright horizon sky and the river would
+  // look white at a flat angle: there the far bank (trees, houses) is what water really mirrors.
+  vec3 ambR = min(textureLod(tSky, vec3(0.0, 1.0, 0.0), 5.0).rgb, vec3(uMaxSky * 0.25));
+  vec3 bankR = ambR * vec3(0.05, 0.06, 0.045) + uLightColor * max(uLightDir.y, 0.0) * vec3(0.05, 0.06, 0.04);
+  vec3 refl = mix(skyR, bankR, (1.0 - smoothstep(0.02, 0.35, R.y)) * 0.8);
   if (uUseMirror > 0.5) {
     vec4 mc = uMirrorMatrix * vec4(vWorld, 1.0);
     vec2 muv = mc.xy / mc.w + n2 * uDistortion / (1.0 + dist * 0.02);
@@ -297,6 +303,10 @@ export class Water {
   /** Mirror plane height in use, for the debug console. */
   level = 0;
   mirrorActive = false;
+  /** Small detail (props, traffic, pedestrians, grass) left out of the mirror; it barely shows in rippled water. */
+  readonly hideInMirror: THREE.Object3D[] = [];
+  /** Draw everything in the mirror after all (water.mirror.detail). */
+  mirrorDetail = false;
 
   get hasMirror() {
     return !!this.mirror;
@@ -330,6 +340,7 @@ export class Water {
         uSunDir: { value: daylight.sunDir },
         uSunI: { value: 1 },
         uMaxSky: { value: 30 },
+        uSkyLum: { value: 30 },
         uDeep: { value: new THREE.Color('#1e3a32') },
         uShallow: { value: new THREE.Color('#4f6248') },
         uEdge: { value: new THREE.Vector2(q.radius * 0.5, q.radius * 1.02) },
@@ -368,6 +379,8 @@ export class Water {
     u.uLightDir.value.copy(d.lightDir);
     u.uLightColor.value.copy(d.sun.color).multiplyScalar(d.sun.intensity);
     u.uSunI.value = d.sunIntensity;
+    const fc = d.fogColor;
+    u.uSkyLum.value = (0.2126 * fc.r + 0.7152 * fc.g + 0.0722 * fc.b) * 1.6;
     this.mirrorActive = false;
     if (this.mirror && s.mirror) {
       // Half the drawing buffer is plenty for a rippled reflection.
@@ -431,10 +444,13 @@ export class Water {
     const prevShadow = r.shadowMap.autoUpdate;
     r.shadowMap.autoUpdate = false;
     this.material.visible = false;
+    const hidden = this.mirrorDetail ? [] : this.hideInMirror.filter((o) => o.visible);
+    for (const o of hidden) o.visible = false;
     r.setRenderTarget(this.mirror!);
     r.clear();
     r.render(this.scene, mc);
     r.setRenderTarget(prevTarget);
+    for (const o of hidden) o.visible = true;
     this.material.visible = true;
     r.shadowMap.autoUpdate = prevShadow;
     this.mirrorActive = true;

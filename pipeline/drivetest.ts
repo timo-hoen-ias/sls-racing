@@ -13,10 +13,9 @@ import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.t
 import { terrainHeights } from '../src/world/tileBuild.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { readOsm } from './lib/osm.ts';
-import { liftOverpasses } from './lib/overpasses.ts';
+import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
 import { densify, isDrivable, roadSurfaceHeights, ROAD_CLASSES } from './lib/roads.ts';
-import { flatSampler, terrariumSampler } from './lib/terrain.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -69,7 +68,8 @@ function groundAt(x: number, z: number): number | undefined {
 interface Result { ok: boolean; why?: string; at?: [number, number]; dist: number; len: number }
 
 /** Handling over all routes: largest drift angle (rad) and distance from the route (m), top speed (m/s). */
-const handling = { drift: 0, off: 0, offSum: 0, offN: 0, top: 0 };
+const handling = { drift: 0, driftWay: '', off: 0, offSum: 0, offN: 0, top: 0 };
+let currentWay = '';
 
 function driveRoute(pts: [number, number][], startY: number): Result {
   const route = densify(pts.map(([e, n]) => utmToLocal(W, e, n)), 4);
@@ -149,7 +149,8 @@ function driveRoute(pts: [number, number][], startY: number): Result {
     if (car.speed > 5) {
       const lv = car.body.linvel();
       const f = car.heading();
-      handling.drift = Math.max(handling.drift, Math.abs(Math.atan2(Math.sin(Math.atan2(lv.x, -lv.z) - f), Math.cos(Math.atan2(lv.x, -lv.z) - f))));
+      const drift = Math.abs(Math.atan2(Math.sin(Math.atan2(lv.x, -lv.z) - f), Math.cos(Math.atan2(lv.x, -lv.z) - f)));
+      if (drift > handling.drift) { handling.drift = drift; handling.driftWay = `${currentWay} at ${(step * STEP).toFixed(1)} s, ${(car.speed * 3.6).toFixed(0)} km/h`; }
       handling.off = Math.max(handling.off, off);
       handling.offSum += off;
       handling.offN++;
@@ -164,11 +165,9 @@ async function main() {
   const { cfg, project } = loadWorld();
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   // Road heights as the build computes them, so the car starts on its road (which may be lifted).
-  const terrain = loadRegion(region).terrain;
-  const sampler = terrain.source === 'terrarium' ? terrariumSampler(paths.terrain, terrain.zoom) : flatSampler();
-  const toLonLat = unproject(cfg.zone);
-  const height = (e: number, n: number) => sampler.at(...toLonLat(e, n));
-  liftOverpasses(osm.ways, height);
+  const regions = [loadRegion(region)];
+  const height = terrainHeight(regions, unproject(cfg.zone));
+  roadHeights(osm.ways, regions, height);
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
   let candidates = osm.ways.filter((w) =>
@@ -184,6 +183,7 @@ async function main() {
   let ok = 0;
   const fails: string[] = [];
   for (const { w } of pool) {
+    currentWay = `way ${w.id}`;
     const res = driveRoute(w.pts, roadSurfaceHeights(w, height)[0]);
     if (res.ok) ok++;
     else {
@@ -192,7 +192,7 @@ async function main() {
     }
   }
   console.log(`Drive test: ${ok}/${pool.length} routes completed`);
-  console.log(`Handling (pace ${PACE}): top ${(handling.top * 3.6).toFixed(0)} km/h · max drift ${((handling.drift * 180) / Math.PI).toFixed(1)}° · off route Ø ${(handling.offSum / Math.max(1, handling.offN)).toFixed(2)} / max ${handling.off.toFixed(1)} m`);
+  console.log(`Handling (pace ${PACE}): top ${(handling.top * 3.6).toFixed(0)} km/h · max drift ${((handling.drift * 180) / Math.PI).toFixed(1)}° (${handling.driftWay}) · off route Ø ${(handling.offSum / Math.max(1, handling.offN)).toFixed(2)} / max ${handling.off.toFixed(1)} m`);
   for (const f of fails) console.log(f);
   if (ok < pool.length * 0.9) process.exitCode = 1;
 }

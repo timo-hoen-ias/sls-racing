@@ -5,7 +5,8 @@ import { patchMaterial } from '../weather/weatherMaterials.ts';
 import { Ground, TERRAIN_N, TERRAIN_STEP, type WorldInfo, tileOriginLocal } from './format.ts';
 import type { RoadGraph } from './roadGraph.ts';
 import { registerTileLayer } from './tileHooks.ts';
-import { BUSH_STRIDE, TREE_NAMES, Tree, type TreeKind } from './vegKinds.ts';
+import { SPECIES_BY_KIND, type VegetationSet, loadVegetation } from './vegGlb.ts';
+import { BUSH_STRIDE, Bush, TREE_NAMES, Tree, type TreeKind } from './vegKinds.ts';
 import { buildBushGeometries, buildGrassGeometry, buildTreeGeometries, grassTexture } from './vegModels.ts';
 
 // Vegetation (W6) as a tile layer: trees by species with two levels of detail, bushes, grass clumps around the
@@ -89,37 +90,86 @@ float vgNoise(vec2 p) {
   mat.needsUpdate = true;
 }
 
+/** One way to draw a kind: geometries per detail tier (near, mid, far), their materials, and a size factor. */
+interface VegModel {
+  lods: THREE.BufferGeometry[];
+  mats: THREE.Material[];
+  /** Height factor and crown width factor on top of the tile's scale. */
+  h: number;
+  w: number;
+}
+
+interface VegGroup {
+  kind: TreeKind | -1;
+  /** One instanced mesh per detail tier. */
+  meshes: THREE.InstancedMesh[];
+  n: number;
+  /** Every instance in thinning order: matrices, colours and ground position, copied into the tier meshes. */
+  mats: Float32Array;
+  cols: Float32Array;
+  xz: Float32Array;
+  /** What the meshes hold now ("w<tier>:<count>" whole tile in one tier, "s:<count>" split by distance). */
+  state: string;
+  /** Camera position of the last split. */
+  sx: number;
+  sz: number;
+}
+
 interface VegTile {
   key: string;
   cx: number;
   cz: number;
-  /** Per kind: [lod0, lod1] meshes and the full instance count. */
-  trees: { kind: TreeKind; lod: [THREE.InstancedMesh, THREE.InstancedMesh]; n: number }[];
-  bushes: { mesh: THREE.InstancedMesh; n: number }[];
+  group: THREE.Group;
+  shadows: boolean;
+  trees?: Float32Array;
+  kinds?: Uint8Array;
+  bushes?: Float32Array;
+  groups: VegGroup[];
   heights: Float32Array;
   ground: Uint8Array;
   ox: number;
   oz: number;
 }
 
+/** Instances move between tiers per tree only within tiles that cross a tier boundary; re-sorted after this much camera movement (m). */
+const RESPLIT = 6;
+/** Tiles re-sorted per frame at most (each up to 2048 trees). */
+const SPLITS_PER_FRAME = 4;
+/** Bushes use their detailed model this close (m). */
+const BUSH_DETAIL = 30;
+
+interface Split { g: VegGroup; bands: number[]; count: number; d: number; tile: string }
+
+/** Height of the Blender species (all 8 m) per kind, relative to a tree of scale 1. */
+const KIND_HEIGHT: Record<TreeKind, number> = { 0: 1.05, 1: 1.35, 2: 1.7, 3: 1.1, 4: 0.6 };
+
 export class Vegetation {
   /** Grass clumps around the camera (the trees and bushes live in the tile groups). */
   readonly root = new THREE.Group();
   /** Share of trees and bushes drawn, 0..1. */
   density = 1;
-  /** Detailed trees within this distance (m) of the tile centre. */
-  lodDistance = 260;
+  /** Detailed trees within this distance (m) of the camera, per tree. */
+  lodDistance: number;
+  /** Simple trees up to this distance, billboards beyond (m). */
+  billboardDistance: number;
+  /** Bushes are drawn up to this distance (m). */
+  bushDistance: number;
+  /** Tree and bush instances moved between tiers in the last frame (veg.info). */
+  private splitCount = 0;
   /** "auto" follows the weather, a number fixes the wind strength 0..1. */
   wind: 'auto' | number = 'auto';
   windNow = 0.3;
   /** Forces one LOD for all tiles (veg.lod 0|1), undefined = by distance. */
-  forcedLod?: 0 | 1;
+  forcedLod?: 0 | 1 | 2;
+  /** Which tree models are in use. */
+  models: 'glb' | 'procedural' = 'procedural';
   grassOn: boolean;
   grassRadius = 32;
   readonly groundUniforms = { uVegFields: { value: 1 } };
   private tiles = new Map<string, VegTile>();
-  private treeGeo = buildTreeGeometries();
-  private bushGeo = buildBushGeometries();
+  private treeModels = {} as Record<TreeKind, VegModel[]>;
+  private bushModels: Record<number, VegModel[]> = {};
+  private billboardMat?: THREE.MeshStandardMaterial;
   private treeMat: THREE.MeshStandardMaterial;
   private bushMat: THREE.MeshStandardMaterial;
   private grass: THREE.InstancedMesh;
@@ -128,7 +178,10 @@ export class Vegetation {
   private graph: RoadGraph;
   private time = 0;
 
-  constructor(opts: { world: WorldInfo; graph: RoadGraph; mats: Materials; grass: number }) {
+  constructor(opts: { world: WorldInfo; graph: RoadGraph; mats: Materials; grass: number; lod?: { trees: number; billboards: number; bushes: number } }) {
+    this.lodDistance = opts.lod?.trees ?? 140;
+    this.billboardDistance = opts.lod?.billboards ?? 450;
+    this.bushDistance = opts.lod?.bushes ?? 120;
     this.info = opts.world;
     this.graph = opts.graph;
     this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true });
@@ -145,6 +198,7 @@ export class Vegetation {
     this.root.name = 'vegetation';
     this.root.add(this.grass);
     patchGroundDetail(opts.mats.ground, this.groundUniforms);
+    this.setProcedural();
   }
 
   /** Hooks into the tile streamer; call once at startup, before tiles load. */
@@ -154,41 +208,13 @@ export class Vegetation {
       visual: (t, ctx) => {
         const [ox, oz] = tileOriginLocal(this.info, t.ix, t.iy);
         const tile: VegTile = {
-          key: t.key, cx: ox + this.info.tileSize / 2, cz: oz + this.info.tileSize / 2, trees: [], bushes: [],
+          key: t.key, cx: ox + this.info.tileSize / 2, cz: oz + this.info.tileSize / 2, group: ctx.group, shadows: ctx.shadows, groups: [],
           heights: t.f32('terrain')!.slice(), ground: t.u8('ground')!.slice(), ox, oz,
+          trees: trees ? t.f32('trees')?.slice() : undefined,
+          kinds: trees && t.has('treeKinds') ? t.u8('treeKinds')?.slice() : undefined,
+          bushes: trees && t.has('bushes') ? t.f32('bushes')?.slice() : undefined,
         };
-        const tr = trees ? t.f32('trees') : undefined;
-        if (tr?.length) {
-          const kinds = t.has('treeKinds') ? t.u8('treeKinds') : undefined;
-          const byKind = new Map<TreeKind, number[]>();
-          for (let i = 0; i < tr.length / 4; i++) {
-            const k = (kinds?.[i] ?? Tree.broadleaf) as TreeKind;
-            if (!byKind.has(k)) byKind.set(k, []);
-            byKind.get(k)!.push(i);
-          }
-          for (const [kind, list] of byKind) {
-            const lod = this.treeGeo[kind].map((g) => this.instances(g, this.treeMat, list.length, ctx.shadows)) as [THREE.InstancedMesh, THREE.InstancedMesh];
-            this.fill(lod, shuffled(list), (i) => [tr[i * 4], tr[i * 4 + 1] - 0.15, tr[i * 4 + 2], tr[i * 4 + 3]], kind === Tree.conifer ? 0.03 : 0.07);
-            ctx.group.add(...lod);
-            tile.trees.push({ kind, lod, n: list.length });
-          }
-        }
-        const bu = trees && t.has('bushes') ? t.f32('bushes') : undefined;
-        if (bu?.length) {
-          const byKind = new Map<number, number[]>();
-          for (let i = 0; i < bu.length / BUSH_STRIDE; i++) {
-            const k = bu[i * BUSH_STRIDE + 4];
-            if (!byKind.has(k)) byKind.set(k, []);
-            byKind.get(k)!.push(i);
-          }
-          for (const [kind, list] of byKind) {
-            const mesh = this.instances(this.bushGeo[kind as 0 | 1], this.bushMat, list.length, ctx.shadows);
-            const o = (i: number) => i * BUSH_STRIDE;
-            this.fill([mesh], shuffled(list), (i) => [bu[o(i)], bu[o(i) + 1] - 0.1, bu[o(i) + 2], bu[o(i) + 3]], 0.08);
-            ctx.group.add(mesh);
-            tile.bushes.push({ mesh, n: list.length });
-          }
-        }
+        this.buildTile(tile);
         this.tiles.set(t.key, tile);
         this.grassAt.x = Infinity;
       },
@@ -199,30 +225,175 @@ export class Vegetation {
     });
   }
 
-  private instances(g: THREE.BufferGeometry, mat: THREE.Material, n: number, shadows: boolean) {
+  /** Uses the Blender species (vegGlb.ts) instead of the procedural models, for loaded and future tiles. */
+  setModels(set: VegetationSet) {
+    if (set.billboardMaterial && !this.billboardMat) {
+      this.billboardMat = set.billboardMaterial;
+      patchWind(this.billboardMat, 0.35, 'billboard');
+    }
+    const pick = (name: string) => (SPECIES_BY_KIND[name] ?? []).map((id) => set.species[id]).filter((sp) => !!sp);
+    const trees: Partial<Record<TreeKind, VegModel[]>> = {};
+    for (const kind of Object.values(Tree)) {
+      const list = pick(TREE_NAMES[kind]).map((sp): VegModel => {
+        const lods = [sp.lod0, sp.lod1, ...(sp.billboard && this.billboardMat ? [sp.billboard] : [])];
+        return { lods, mats: lods.map((_, i) => (i === 2 ? this.billboardMat! : this.treeMat)), h: KIND_HEIGHT[kind], w: KIND_HEIGHT[kind] ** 0.7 };
+      });
+      if (list.length) trees[kind] = list;
+    }
+    Object.assign(this.treeModels, trees);
+    const bush = (name: string, k: number) => {
+      const sp = pick(name)[0];
+      if (sp) this.bushModels[k] = [{ lods: [sp.lod0, sp.lod1], mats: [this.bushMat, this.bushMat], h: 1, w: 1 }];
+    };
+    bush('busch', Bush.round);
+    bush('gebuesch', Bush.scrub);
+    this.models = 'glb';
+    for (const t of this.tiles.values()) this.buildTile(t);
+  }
+
+  /** Back to the procedural models of vegModels.ts. */
+  setProcedural() {
+    const g = buildTreeGeometries(), b = buildBushGeometries();
+    for (const kind of Object.values(Tree)) this.treeModels[kind] = [{ lods: g[kind], mats: [this.treeMat, this.treeMat], h: 1, w: 1 }];
+    for (const k of Object.values(Bush)) this.bushModels[k] = [{ lods: [b[k]], mats: [this.bushMat], h: 1, w: 1 }];
+    this.models = 'procedural';
+    for (const t of this.tiles.values()) this.buildTile(t);
+  }
+
+  /** (Re)builds a tile's instanced meshes from its tree and bush records. */
+  private buildTile(t: VegTile) {
+    for (const g of t.groups) for (const im of g.meshes) { t.group.remove(im); im.dispose(); }
+    t.groups = [];
+    const add = (kind: TreeKind | -1, models: VegModel[], list: number[], at: (i: number) => [number, number, number, number], tint: number) => {
+      // Spread the records over the model variants by position.
+      const byModel = models.map(() => [] as number[]);
+      for (const i of list) {
+        const [x, , z] = at(i);
+        byModel[Math.floor(fract(Math.sin(x * 3.17 + z * 7.31) * 9187.37) * models.length)].push(i);
+      }
+      models.forEach((model, v) => {
+        const ids = byModel[v];
+        if (!ids.length) return;
+        // Only the detailed tier casts shadows: the shadow map covers about 110 m around the car anyway.
+        const meshes = model.lods.map((g, l) => this.instances(g, model.mats[l], ids.length, t.shadows && l === 0));
+        meshes.forEach((im, l) => (im.name = `vegetation/${kind === -1 ? 'bush' : TREE_NAMES[kind]} lod${l}`));
+        t.group.add(...meshes);
+        t.groups.push({ kind, meshes, n: ids.length, ...this.fill(meshes, shuffled(ids), at, tint, model), state: '', sx: 0, sz: 0 });
+      });
+    };
+    const tr = t.trees;
+    if (tr?.length) {
+      const byKind = new Map<TreeKind, number[]>();
+      for (let i = 0; i < tr.length / 4; i++) {
+        const k = (t.kinds?.[i] ?? Tree.broadleaf) as TreeKind;
+        if (!byKind.has(k)) byKind.set(k, []);
+        byKind.get(k)!.push(i);
+      }
+      for (const [kind, list] of byKind) add(kind, this.treeModels[kind], list, (i) => [tr[i * 4], tr[i * 4 + 1] - 0.15, tr[i * 4 + 2], tr[i * 4 + 3]], kind === Tree.conifer ? 0.03 : 0.07);
+    }
+    const bu = t.bushes;
+    if (bu?.length) {
+      const byKind = new Map<number, number[]>();
+      for (let i = 0; i < bu.length / BUSH_STRIDE; i++) {
+        const k = bu[i * BUSH_STRIDE + 4];
+        if (!byKind.has(k)) byKind.set(k, []);
+        byKind.get(k)!.push(i);
+      }
+      const o = (i: number) => i * BUSH_STRIDE;
+      for (const [kind, list] of byKind) add(-1, this.bushModels[kind] ?? this.bushModels[Bush.round], list, (i) => [bu[o(i)], bu[o(i) + 1] - 0.1, bu[o(i) + 2], bu[o(i) + 3]], 0.08);
+    }
+  }
+
+  private instances(g: THREE.BufferGeometry, mat: THREE.Material, n: number, castShadow: boolean) {
     const im = new THREE.InstancedMesh(g, mat, n);
     im.userData.sharedGeometry = true;
-    im.castShadow = shadows;
-    im.receiveShadow = shadows;
+    im.castShadow = castShadow;
+    im.receiveShadow = true;
     return im;
   }
 
-  private fill(meshes: THREE.InstancedMesh[], order: number[], at: (i: number) => [number, number, number, number], tint: number) {
+  /** Instance data in thinning order; every tier mesh starts with all of it so its bounding sphere covers the tile. */
+  private fill(meshes: THREE.InstancedMesh[], order: number[], at: (i: number) => [number, number, number, number], tint: number, model: VegModel) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+    const mats = new Float32Array(order.length * 16), cols = new Float32Array(order.length * 3), xz = new Float32Array(order.length * 2);
     order.forEach((i, n) => {
       const [x, y, z, sc] = at(i);
       const h = fract(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453);
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, h * Math.PI * 2);
-      s.set(sc, sc * (0.9 + 0.2 * fract(h * 7.1)), sc);
-      m.compose(p.set(x, y, z), q, s);
+      s.set(sc * model.w, sc * model.h * (0.9 + 0.2 * fract(h * 7.1)), sc * model.w);
+      m.compose(p.set(x, y, z), q, s).toArray(mats, n * 16);
       // Each tree a little lighter or darker, warmer or cooler.
-      c.setRGB(1 + (fract(h * 3.7) - 0.5) * tint * 2, 1 + (fract(h * 5.3) - 0.5) * tint * 2, 1 - tint);
-      for (const im of meshes) {
-        im.setMatrixAt(n, m);
-        im.setColorAt(n, c);
-      }
+      c.setRGB(1 + (fract(h * 3.7) - 0.5) * tint * 2, 1 + (fract(h * 5.3) - 0.5) * tint * 2, 1 - tint).toArray(cols, n * 3);
+      xz[n * 2] = x;
+      xz[n * 2 + 1] = z;
     });
-    for (const im of meshes) im.computeBoundingSphere();
+    for (const im of meshes) {
+      im.setColorAt(0, c);
+      im.instanceMatrix.array.set(mats);
+      im.instanceColor!.array.set(cols);
+      im.computeBoundingSphere();
+    }
+    return { mats, cols, xz };
+  }
+
+  /** Upper distance of each tier of a group (Infinity = no limit); beyond the last one the group is hidden. */
+  private bands(g: VegGroup): number[] {
+    const n = g.meshes.length;
+    if (g.kind === -1) return n > 1 ? [BUSH_DETAIL, this.bushDistance] : [this.bushDistance];
+    return n > 2 ? [this.lodDistance, this.billboardDistance, Infinity] : n > 1 ? [this.lodDistance, Infinity] : [Infinity];
+  }
+
+  /** Puts the first `count` instances into one tier (-1 = none). */
+  private assignWhole(g: VegGroup, tier: number, count: number) {
+    const key = `w${tier}:${count}`;
+    if (g.state === key) return;
+    g.state = key;
+    g.meshes.forEach((im, l) => {
+      if (l !== tier) { im.count = 0; im.visible = false; return; }
+      im.instanceMatrix.array.set(g.mats.subarray(0, count * 16));
+      im.instanceColor!.array.set(g.cols.subarray(0, count * 3));
+      im.instanceMatrix.needsUpdate = true;
+      im.instanceColor!.needsUpdate = true;
+      im.count = count;
+      im.visible = count > 0;
+    });
+  }
+
+  /** Sorts the first `count` instances into tiers by their own distance to the camera. */
+  private assignSplit(g: VegGroup, bands: number[], count: number, cx: number, cz: number) {
+    g.state = `s:${count}`;
+    g.sx = cx;
+    g.sz = cz;
+    const n = g.meshes.map(() => 0);
+    const mA = g.meshes.map((im) => im.instanceMatrix.array as Float32Array);
+    const cA = g.meshes.map((im) => im.instanceColor!.array as Float32Array);
+    for (let i = 0; i < count; i++) {
+      const tier = tierOf(Math.hypot(g.xz[i * 2] - cx, g.xz[i * 2 + 1] - cz), bands);
+      if (tier < 0) continue;
+      const k = n[tier]++;
+      mA[tier].set(g.mats.subarray(i * 16, i * 16 + 16), k * 16);
+      cA[tier].set(g.cols.subarray(i * 3, i * 3 + 3), k * 3);
+    }
+    this.splitCount += count;
+    g.meshes.forEach((im, l) => {
+      im.count = n[l];
+      im.visible = n[l] > 0;
+      im.instanceMatrix.needsUpdate = true;
+      im.instanceColor!.needsUpdate = true;
+    });
+  }
+
+  /** Tier of every group in a tile; groups whose tile crosses a tier boundary are queued for a per-tree split. */
+  private updateTile(t: VegTile, cx: number, cz: number, splits: Split[]) {
+    const [near, far] = rectDistances(t.ox, t.oz, this.info.tileSize, cx, cz);
+    for (const g of t.groups) {
+      const count = Math.round(g.n * this.density);
+      if (this.forcedLod !== undefined) { this.assignWhole(g, Math.min(this.forcedLod, g.meshes.length - 1), count); continue; }
+      const bands = this.bands(g);
+      const a = tierOf(near, bands), b = tierOf(far, bands);
+      if (a === b) this.assignWhole(g, a, count);
+      else if (g.state !== `s:${count}` || Math.hypot(g.sx - cx, g.sz - cz) > RESPLIT) splits.push({ g, bands, count, d: near, tile: t.key });
+    }
   }
 
   update(dt: number, camera: THREE.Camera, weather?: { rain: number; snow: number; overcast: number }) {
@@ -232,17 +403,16 @@ export class Vegetation {
     vegUniforms.uVegTime.value = this.time;
     vegUniforms.uVegWind.value = this.windNow;
     const cx = camera.position.x, cz = camera.position.z;
-    for (const t of this.tiles.values()) {
-      const near = this.forcedLod !== undefined ? this.forcedLod === 0 : Math.hypot(t.cx - cx, t.cz - cz) < this.lodDistance;
-      for (const tr of t.trees) {
-        tr.lod[0].visible = near;
-        tr.lod[1].visible = !near;
-        tr.lod[0].count = tr.lod[1].count = Math.round(tr.n * this.density);
-      }
-      for (const b of t.bushes) {
-        b.mesh.visible = near || this.forcedLod === 1;
-        b.mesh.count = Math.round(b.n * this.density);
-      }
+    const splits: Split[] = [];
+    for (const t of this.tiles.values()) this.updateTile(t, cx, cz, splits);
+    // Nearest first, a few tiles per frame; a group that has never been split goes first.
+    this.splitCount = 0;
+    splits.sort((a, b) => Number(a.g.state.startsWith('s')) - Number(b.g.state.startsWith('s')) || a.d - b.d);
+    const tiles = new Set<string>();
+    for (const s of splits) {
+      if (tiles.size >= SPLITS_PER_FRAME && !tiles.has(s.tile)) break;
+      tiles.add(s.tile);
+      this.assignSplit(s.g, s.bands, s.count, cx, cz);
     }
     this.grass.visible = this.grassOn;
     if (this.grassOn && this.grassAt.distanceTo(camera.position) > 4) {
@@ -310,24 +480,26 @@ export class Vegetation {
     const trees = new Map<string, number>();
     let bushes = 0, near = 0;
     for (const t of this.tiles.values()) {
-      t.trees.forEach((tr) => {
-        const name = TREE_NAMES[tr.kind];
-        trees.set(name, (trees.get(name) ?? 0) + tr.n);
-        if (tr.lod[0].visible) near += tr.n;
-      });
-      for (const b of t.bushes) bushes += b.n;
+      for (const g of t.groups) {
+        if (g.kind === -1) { bushes += g.n; continue; }
+        const name = TREE_NAMES[g.kind];
+        trees.set(name, (trees.get(name) ?? 0) + g.n);
+        near += g.meshes[0].visible ? g.meshes[0].count : 0;
+      }
     }
     return { trees, bushes, near, grass: this.grass.count };
   }
 
   registerCommands() {
     registerValue('veg.density', 'Anteil der gezeichneten Bäume und Büsche 0..1', () => this.density, (v) => (this.density = v), [0, 1]);
-    registerValue('veg.lod', 'Entfernung (m), bis zu der Bäume detailliert gezeichnet werden', () => this.lodDistance, (v) => { this.lodDistance = v; this.forcedLod = undefined; }, [0, 3000]);
+    registerValue('veg.lod', 'Entfernung (m), bis zu der Bäume detailliert gezeichnet werden (pro Baum)', () => this.lodDistance, (v) => { this.lodDistance = v; this.forcedLod = undefined; }, [0, 3000]);
+    registerValue('veg.lod.billboard', 'Ab dieser Entfernung (m) werden Bäume als Billboard gezeichnet', () => this.billboardDistance, (v) => { this.billboardDistance = v; this.forcedLod = undefined; }, [0, 5000]);
+    registerValue('veg.lod.bush', 'Büsche bis zu dieser Entfernung (m) zeichnen', () => this.bushDistance, (v) => (this.bushDistance = v), [0, 1000]);
     registerCommand({
-      name: 'veg.lod.force', help: 'Alle Bäume in einer Detailstufe zeigen (0 = detailliert, 1 = einfach) oder auto', args: '0|1|auto',
-      complete: () => ['0', '1', 'auto'],
+      name: 'veg.lod.force', help: 'Alle Bäume in einer Detailstufe zeigen (0 = detailliert, 1 = einfach, 2 = Billboard) oder auto', args: '0|1|2|auto',
+      complete: () => ['0', '1', '2', 'auto'],
       run: ([v = 'auto']) => {
-        this.forcedLod = v === 'auto' ? undefined : v === '0' ? 0 : v === '1' ? 1 : (() => { throw new Error('0, 1 oder auto'); })();
+        this.forcedLod = v === 'auto' ? undefined : v === '0' ? 0 : v === '1' ? 1 : v === '2' ? 2 : (() => { throw new Error('0, 1, 2 oder auto'); })();
         return `Detailstufe: ${this.forcedLod ?? 'nach Entfernung'}`;
       },
     });
@@ -339,6 +511,16 @@ export class Vegetation {
         return `Wind ${this.wind === 'auto' ? 'auto' : this.wind} · gerade ${this.windNow.toFixed(2)}`;
       },
     });
+    registerCommand({
+      name: 'veg.models', help: 'Baummodelle: glb (Blender) oder procedural', args: '[glb|procedural]',
+      complete: () => ['glb', 'procedural'],
+      run: ([m]) => {
+        if (m === 'procedural') this.setProcedural();
+        else if (m === 'glb') loadVegetation().then((set) => this.setModels(set), (e) => console.warn('[veg] GLB nicht geladen', e));
+        else if (m !== undefined) throw new Error('glb oder procedural');
+        return `Baummodelle: ${m ?? this.models}`;
+      },
+    });
     registerToggle('veg.grass', 'Grasbüschel um die Kamera', () => this.grassOn, (v) => { this.grassOn = v; this.grassAt.x = Infinity; });
     registerValue('veg.grass.radius', 'Radius der Grasbüschel in Metern', () => this.grassRadius, (v) => { this.grassRadius = v; this.grassAt.x = Infinity; }, [5, 120]);
     registerValue('veg.fields', 'Ackerfurchen und Grasflecken im Boden 0..1', () => this.groundUniforms.uVegFields.value, (v) => (this.groundUniforms.uVegFields.value = v), [0, 1]);
@@ -346,13 +528,28 @@ export class Vegetation {
       name: 'veg.info', help: 'Bäume nach Art, Büsche und Grasbüschel in den geladenen Kacheln',
       run: () => {
         const c = this.counts();
-        return `${[...c.trees].map(([k, n]) => `${k} ${n}`).join(', ') || 'keine Bäume'} · ${c.near} detailliert · ${c.bushes} Büsche · ${c.grass} Grasbüschel · Wind ${this.windNow.toFixed(2)}`;
+        return `${[...c.trees].map(([k, n]) => `${k} ${n}`).join(', ') || 'keine Bäume'} · ${c.near} detailliert · ${c.bushes} Büsche · ${c.grass} Grasbüschel · Wind ${this.windNow.toFixed(2)}\n`
+          + `LOD: detailliert bis ${this.lodDistance} m, einfach bis ${this.billboardDistance} m, dann Billboard · Büsche bis ${this.bushDistance} m · ${this.splitCount} Instanzen im letzten Bild umsortiert`;
       },
     });
   }
 }
 
 const fract = (v: number) => v - Math.floor(v);
+
+/** Detail tier for a distance: the first band it is under, or -1 beyond the last. */
+export function tierOf(d: number, bands: number[]) {
+  let i = 0;
+  while (i < bands.length && d >= bands[i]) i++;
+  return i >= bands.length ? -1 : i;
+}
+
+/** Nearest and farthest distance from (x, z) to the square [ox, ox + size] × [oz, oz + size]. */
+export function rectDistances(ox: number, oz: number, size: number, x: number, z: number): [number, number] {
+  const dx = Math.max(ox - x, 0, x - (ox + size)), dz = Math.max(oz - z, 0, z - (oz + size));
+  const fx = Math.max(Math.abs(ox - x), Math.abs(ox + size - x)), fz = Math.max(Math.abs(oz - z), Math.abs(oz + size - z));
+  return [Math.hypot(dx, dz), Math.hypot(fx, fz)];
+}
 
 /** The same list in a fixed random order, so drawing only the first n gives an even thinning. */
 function shuffled(list: number[]) {

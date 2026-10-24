@@ -62,7 +62,7 @@ export const CAR = {
    * how fast grip falls past the peak, load sensitivity (heavily loaded tyres grip less per kg),
    * and how much of the tyre force acts at road level (roll and pitch; the rest acts at the centre of mass).
    */
-  tyre: { mu: 1.15, peakSlip: 0.13, slide: 0.8, falloff: 2.2, loadSens: 0.12, rearMu: 1.02, roll: 0.6, pitch: 0.8, minSpeed: 3 },
+  tyre: { mu: 1.55, peakSlip: 0.11, slide: 0.88, falloff: 1.4, loadSens: 0.08, rearMu: 1.12, roll: 0.45, pitch: 0.8, minSpeed: 3 },
   /** Limited-slip differentials as torque bias ratio (1 = open, 2–3 = LSD, ≥ 50 = locked). */
   diff: { front: 1.4, rear: 2.6 },
   /** Drive split to the front axle (the rest goes to the rear). */
@@ -88,9 +88,11 @@ export interface Assists {
   esp: number;
   /** Drift assist: extra yaw while steering, keeps speed in slides. */
   drift: number;
+  /** Steering assist: keeps the front tyres at their peak slip angle instead of pushing them wide. */
+  steer: number;
 }
 
 export const ASSIST_PRESETS: Record<'arcade' | 'sim', Assists> = {
-  arcade: { abs: true, tcs: 1, esp: 1, drift: 1 },
-  sim: { abs: true, tcs: 0, esp: 0, drift: 0 },
+  arcade: { abs: true, tcs: 1, esp: 1, drift: 1, steer: 1 },
+  sim: { abs: true, tcs: 0, esp: 0, drift: 0, steer: 0 },
 };

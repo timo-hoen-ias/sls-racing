@@ -1,12 +1,12 @@
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
 import { encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
+import { roadSection } from '../../src/world/roadSpec.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
 
 interface RoadClass {
-  width: number;
   /** Draw order at overlaps: higher sits a little higher. */
   rank: number;
   centreLine: boolean;
@@ -15,38 +15,32 @@ interface RoadClass {
 }
 
 export const ROAD_CLASSES: Record<string, RoadClass> = {
-  motorway: { width: 11, rank: 9, centreLine: false, street: false },
-  trunk: { width: 10, rank: 8, centreLine: true, street: false },
-  primary: { width: 8.5, rank: 7, centreLine: true, street: true },
-  secondary: { width: 7.5, rank: 6, centreLine: true, street: true },
-  tertiary: { width: 7, rank: 5, centreLine: true, street: true },
-  motorway_link: { width: 5.5, rank: 8, centreLine: false, street: false },
-  trunk_link: { width: 5.5, rank: 7, centreLine: false, street: false },
-  primary_link: { width: 5.5, rank: 6, centreLine: false, street: false },
-  secondary_link: { width: 5.5, rank: 5, centreLine: false, street: false },
-  tertiary_link: { width: 5.5, rank: 4, centreLine: false, street: false },
-  unclassified: { width: 6, rank: 3, centreLine: false, street: true },
-  residential: { width: 6, rank: 3, centreLine: false, street: true },
-  living_street: { width: 5, rank: 2, centreLine: false, street: true },
-  pedestrian: { width: 6, rank: 2, centreLine: false, street: false },
-  service: { width: 4, rank: 1, centreLine: false, street: false },
-  track: { width: 3, rank: 0, centreLine: false, street: false },
+  motorway: { rank: 9, centreLine: false, street: false },
+  trunk: { rank: 8, centreLine: true, street: false },
+  primary: { rank: 7, centreLine: true, street: true },
+  secondary: { rank: 6, centreLine: true, street: true },
+  tertiary: { rank: 5, centreLine: true, street: true },
+  motorway_link: { rank: 8, centreLine: false, street: false },
+  trunk_link: { rank: 7, centreLine: false, street: false },
+  primary_link: { rank: 6, centreLine: false, street: false },
+  secondary_link: { rank: 5, centreLine: false, street: false },
+  tertiary_link: { rank: 4, centreLine: false, street: false },
+  unclassified: { rank: 3, centreLine: false, street: true },
+  residential: { rank: 3, centreLine: false, street: true },
+  living_street: { rank: 2, centreLine: false, street: true },
+  pedestrian: { rank: 2, centreLine: false, street: false },
+  service: { rank: 1, centreLine: false, street: false },
+  track: { rank: 0, centreLine: false, street: false },
 };
 
-const LANE_WIDTH = 3.25;
 const STEP = 4; // metres between road samples
 export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
 const SIDEWALK = { width: 2.2, height: 0.14 };
 const LAMP_SPACING = 32;
 
+/** Carriageway width in metres (lanes and edge strips, see src/world/roadSpec.ts). */
 export function roadWidth(tags: Record<string, string>): number | undefined {
-  const cls = ROAD_CLASSES[tags.highway];
-  if (!cls) return undefined;
-  const w = parseFloat(tags.width);
-  if (w > 2 && w < 40) return w;
-  const lanes = parseInt(tags.lanes);
-  if (lanes > 0 && lanes < 10) return Math.max(cls.width * 0.6, lanes * LANE_WIDTH + (tags.oneway === 'yes' ? 0.5 : 1));
-  return tags.oneway === 'yes' && cls.rank >= 4 ? cls.width * 0.7 : cls.width;
+  return ROAD_CLASSES[tags.highway] ? roadSection(tags)!.width : undefined;
 }
 
 export function isDrivable(tags: Record<string, string>) {
@@ -140,16 +134,18 @@ export function buildRoads(
   const jIndex = new JunctionIndex(junctions);
   for (const way of ways) {
     if (!isDrivable(way.tags)) continue;
-    const width = roadWidth(way.tags)!;
+    const section = roadSection(way.tags)!;
+    const width = section.width;
     const cls = ROAD_CLASSES[way.tags.highway];
+    // Lane lines: long dashes on motorways (6 m line, 12 m gap), short ones elsewhere (3 m, 6 m).
+    const dash = cls.rank >= 8 ? { period: 18, on: 6 } : { period: 9, on: 3 };
     const pts = densify(way.pts);
     if (pts.length < 2) continue;
     const bridge = isBridge(way.tags);
     const ySurf = surface(way, height);
     const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
     // Surface, wear, edge lines and gutters for the road shader (src/render/pbr/roadCode.ts).
-    const oneway = way.tags.oneway === 'yes' || way.tags.oneway === '1' || way.tags.highway === 'motorway' || way.tags.junction === 'roundabout';
-    const look = encodeRoad(roadLook(way.tags, way.id, width, sidewalk, oneway));
+    const look = encodeRoad(roadLook(way.tags, way.id, section, sidewalk));
 
     let dist = 0;
     const ring = pts.map((p, i) => {
@@ -210,6 +206,11 @@ export function buildRoads(
       // Dashes: 3 m line, 6 m gap.
       if (cls.centreLine && way.tags.oneway !== 'yes' && Math.floor(a.dist / 9) === Math.floor(b.dist / 9) && a.dist % 9 < 3) {
         strip(tile.markings, -0.07, 0.07, [a.y + 0.02, a.y + 0.02], [b.y + 0.02, b.y + 0.02]);
+      }
+      if (section.dividers.length && Math.floor(a.dist / dash.period) === Math.floor(b.dist / dash.period) && a.dist % dash.period < dash.on &&
+        !jIndex.near(a.x, a.z, 1) && !jIndex.near(b.x, b.z, 1)) {
+        // Offsets in the section are to the right; strip offsets are to the left.
+        for (const d of section.dividers) strip(tile.markings, -d - 0.075, -d + 0.075, [a.y + 0.02, a.y + 0.02], [b.y + 0.02, b.y + 0.02]);
       }
 
       if (sidewalk && !jIndex.near(a.x, a.z, 2.8) && !jIndex.near(b.x, b.z, 2.8)) {

@@ -36,6 +36,13 @@ export class GroundIndex {
     for (const list of this.cells.values()) list.sort((a, b) => b.prio - a.prio);
   }
 
+  /** Tags of the area that decides the ground class at (e, n), if any. */
+  tagsAt(e: number, n: number): Record<string, string> | undefined {
+    const list = this.cells.get(`${Math.floor(e / this.cell)}_${Math.floor(n / this.cell)}`);
+    if (list) for (const g of list) if (pointInPolygon(e, n, g.p)) return g.p.tags;
+    return undefined;
+  }
+
   at(e: number, n: number, fallback: GroundClass): GroundClass {
     const list = this.cells.get(`${Math.floor(e / this.cell)}_${Math.floor(n / this.cell)}`);
     if (list) for (const g of list) if (pointInPolygon(e, n, g.p)) return g.cls;

@@ -1,6 +1,7 @@
 import type { RoadGraphData, WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
 import type { Way } from './osm.ts';
+import { roadSection } from '../../src/world/roadSpec.ts';
 import { ROAD_CLASSES, isDrivable, roadSurfaceHeights, roadWidth } from './roads.ts';
 
 export interface Junction {
@@ -51,6 +52,8 @@ export function buildGraph(ways: Way[], world: WorldInfo, height: (e: number, n:
     }
     const c = ROAD_CLASSES[w.tags.highway].rank;
     const oneway = w.tags.oneway === 'yes' || w.tags.junction === 'roundabout';
+    const section = roadSection(w.tags)!;
+    const dims = { w: r1(section.width), l: section.lanes, r: r1(section.rightLane) };
     let start = 0;
     let p: number[] = [];
     for (let i = 0; i < w.ids.length; i++) {
@@ -60,7 +63,7 @@ export function buildGraph(ways: Way[], world: WorldInfo, height: (e: number, n:
       if (i > start && split) {
         const a = node(w.ids[start], p[0], p[1], p[2]);
         const b = node(w.ids[i], p[p.length - 3], p[p.length - 2], p[p.length - 1]);
-        if (a !== b || p.length > 6) graph.edges.push({ a, b, n, c, ...(oneway ? { o: 1 as const } : {}), p });
+        if (a !== b || p.length > 6) graph.edges.push({ a, b, n, c, ...(oneway ? { o: 1 as const } : {}), ...dims, p });
         start = i;
         p = [r1(x), r1(ys[i]), r1(z)];
       }

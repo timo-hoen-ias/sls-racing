@@ -68,6 +68,10 @@ export interface TileData {
   sidewalks?: PackedMesh;
   /** Float32 x, y, z, heading per street lamp. */
   lamps?: string;
+  /** Uint8 tree kind per tree, see vegKinds.ts. */
+  treeKinds?: string;
+  /** Float32 x, y, z, scale, kind per bush. */
+  bushes?: string;
   /** Street furniture and parked cars, Float32 records of PROP_STRIDE values (see propKinds.ts). */
   props?: string;
   /** Float32 waterway polylines, each [count, width, x0, y0, z0, …], points run downstream. */
@@ -89,6 +93,12 @@ export interface RoadGraphData {
     c: number;
     /** One-way in a → b direction. */
     o?: 1;
+    /** Carriageway width (m); missing in graphs built before it was stored. */
+    w?: number;
+    /** Lanes (total on two-way roads). */
+    l?: number;
+    /** Centre of the rightmost lane, metres right of the centreline (a → b on one-way roads). */
+    r?: number;
     /** Polyline x, y, z from a to b, including both ends. */
     p: number[];
   }[];
@@ -152,7 +162,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', bushes: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

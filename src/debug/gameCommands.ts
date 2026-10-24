@@ -28,10 +28,13 @@ export interface GameContext {
   car: CarPhysics;
   /** Current interpolated car position. */
   pos: THREE.Vector3;
-  /** Moves the car; the game waits for the tiles there and drops it onto the ground. */
-  teleport(x: number, z: number, heading?: number): void;
+  /** Moves the car; the game waits for the tiles there and drops it onto the ground (with road, onto the nearest free road spot). */
+  teleport(x: number, z: number, heading?: number, road?: boolean): void;
   resetCar(): void;
 }
+
+/** "tp ziel": the destination marked on the big map. */
+const TARGET_WORDS = ['ziel', 'marker', 'karte', 'target'];
 
 const places = new Map<string, { x: number; z: number; heading?: number }>();
 
@@ -71,9 +74,9 @@ export function registerGameCommands(g: GameContext, state: DebugState) {
   registerCommand({
     name: 'tp',
     aliases: ['teleport'],
-    help: 'Teleportieren: lokale Koordinaten, UTM, Ort ("spawn") oder Straßenname',
-    args: '<x> <z> | utm <ost> <nord> | <ort> | "<straße>"',
-    complete: (a) => (a.length === 1 ? ['utm', ...places.keys(), ...streetNames()] : []),
+    help: 'Teleportieren: zum Kartenziel ("ziel", in der Karte auch Enter), lokale Koordinaten, UTM, Ort ("spawn") oder Straßenname',
+    args: 'ziel | <x> <z> | utm <ost> <nord> | <ort> | "<straße>"',
+    complete: (a) => (a.length === 1 ? ['ziel', 'utm', ...places.keys(), ...streetNames()] : []),
     run(a) {
       if (!a.length) throw new Error('Ziel fehlt');
       if (a[0] === 'utm') {
@@ -87,6 +90,17 @@ export function registerGameCommands(g: GameContext, state: DebugState) {
         return `Teleport zu ${x} / ${z}`;
       }
       const q = a.join(' ');
+      if (TARGET_WORDS.includes(q.toLowerCase())) {
+        const dest = g.nav.destination;
+        if (!dest) throw new Error('kein Ziel gesetzt: Karte öffnen (Tab) und auf eine Straße tippen');
+        // Face the way the route arrives; the game puts the car into the right-hand lane on a free spot.
+        const pts = g.nav.route?.pts;
+        const n = pts ? pts.length / 3 : 0;
+        const arrive = n >= 2 ? Math.atan2(pts![n * 3 - 3] - pts![n * 3 - 6], -(pts![n * 3 - 1] - pts![n * 3 - 4])) : car.heading();
+        g.teleport(dest.x, dest.z, arrive, true);
+        g.nav.clear();
+        return `Teleport zum Kartenziel: ${dest.edge.name || 'Straße ohne Namen'}`;
+      }
       const place = places.get(q.toLowerCase());
       if (place) { g.teleport(place.x, place.z, place.heading); return `Teleport zu ${q}`; }
       const s = findStreet(q);

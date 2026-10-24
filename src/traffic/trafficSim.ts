@@ -30,8 +30,6 @@ export const CAR_PALETTE = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0x
 
 /** Speed limit per road rank (m/s): 30 km/h in residential streets, 50 in town, 90 and 120 on trunk roads and motorways. */
 export const SPEED_LIMIT = [4, 5, 4, 8.3, 11, 13.9, 13.9, 13.9, 25, 33];
-/** Approximate carriageway width per rank, matching the pipeline's road classes. */
-const ROAD_WIDTH = [3, 4, 5, 6, 5.5, 7, 7.5, 8.5, 10, 11];
 /** Tracks, service roads, living streets and pedestrian zones carry no traffic. */
 export const MIN_RANK = 3;
 
@@ -111,10 +109,8 @@ const sameLane = (a: Lane | undefined, b: Lane | undefined) => !!a && !!b && a.e
 
 /** Lateral offset of the driving lane from the centre line, to the right. */
 export function laneOffset(e: Edge) {
-  const w = ROAD_WIDTH[e.rank] ?? 6;
-  // One-way roads: in the middle, except motorway carriageways where traffic keeps to the right lane.
-  if (e.oneway) return e.rank >= 8 ? w / 4 : 0;
-  return w / 4;
+  // Traffic keeps to the rightmost lane (from the pipeline's cross-section, see src/world/roadSpec.ts).
+  return e.rightLane;
 }
 
 export class TrafficSim {
@@ -466,7 +462,7 @@ export class TrafficSim {
   private stopOffset(a: Agent) {
     const n = node({ edge: a.edge, dir: a.dir });
     let w = 0;
-    for (const id of this.adj[n]) if (this.graph.edges[id] !== a.edge) w = Math.max(w, ROAD_WIDTH[this.graph.edges[id].rank] ?? 6);
+    for (const id of this.adj[n]) if (this.graph.edges[id] !== a.edge) w = Math.max(w, this.graph.edges[id].width);
     return w / 2 + 1.5 + a.spec.length / 2;
   }
 

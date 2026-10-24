@@ -36,7 +36,7 @@ export function createScene(canvas: HTMLCanvasElement, q: Quality, ground: numbe
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(65, 1, 0.3, 4000);
+  const camera = new THREE.PerspectiveCamera(52, 1, 0.3, 4000);
   const daylight = new Daylight(renderer, scene, startHours());
   const sun = daylight.sun;
   if (q.shadows) {

@@ -1,4 +1,4 @@
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import { patchPbr } from './pbrShader.ts';
 import { BUILDING, cellIndex, NATURE, STREET } from './textureSets.ts';
 
@@ -16,7 +16,8 @@ const ROAD = /* glsl */ `
   float lines = mod(floor(code / 8.0), 4.0);
   float gutter = mod(floor(code / 32.0), 2.0);
   float shoulder = mod(floor(code / 64.0), 16.0) * 0.25;
-  float width = max(2.0, floor(code / 1024.0) * 0.25);
+  float width = max(2.0, mod(floor(code / 1024.0), 256.0) * 0.25);
+  float innerL = (floor(code / 262144.0) + 1.0) * 0.25;
   if (uPbrRoadForce >= 0.0) kind = uPbrRoadForce;
   float s = clamp(vPbrUv.x, 0.0, 1.0);
   float xr = s * width;
@@ -81,8 +82,8 @@ const ROAD = /* glsl */ `
   // Edge lines (rural roads, motorways): 0.15 m, 0.25 m on motorways; worn where the wheels run.
   if (lines > 0.5 && paved > 0.5) {
     float lw = shoulder >= 2.0 ? 0.25 : 0.15;
-    float r0 = max(shoulder, 0.25);
-    float l0 = lines > 1.5 ? 0.5 : r0;
+    float r0 = shoulder;
+    float l0 = lines > 1.5 ? innerL : r0;
     float pr = smoothstep(r0 - lw - fw, r0 - lw + fw, xr) * (1.0 - smoothstep(r0 - fw, r0 + fw, xr));
     float pl = smoothstep(l0 - lw - fw, l0 - lw + fw, xl) * (1.0 - smoothstep(l0 - fw, l0 + fw, xl));
     float paint = max(pr, pl) * smoothstep(0.18, 0.4, pbrFbm(wp * 2.4) + 0.3 - level * 0.12);
@@ -137,14 +138,29 @@ const SIDEWALK = /* glsl */ `
   diffuseColor.rgb *= pbrAlbedo;
 `;
 
+/** A ground class colour in linear RGB, as GLSL. */
+const lin = (hex: string) => {
+  const c = new THREE.Color(hex);
+  return `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`;
+};
+
 /**
- * Terrain: vertex colour = weights (grass, forest, field), uv = (urban, mud), see groundWeights in tileBuild.ts.
- * Height-blended so grass grows between stones instead of cross-fading.
+ * Terrain: the ground class comes from the vertex colour (GROUND_SRGB in world/tileBuild.ts; between
+ * vertices of two classes it blends). Height-blended so grass grows between stones instead of cross-fading.
+ * The vertex colour itself is divided out again, since three multiplies it in after this body.
  */
 const GROUND = /* glsl */ `
   vec2 wp = vPbrPos.xz;
   vec2 gx = dFdx(wp), gy = dFdy(wp);
-  float wg = vColor.r, wf = vColor.g, wfi = vColor.b, wu = vPbrUv.x, wm = vPbrUv.y;
+  vec3 vc = max(vColor.rgb, vec3(1e-3));
+  // Relative distance to each class colour (the per-vertex brightness jitter is ±8 %).
+  vec3 cls[5] = vec3[](${lin('#8d8a7f')}, ${lin('#5f7a3e')}, ${lin('#3d5229')}, ${lin('#2f5566')}, ${lin('#8f8a55')});
+  float cw[5];
+  float cs = 0.0;
+  for (int i = 0; i < 5; i++) { cw[i] = pow(max(0.0, 1.0 - length(vc / cls[i] - 1.0) * 1.6), 2.0); cs += cw[i]; }
+  for (int i = 0; i < 5; i++) cw[i] /= max(cs, 1e-4);
+  float wu = cw[0], wg = cw[1], wf = cw[2], wm = cw[3], wfi = cw[4];
+  if (cs < 1e-4) wg = 1.0;
   float big = pbrFbm(wp * 0.012);
   float mid = pbrFbm(wp * 0.06 + 13.0);
   // Grass varies between lawn and meadow; fields are crops or bare soil per parcel; built-up ground is patchy.
@@ -169,8 +185,8 @@ const GROUND = /* glsl */ `
   pbrHeight = accH / accW;
   pbrUv = wp;
   pbrAlbedo *= 0.88 + 0.24 * mid * uPbrMacro + (big - 0.5) * 0.1 * uPbrMacro;
-  if (uPbrOn < 0.5) { pbrAlbedo = pbrNatureMean(0.0) * wg + pbrNatureMean(2.0) * wf + pbrNatureMean(4.0) * wfi + pbrNatureMean(3.0) * wu + pbrNatureMean(6.0) * wm; pbrRough = 0.95; }
-  diffuseColor.rgb *= pbrAlbedo;
+  if (uPbrOn < 0.5) { pbrAlbedo = vc; pbrRough = 0.95; }
+  diffuseColor.rgb *= pbrAlbedo / vc;
 `;
 
 /** Bark around the trunk (cylindrical uv with a seam-free derivative). */
@@ -230,7 +246,7 @@ export function patchSidewalk(m: THREE.MeshStandardMaterial) {
 
 export function patchGround(m: THREE.MeshStandardMaterial) {
   m.roughness = 1;
-  patchPbr(m, { key: 'ground', atlases: ['nature'], body: GROUND, ownColor: true });
+  patchPbr(m, { key: 'ground', atlases: ['nature'], body: GROUND });
 }
 
 export function patchTrunk(m: THREE.MeshStandardMaterial) {

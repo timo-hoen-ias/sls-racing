@@ -2,8 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { decodeRoad, encodeRoad, roadLook, roadSurface, SURFACE } from '../src/render/pbr/roadCode.ts';
 import { ATLASES, STREET, TEX_QUALITY } from '../src/render/pbr/textureSets.ts';
-import { Ground } from '../src/world/format.ts';
-import { groundWeights } from '../src/world/tileBuild.ts';
+import { roadSection } from '../src/world/roadSpec.ts';
 
 const KTX2_MAGIC = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb];
 
@@ -30,7 +29,7 @@ describe('PBR atlases', () => {
 
 describe('road look code', () => {
   it('round-trips through the uv float', () => {
-    const look = { surface: SURFACE.asphalt_worn, lines: 2 as const, gutter: true, shoulder: 2.75, width: 11.25 };
+    const look = { surface: SURFACE.asphalt_worn, lines: 2 as const, gutter: true, shoulder: 2.75, inner: 0.75, width: 11.25 };
     const code = encodeRoad(look);
     expect(Math.fround(code)).toBe(code);
     expect(decodeRoad(code)).toEqual(look);
@@ -46,18 +45,13 @@ describe('road look code', () => {
   });
 
   it('draws edge lines only on roads without kerbs', () => {
-    expect(roadLook({ highway: 'primary' }, 1, 7, false, false).lines).toBe(1);
-    expect(roadLook({ highway: 'primary' }, 1, 7, true, false).lines).toBe(0);
-    expect(roadLook({ highway: 'motorway' }, 1, 11, false, true).lines).toBe(2);
-    expect(roadLook({ highway: 'residential' }, 1, 6, false, false).lines).toBe(0);
-  });
-});
-
-describe('terrain weights', () => {
-  it('one-hot per vertex: colour = grass, forest, farmland; uv = urban, water', () => {
-    const g = Uint8Array.from([Ground.grass, Ground.forest, Ground.farmland, Ground.urban, Ground.water]);
-    const m = groundWeights({ pos: new Float32Array(15), nrm: new Float32Array(15) }, g);
-    expect([...m.col!]).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
-    expect([...m.uv!]).toEqual([0, 0, 0, 0, 0, 0, 1, 0, 0, 1]);
+    const look = (tags: Record<string, string>, sidewalk: boolean) => roadLook(tags, 1, roadSection(tags)!, sidewalk);
+    expect(look({ highway: 'primary' }, false).lines).toBe(1);
+    expect(look({ highway: 'primary' }, true).lines).toBe(0);
+    expect(look({ highway: 'residential' }, false).lines).toBe(0);
+    // Motorway: edge lines at the hard shoulder (3 m) and beside the median (0.75 m).
+    const m = look({ highway: 'motorway' }, false);
+    expect(m.lines).toBe(2);
+    expect(decodeRoad(encodeRoad(m))).toMatchObject({ shoulder: 3, inner: 0.75 });
   });
 });

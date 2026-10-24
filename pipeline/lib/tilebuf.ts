@@ -45,7 +45,9 @@ export interface TileBuild {
   markings: MeshBuf;
   buildings: MeshBuf;
   collide: MeshBuf;
+  sidewalks: MeshBuf;
   trees: number[];
+  lamps: number[];
 }
 
 export class TileMap {
@@ -62,7 +64,7 @@ export class TileMap {
     const key = `${ix}_${iy}`;
     let t = this.tiles.get(key);
     if (!t) {
-      t = { ix, iy, roads: new MeshBuf(), markings: new MeshBuf(), buildings: new MeshBuf(), collide: new MeshBuf(), trees: [] };
+      t = { ix, iy, roads: new MeshBuf(), markings: new MeshBuf(), buildings: new MeshBuf(), collide: new MeshBuf(), sidewalks: new MeshBuf(), trees: [], lamps: [] };
       this.tiles.set(key, t);
     }
     return t;

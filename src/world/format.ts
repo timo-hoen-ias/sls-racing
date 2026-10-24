@@ -25,6 +25,8 @@ export interface WorldIndex {
   /** Global grid indices: ix = floor(E / TILE_SIZE), iy = floor(N / TILE_SIZE). */
   tiles: [number, number][];
   spawn: { x: number; y: number; z: number; heading: number };
+  /** Road network for the minimap, street names and routing, relative to the index. */
+  graph?: string;
   attribution: string[];
 }
 
@@ -52,6 +54,30 @@ export interface TileData {
   collide?: PackedMesh;
   /** Float32 xyz + scale per tree. */
   trees?: string;
+  /** Sidewalks and kerbs (visual only). */
+  sidewalks?: PackedMesh;
+  /** Float32 x, y, z, heading per street lamp. */
+  lamps?: string;
+}
+
+/** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */
+export interface RoadGraphData {
+  v: 1;
+  names: string[];
+  /** Junction and dead-end positions, x, y, z per node. */
+  nodes: number[];
+  edges: {
+    a: number;
+    b: number;
+    /** Index into names, -1 when unnamed. */
+    n: number;
+    /** Road class rank (see pipeline ROAD_CLASSES), 0 = track … 9 = motorway. */
+    c: number;
+    /** One-way in a → b direction. */
+    o?: 1;
+    /** Polyline x, y, z from a to b, including both ends. */
+    p: number[];
+  }[];
 }
 
 export const tileKey = (ix: number, iy: number) => `${ix}_${iy}`;

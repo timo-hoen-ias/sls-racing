@@ -14,9 +14,21 @@
     <div id="speedo"><span id="speed">0</span><small>km/h</small><span id="gear">N</span></div>
     <div id="nitro"><div id="nitro-fill"></div><label>NITRO</label></div>
     <div id="info"></div>
+    <div id="nav" hidden><div id="nav-arrow"></div><div><div id="nav-dist"></div><div id="nav-street"></div></div><div id="nav-total"></div></div>
+    <div id="toast" hidden></div>
+    <div id="mini-wrap"><div id="street"></div><canvas id="minimap" aria-label="Minimap, antippen für die große Karte"></canvas></div>
     <div id="attribution"></div>
     <button id="start" type="button">Losfahren</button>
-    <div id="help">W/S oder Pfeile: Gas/Bremse · A/D: Lenken · Shift: Nitro · Leertaste: Handbremse · R: Zurücksetzen · C: Kamera · M: Ton</div>
+    <div id="help">W/S oder Pfeile: Gas/Bremse · A/D: Lenken · Shift: Nitro · Leertaste: Handbremse · R: Zurücksetzen · C: Kamera · Tab: Karte · M: Ton</div>
+  </div>
+  <div id="bigmap" hidden>
+    <canvas></canvas>
+    <div id="map-bar">
+      <span id="map-hint">Tippe auf eine Straße, um ein Ziel zu setzen.</span>
+      <button id="map-center" type="button">Zum Auto</button>
+      <button id="map-clear" type="button">Ziel löschen</button>
+      <button id="map-close" type="button">Schließen</button>
+    </div>
   </div>
   <div id="touch" hidden>
     <div id="steer-zone"><div id="steer-knob"></div></div>

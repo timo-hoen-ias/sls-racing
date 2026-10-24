@@ -12,6 +12,7 @@ import { buildBuildings } from './lib/buildings.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
+import { buildGraph } from './lib/graph.ts';
 import { buildRoads } from './lib/roads.ts';
 import { flatSampler, terrariumSampler, type HeightSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
@@ -53,9 +54,10 @@ function main() {
 
   const osm = readOsm(merged, project);
   const tiles = new TileMap(info.tileSize);
-  const samples = buildRoads(osm.ways, info, height, tiles);
+  const { graph, junctions } = buildGraph(osm.ways, info, height);
+  const samples = buildRoads(osm.ways, info, height, tiles, junctions);
   const nBuildings = buildBuildings(osm.polygons, info, height, tiles);
-  console.log(`Roads: ${samples.length} samples · Buildings: ${nBuildings}`);
+  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${nBuildings}`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
   const T = info.tileSize;
@@ -115,7 +117,9 @@ function main() {
     const tile: TileData = {
       v: 1, ix, iy, terrain: encode(h), ground: encode(g),
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
+      sidewalks: b?.sidewalks.pack(),
     };
+    if (b?.lamps.length) tile.lamps = encode(new Float32Array(b.lamps.map((v) => Math.round(v * 100) / 100)));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
     const json = JSON.stringify(tile);
@@ -138,11 +142,13 @@ function main() {
     world: info,
     regions: regions.map((r) => ({ id: r.id, name: r.name })),
     tiles: index,
+    graph: 'graph.json',
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)', 'Gelände: Terrain Tiles (AWS Open Data, SRTM/EU-DEM)']
       : ['Synthetisches Testgelände'],
   };
+  writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }

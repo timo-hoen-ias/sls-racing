@@ -20,6 +20,49 @@ export interface DebugCommand {
 const commands = new Map<string, DebugCommand>();
 const aliases = new Map<string, string>();
 
+/**
+ * Settings: a command that also has a readable value. registerToggle/registerValue/registerChoice describe theirs
+ * automatically; describeSetting() adds a getter to any other command. The options menu (src/settings) lists them.
+ */
+export interface SettingMeta {
+  kind: 'toggle' | 'value' | 'choice';
+  get(): boolean | number | string;
+  set(v: boolean | number | string): void;
+  /** value: slider range. */
+  range?: [number, number];
+  /** value: slider step (default: a twentieth of the range). */
+  step?: number;
+  /** choice: allowed values, in order. */
+  options?: string[];
+  /** choice: display names for the values. */
+  labels?: Record<string, string>;
+}
+
+const metas = new Map<string, SettingMeta>();
+const metaListeners: ((name: string) => void)[] = [];
+
+/** Marks a command as a setting with a getter and setter (for the options menu and settings.* commands). */
+export function describeSetting(name: string, meta: SettingMeta) {
+  const n = name.toLowerCase();
+  metas.set(n, meta);
+  for (const fn of metaListeners) fn(n);
+}
+
+export function settingMeta(name: string): SettingMeta | undefined {
+  const n = name.toLowerCase();
+  return commands.has(n) ? metas.get(n) : undefined;
+}
+
+/** All described settings whose command exists, sorted by name. */
+export function listSettings(): { name: string; help: string; meta: SettingMeta }[] {
+  return [...metas.entries()].filter(([n]) => commands.has(n)).map(([name, meta]) => ({ name, help: commands.get(name)!.help, meta })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Called whenever a setting is described, also for ones added later (e.g. after the sound starts). */
+export function onSettingDescribed(fn: (name: string) => void) {
+  metaListeners.push(fn);
+}
+
 export function registerCommand(cmd: DebugCommand) {
   const name = cmd.name.toLowerCase();
   if (commands.has(name)) console.warn(`[debug] Befehl "${name}" wird überschrieben`);
@@ -31,6 +74,7 @@ export function unregisterCommand(name: string) {
   const cmd = commands.get(name.toLowerCase());
   if (!cmd) return;
   commands.delete(cmd.name.toLowerCase());
+  metas.delete(cmd.name.toLowerCase());
   for (const a of cmd.aliases ?? []) if (aliases.get(a.toLowerCase()) === cmd.name.toLowerCase()) aliases.delete(a.toLowerCase());
 }
 
@@ -123,6 +167,7 @@ export function registerToggle(name: string, help: string, get: () => boolean, s
       return `${name}: ${get() ? 'an' : 'aus'}`;
     },
   });
+  describeSetting(name, { kind: 'toggle', get, set: (v) => set(!!v) });
 }
 
 /** A number: "<name>" prints it, "<name> <value>" sets it. */
@@ -134,6 +179,23 @@ export function registerValue(name: string, help: string, get: () => number, set
       return `${name} = ${+get().toFixed(3)}`;
     },
   });
+  describeSetting(name, { kind: 'value', get, set: (v) => set(Number(v)), range: Number.isFinite(range[0]) && Number.isFinite(range[1]) ? range : undefined });
+}
+
+/** One of a few words: "<name>" prints it, "<name> <option>" sets it. labels gives display names for the menu. */
+export function registerChoice(name: string, help: string, options: string[], get: () => string, set: (v: string) => void, labels?: Record<string, string>, extra: Partial<DebugCommand> = {}) {
+  registerCommand({
+    name, help, args: `[${options.join('|')}]`, complete: () => options, ...extra,
+    run([v]) {
+      if (v !== undefined) {
+        const o = options.find((x) => x.toLowerCase() === v.toLowerCase());
+        if (!o) throw new Error(`"${v}" ist keins von: ${options.join(', ')}`);
+        set(o);
+      }
+      return `${name} = ${get()}`;
+    },
+  });
+  describeSetting(name, { kind: 'choice', get, set: (v) => set(String(v)), options, labels });
 }
 
 /** Registers help/clear-independent built-ins. The UI adds clear, history and close. */

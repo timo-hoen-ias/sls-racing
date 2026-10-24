@@ -34,6 +34,16 @@ export function registerWaterCommands(water: Water) {
   factor('foam', 'water.foam', 'Schaum am Ufer (Standard 1)', 5);
   factor('distortion', 'water.distortion', 'Verzerrung der Spiegelung durch Wellen (Standard 0.02)', 0.3);
   registerCommand({
+    name: 'water.mirror.detail',
+    args: '[on|off]',
+    help: 'Straßenmöbel, Parker, Verkehr, Fußgänger und Gras auch in der Spiegelung zeichnen (Standard aus, spart Draw-Calls)',
+    complete: () => ['on', 'off'],
+    run: ([a]) => {
+      if (a) water.mirrorDetail = isOn(a) ? true : isOff(a) ? false : (() => { throw new Error('on oder off'); })();
+      return `Spiegel-Details ${water.mirrorDetail ? 'an' : 'aus'} (${water.hideInMirror.length} Ebenen)`;
+    },
+  });
+  registerCommand({
     name: 'water.mirror',
     args: '[on|off]',
     help: 'Echte Spiegelung der Umgebung (nur Qualität hoch) an/aus; aus = nur Himmel',

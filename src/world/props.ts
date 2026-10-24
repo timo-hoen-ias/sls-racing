@@ -1,5 +1,6 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { parseBool, parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import { CAR_PALETTE } from '../traffic/trafficSim.ts';
 import { VEHICLE_LOD_DISTANCE, type VehicleSet, proceduralVehicleSet } from '../traffic/vehicleGlb.ts';
@@ -73,9 +74,13 @@ export class PropLayer {
   private s = new THREE.Vector3();
   private c = new THREE.Color();
 
-  constructor(opts: { shadows: boolean; radius: number; world: WorldInfo }) {
+  /** Parked cars beyond this distance (m) are drawn as plain boxes without shadows. */
+  carBoxDistance: number;
+
+  constructor(opts: { shadows: boolean; radius: number; world: WorldInfo; carBoxes?: number }) {
     this.root.name = 'props';
     this.radius = opts.radius;
+    this.carBoxDistance = opts.carBoxes ?? 160;
     this.info = opts.world;
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.1 });
     // Chipped paint and grime as detail on the vertex colours (render/pbr), then the weather on top.
@@ -97,12 +102,13 @@ export class PropLayer {
   private carVariants = { car: 1, van: 1 };
   private shownAt = new THREE.Vector3(Infinity, 0, 0);
 
-  private addModel(key: ModelKey, parts: [THREE.BufferGeometry, THREE.Material][]) {
+  private addModel(key: ModelKey, parts: [THREE.BufferGeometry, THREE.Material][], castShadow = this.shadows) {
     const list = parts.map(([g, mt]) => {
       const im = new THREE.InstancedMesh(g, mt, 1);
+      im.name = typeof key === 'number' ? PROP_NAMES[key] : key;
       im.count = 0;
       im.frustumCulled = false;
-      im.castShadow = this.shadows;
+      im.castShadow = castShadow;
       im.receiveShadow = this.shadows;
       this.root.add(im);
       return im;
@@ -169,8 +175,11 @@ export class PropLayer {
       const variants = set[kind];
       this.carVariants[kind] = Math.max(1, variants.length);
       variants.forEach((v, n) => {
-        for (const [lod, parts] of [v.lod0, v.lod1].entries()) this.addModel(`${kind}${n}.${lod}`, [[parts.paint, paint], [parts.detail, detail], [parts.lights, detail]]);
+        this.addModel(`${kind}${n}.0`, [[v.lod0.paint, paint], [v.lod0.detail, detail], [v.lod0.lights, detail]]);
+        // The light clusters are lod0 geometry; at a distance the paint and detail are enough.
+        this.addModel(`${kind}${n}.1`, [[v.lod1.paint, paint], [v.lod1.detail, detail]]);
       });
+      if (variants[0]) this.addModel(`${kind}.box`, [[carBox(variants[0].lod1.paint), paint]], false);
     }
     this.dirty = true;
   }
@@ -227,7 +236,7 @@ export class PropLayer {
         const glb = this.glbName(kind, size);
         if (kind === Prop.parkedCar) {
           const v = size % 2 ? 'van' : 'car';
-          model = `${v}${(Math.floor(size / 2) + i) % this.carVariants[v]}.${dist > VEHICLE_LOD_DISTANCE ? 1 : 0}`;
+          model = dist > this.carBoxDistance ? `${v}.box` : `${v}${(Math.floor(size / 2) + i) % this.carVariants[v]}.${dist > VEHICLE_LOD_DISTANCE ? 1 : 0}`;
         } else if (glb) model = `glb:${glb}.${dist > PROP_LOD_DISTANCE ? 1 : 0}`;
         this.drawnKinds.set(kind, (this.drawnKinds.get(kind) ?? 0) + 1);
         if (!lists.has(model)) lists.set(model, []);
@@ -241,6 +250,7 @@ export class PropLayer {
         if (im.instanceMatrix.count < list.length) {
           // Grow in steps so a few more props don't reallocate every time.
           const grown = new THREE.InstancedMesh(im.geometry, im.material, Math.ceil(list.length * 1.5));
+          grown.name = im.name;
           grown.frustumCulled = false;
           grown.castShadow = im.castShadow;
           grown.receiveShadow = im.receiveShadow;
@@ -339,6 +349,7 @@ export class PropLayer {
 
   registerCommands(player: () => { x: number; z: number }) {
     registerToggle('props', 'Straßenmöbel und parkende Autos anzeigen', () => this.visible, (v) => (this.visible = v));
+    registerValue('props.carbox', 'Parkende Autos ab dieser Entfernung (m) als einfache Kästen ohne Schatten', () => this.carBoxDistance, (v) => { this.carBoxDistance = v; this.dirty = true; }, [0, 1500]);
     registerValue('props.radius', 'Sichtweite der Straßenmöbel und Parker in Metern', () => this.radius, (v) => { this.radius = v; this.dirty = true; }, [30, 1500]);
     registerCommand({
       name: 'props.toggle', help: `Gruppe ein/aus: ${Object.keys(PROP_GROUPS).join(', ')} oder ein einzelner Typ (${Object.values(PROP_NAMES).join(', ')})`, args: '<gruppe> [on|off]',
@@ -383,4 +394,26 @@ export class PropLayer {
     });
     registerCommand({ name: 'props.reset', help: 'Umgefahrene Requisiten wieder aufstellen', run: () => { const n = this.removedCount; this.reset(); return `${n} Requisiten wieder aufgestellt`; } });
   }
+}
+
+/** A parked car far away: body and cabin as two boxes (22 triangles) sized from the model's bounds. */
+export function carBox(model: THREE.BufferGeometry): THREE.BufferGeometry {
+  model.computeBoundingBox();
+  const b = model.boundingBox!;
+  const w = b.max.x - b.min.x, h = b.max.y - b.min.y, l = b.max.z - b.min.z;
+  const cz = (b.min.z + b.max.z) / 2, cx = (b.min.x + b.max.x) / 2;
+  const body = new THREE.BoxGeometry(w, h * 0.55, l).translate(cx, b.min.y + h * 0.275, cz);
+  const cabin = new THREE.BoxGeometry(w * 0.86, h * 0.45, l * 0.5).translate(cx, b.min.y + h * 0.775, cz - l * 0.04);
+  const out = mergeGeometries([body.deleteAttribute('uv'), cabin.deleteAttribute('uv')])!;
+  // The bottom faces are never seen.
+  const idx = out.index!.array;
+  const keep: number[] = [];
+  const pos = out.getAttribute('position');
+  for (let i = 0; i < idx.length; i += 3) {
+    const low = [0, 1, 2].every((k) => pos.getY(idx[i + k]) <= b.min.y + 1e-4);
+    if (!low) keep.push(idx[i], idx[i + 1], idx[i + 2]);
+  }
+  out.setIndex(keep);
+  out.computeBoundingSphere();
+  return out;
 }

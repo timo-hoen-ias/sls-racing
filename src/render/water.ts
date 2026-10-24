@@ -297,6 +297,10 @@ export class Water {
   /** Mirror plane height in use, for the debug console. */
   level = 0;
   mirrorActive = false;
+  /** Small detail (props, traffic, pedestrians, grass) left out of the mirror; it barely shows in rippled water. */
+  readonly hideInMirror: THREE.Object3D[] = [];
+  /** Draw everything in the mirror after all (water.mirror.detail). */
+  mirrorDetail = false;
 
   get hasMirror() {
     return !!this.mirror;
@@ -431,10 +435,13 @@ export class Water {
     const prevShadow = r.shadowMap.autoUpdate;
     r.shadowMap.autoUpdate = false;
     this.material.visible = false;
+    const hidden = this.mirrorDetail ? [] : this.hideInMirror.filter((o) => o.visible);
+    for (const o of hidden) o.visible = false;
     r.setRenderTarget(this.mirror!);
     r.clear();
     r.render(this.scene, mc);
     r.setRenderTarget(prevTarget);
+    for (const o of hidden) o.visible = true;
     this.material.visible = true;
     r.shadowMap.autoUpdate = prevShadow;
     this.mirrorActive = true;

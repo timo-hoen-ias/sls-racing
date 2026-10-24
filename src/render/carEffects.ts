@@ -35,6 +35,9 @@ export class CarEffects {
   private trails: WheelTrail[] = [0, 1, 2, 3].map(() => ({ active: false, p: point(), spare: point(), x: 0, y: 0, z: 0, smokeAcc: 0 }));
   private smokeRate: number;
   private nitroAcc = 0;
+  private sprayAcc = 0;
+  /** Road state from the weather: wet roads throw spray instead of smoke, snow throws powder. */
+  road = { wet: 0, snow: 0, puddle: 0 };
 
   private exhausts: THREE.Vector3[];
 
@@ -84,7 +87,7 @@ export class CarEffects {
             color: '#cfd2d6',
             gravity: -0.25,
             drag: 1.4,
-            alpha: 0.32 * Math.min(1, w.slip * 1.2),
+            alpha: 0.32 * Math.min(1, w.slip * 1.2) * (1 - 0.75 * Math.max(this.road.wet, this.road.snow)),
           });
         }
       }
@@ -118,6 +121,7 @@ export class CarEffects {
       tr.active = true;
     }
     this.marks.end();
+    this.spray(car, lv, dt);
 
     // Nitro: blue-white exhaust flame particles.
     if (car.boosting) {
@@ -128,6 +132,36 @@ export class CarEffects {
       }
     }
     this.particles.update(Math.min(dt, 0.05), viewHeight, camera.fov);
+  }
+
+  /** Water spray (or snow dust) thrown up behind the tyres on a wet or snowy road. */
+  private spray(car: CarPhysics, lv: { x: number; y: number; z: number }, dt: number) {
+    const { wet, snow, puddle } = this.road;
+    const v = Math.abs(car.speed);
+    const amount = Math.max(wet * 0.8 + puddle * 3, snow) * Math.min(1, (v - 4) / 25);
+    if (amount <= 0) return;
+    this.sprayAcc += dt * this.smokeRate * 1.6 * amount;
+    const white = snow > wet;
+    while (this.sprayAcc >= 1) {
+      this.sprayAcc -= 1;
+      const w = car.wheels[(Math.random() * 4) | 0];
+      if (!w.contact) continue;
+      this.particles.emit('smoke', {
+        x: w.p.x + (Math.random() - 0.5) * 0.3,
+        y: w.p.y + 0.1,
+        z: w.p.z + (Math.random() - 0.5) * 0.3,
+        vx: lv.x * 0.55 + (Math.random() - 0.5) * 1.5,
+        vy: 0.8 + Math.random() * 1.6 + puddle * 2,
+        vz: lv.z * 0.55 + (Math.random() - 0.5) * 1.5,
+        life: 0.5 + Math.random() * 0.6,
+        size: 0.5 + Math.random() * 0.4,
+        grow: 4,
+        color: white ? '#f2f4f8' : '#c4cbd3',
+        gravity: white ? 1 : 4,
+        drag: 2.2,
+        alpha: (white ? 0.3 : 0.2) * Math.min(1, amount + puddle),
+      });
+    }
   }
 
   /** Orange flame burst from the tailpipes (overrun pops). */

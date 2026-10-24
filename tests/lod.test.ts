@@ -41,11 +41,14 @@ describe('draw-call breakdown (perf.scene)', () => {
     renderer.renderBufferDirect(cam, new THREE.Scene(), g, mesh.material as THREE.Material, mesh, null as unknown as THREE.GeometryGroup);
     renderer.renderBufferDirect(new THREE.OrthographicCamera(), null as unknown as THREE.Scene, g, new THREE.MeshDepthMaterial(), mesh, null as unknown as THREE.GeometryGroup);
     renderer.renderBufferDirect(new THREE.PerspectiveCamera(), new THREE.Scene(), g, mesh.material as THREE.Material, mesh, null as unknown as THREE.GeometryGroup);
+    const masked = new THREE.Scene();
+    masked.overrideMaterial = new THREE.MeshBasicMaterial();
+    renderer.renderBufferDirect(cam, masked, g, masked.overrideMaterial, mesh, null as unknown as THREE.GeometryGroup);
     const rows = stats.end();
     expect(renderer.renderBufferDirect).toBe(orig);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     expect(rows.map((r) => r.pass).sort()).toEqual(['main', 'other', 'shadow']);
-    expect(formatDrawStats(rows)).toMatch(/^3 Draw-Calls · 0k Dreiecke \(Bild 1/);
+    expect(formatDrawStats(rows)).toMatch(/^4 Draw-Calls · 0k Dreiecke \(Bild 1/);
   });
 });
 

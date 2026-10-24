@@ -13,6 +13,7 @@ import { markCar } from './render/post/postFx.ts';
 import { createScene } from './render/scene.ts';
 import { CarPhysics } from './vehicle/carPhysics.ts';
 import { CarView } from './vehicle/carView.ts';
+import { loadSportsCar } from './vehicle/sportsCarGlb.ts';
 import { Navigation } from './nav/navigation.ts';
 import { RouteLine } from './render/routeLine.ts';
 import { BigMap } from './ui/bigMap.ts';
@@ -49,6 +50,10 @@ const $ = (id: string) => document.getElementById(id)!;
 async function boot() {
   const quality = pickQuality();
   const STEP = 1 / quality.physicsHz;
+  // The Blender car; ?car=procedural or a failed load keeps the procedural one.
+  const carModel = new URLSearchParams(location.search).get('car') === 'procedural'
+    ? Promise.resolve(undefined)
+    : loadSportsCar().catch((e) => { console.warn('[car] GLB nicht geladen, nehme das prozedurale Auto', e); return undefined; });
   const [index] = await Promise.all([
     fetch(`${TILES_URL}/index.json`).then((r) => {
       if (!r.ok) throw new Error(`Weltindex nicht gefunden (${r.status}). Erst "npm run world:build" oder "npm run world:fixture" ausführen.`);
@@ -73,7 +78,7 @@ async function boot() {
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
-  const carView = new CarView();
+  const carView = new CarView(undefined, await carModel);
   view.scene.add(carView.root);
   if (view.post) markCar(carView.root);
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);

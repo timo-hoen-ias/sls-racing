@@ -3,6 +3,8 @@ import { registerCommand } from '../debug/registry.ts';
 import type { ChaseCamera } from '../render/chaseCamera.ts';
 import { type CarPhysics, maxSteerAngle } from './carPhysics.ts';
 import type { CarView } from './carView.ts';
+import { loadSportsCar, triangleCount } from './sportsCarGlb.ts';
+import { buildSportsCar } from './sportsCarModel.ts';
 import { CAR, ENGINE } from './tuning.ts';
 
 // Debug commands for the car: gearbox, steering, engine braking, tuning, camera and sound.
@@ -68,6 +70,37 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
     run: ([col]) => {
       if (!col) throw new Error('Farbe fehlt');
       c.view.setColor(col);
+    },
+  });
+  registerCommand({
+    name: 'car.model',
+    help: 'Automodell: Blender-GLB oder prozedurales Coupé',
+    args: '[glb|procedural]',
+    complete: () => ['glb', 'procedural'],
+    run: ([m]) => {
+      const v = c.view;
+      if (m === undefined) return `${v.kind} · ${triangleCount(v.model)} Dreiecke (volle Detailstufe)`;
+      if (m !== 'glb' && m !== 'procedural') throw new Error('glb oder procedural');
+      const color = '#' + v.paintColor.getHexString();
+      if (m === 'procedural') {
+        v.setModel(buildSportsCar(color), 'procedural');
+        return 'prozedurales Coupé';
+      }
+      loadSportsCar(color).then(
+        (model) => { v.setModel(model, 'glb'); console.info('[car] GLB geladen'); },
+        (e) => console.warn('[car] GLB nicht geladen', e),
+      );
+      return 'lade GLB …';
+    },
+  });
+  registerCommand({
+    name: 'car.lod',
+    help: 'Detailstufe von Karosserie und Rädern erzwingen (0 = voll) oder auto',
+    args: '[auto|0|1|2]',
+    complete: () => ['auto', '0', '1', '2'],
+    run: ([m]) => {
+      if (m !== undefined) c.view.setLod(m === 'auto' ? null : Math.max(0, Math.round(num(m, 'stufe'))));
+      return `LOD ${c.view.lodLevel}${m === undefined || m === 'auto' ? ' (auto)' : ''}`;
     },
   });
   registerCommand({
@@ -138,6 +171,17 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
     run: ([m]) => {
       if (m !== 'chase' && m !== 'far' && m !== 'hood' && m !== 'cockpit') throw new Error('chase, far, hood oder cockpit');
       c.cam.mode = m;
+    },
+  });
+  registerCommand({
+    name: 'cam.orbit',
+    help: 'Schaukamera: fester Winkel ums Auto (0 = hinten, 180 = vorne) oder aus',
+    args: '[aus|<grad>]',
+    complete: () => ['aus', '0', '45', '135', '180'],
+    run: ([v]) => {
+      if (v === 'aus' || v === 'off') c.cam.orbit = null;
+      else if (v !== undefined) c.cam.orbit = (num(v, 'grad') * Math.PI) / 180;
+      return c.cam.orbit === null ? 'Schaukamera aus' : `Schaukamera ${Math.round((c.cam.orbit * 180) / Math.PI)}°`;
     },
   });
   registerCommand({

@@ -9,6 +9,8 @@ const UP = new THREE.Vector3(0, 1, 0);
 /** Third-person camera with speed feel: wider FOV and a little shake when fast or boosting. */
 export class ChaseCamera {
   mode: CamMode = 'chase';
+  /** Showroom view (cam.orbit): fixed angle around the car in rad (0 = behind, π = in front), or null. */
+  orbit: number | null = null;
   /** Cockpit head movement from g-forces, 0..1. */
   headbob = 1;
   /** Body-frame acceleration (m/s², x = left, z = forward) and steering, set each frame for the cockpit view. */
@@ -27,6 +29,15 @@ export class ChaseCamera {
     this.camera = camera;
   }
 
+  private showroom(carPos: THREE.Vector3, carQuat: THREE.Quaternion) {
+    const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuat).setY(0).normalize().applyAxisAngle(UP, this.orbit!);
+    this.camera.position.copy(carPos).addScaledVector(dir, -5.8).add(new THREE.Vector3(0, 1.3, 0));
+    this.camera.lookAt(carPos.x, carPos.y + 0.3, carPos.z);
+    this.camera.fov = 45;
+    this.camera.updateProjectionMatrix();
+    this.initialised = false;
+  }
+
   next() {
     this.mode = MODES[(MODES.indexOf(this.mode) + 1) % MODES.length];
   }
@@ -37,6 +48,7 @@ export class ChaseCamera {
    */
   update(carPos: THREE.Vector3, carQuat: THREE.Quaternion, speed: number, boosting: boolean, dt: number, reversing = false, lookBack = false) {
     this.camera.near = this.mode === 'cockpit' ? 0.04 : 0.3;
+    if (this.orbit !== null) { this.showroom(carPos, carQuat); return; }
     if (this.mode === 'cockpit') { this.cockpit(carPos, carQuat, speed, dt, lookBack); return; }
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuat);
     fwd.y *= 0.3;

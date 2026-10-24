@@ -62,6 +62,7 @@ import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } 
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { registerLandmarkCommands, registerWorldCommands } from './world/worldCommands.ts';
 import { Landmarks } from './world/landmarks.ts';
+import { GuideSignLayer, loadSignFont } from './world/guideSignLayer.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
@@ -130,6 +131,11 @@ async function boot() {
   view.scene.add(props.root);
   const landmarks = await Landmarks.fetch(RAPIER, world, TILES_URL, import.meta.env.BASE_URL, quality.shadows > 0);
   view.scene.add(landmarks.root);
+  // Place-name, street name, direction and motorway signs with their real text (signs.*).
+  const guideSigns = await GuideSignLayer.fetch(TILES_URL, { radius: Math.round(quality.props * 1.2), farRadius: Math.max(900, Math.round(quality.radius * 1.6)), shadows: quality.shadows > 0 });
+  guideSigns.registerPhysics(RAPIER, world);
+  view.scene.add(guideSigns.root);
+  loadSignFont().then((family) => guideSigns.setFont(family));
   const joints = await BridgeJoints.fetch(TILES_URL, index.world);
 
   const spawn = index.spawn;
@@ -183,7 +189,7 @@ async function boot() {
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
-  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root);
+  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root, guideSigns.root);
   // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
   loadProps().then((set) => {
     props.setPropSet(set);
@@ -399,6 +405,7 @@ async function boot() {
     tiles: (fn) => streamer.forEachContent(fn),
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
+  guideSigns.registerCommands(() => (hold ?? ip), (x, z, heading) => teleport(x, z, heading, true));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();
   registerGameSettings({ view, quality, cam, car, setManual, weather, input, tacho, water });
@@ -613,6 +620,7 @@ async function boot() {
     physDebug.update(dt);
     far.update(ip.x, ip.z, dt);
     landmarks.update(ip.x, ip.z);
+    guideSigns.update(view.camera.position, night, worldReady ? ip : undefined, dt);
     joints.update(dt, ip.x, ip.y, ip.z, car.speed);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.

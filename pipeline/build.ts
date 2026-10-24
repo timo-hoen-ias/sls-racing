@@ -15,6 +15,7 @@ import { Footprints, isTrafficStructure, lod2Buildings, lod2TileCount, LOD2_ATTR
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
+import { buildGuideSigns, type Place } from './lib/guideSigns.ts';
 import { type ShopBuilding, buildShops } from './lib/shops.ts';
 import { signalJunctions } from './lib/signals.ts';
 import { RoadLines, RoadMask } from './lib/clearance.ts';
@@ -193,7 +194,19 @@ function main() {
       if (kind) detected.push({ kind, e, n, size: kind === Prop.sign ? signSize(mapillarySignType(value)) : 0 });
     }
   }
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, railings });
+  // Text signs (place names, street names, direction and motorway signs); places beyond the region from the far view extract.
+  const farPlaces: Place[] = [];
+  for (const r of regions) {
+    const f = `${paths.raw(r.id)}far-osm.json`;
+    if (!existsSync(f)) continue;
+    for (const el of (JSON.parse(readFileSync(f, 'utf8')) as OsmJson).elements)
+      if (el.type === 'node' && el.tags?.place && el.tags.name) farPlaces.push({ name: el.tags.name, place: el.tags.place, ...((([e, n]) => ({ e, n }))(project(el.lon, el.lat))) });
+  }
+  const guide = buildGuideSigns(osm, { world: info, height, farPlaces });
+  console.log(`Guide signs: ${Object.entries(guide.counts).map(([k, c]) => `${k} ${c}`).join(', ')} (${farPlaces.length} places beyond the region) · skipped: ${Object.entries(guide.skipped).map(([k, c]) => `${k} ${c}`).join(', ')}`);
+  // Mapped place-name signs replace the generic ones where roads cross the postal boundary.
+  const cityLimits = guide.counts.ort === 0;
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
   const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
@@ -346,6 +359,7 @@ function main() {
   const placed = landmarkList(landmarks, info, height, (e, n) => want.has(`${Math.floor(e / T)}_${Math.floor(n / T)}`));
   writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
   console.log(`Landmarks: ${placed.length} models placed`);
+  writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);

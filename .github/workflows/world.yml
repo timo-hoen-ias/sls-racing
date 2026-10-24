@@ -5,7 +5,7 @@ name: World build
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['pipeline/**', 'src/world/format.ts', 'src/world/tileColliders.ts']
+    paths: ['pipeline/**', 'src/world/format.ts', 'src/world/tileColliders.ts', 'src/world/signSpec.ts', 'src/world/signColliders.ts']
 jobs:
   build:
     runs-on: ubuntu-latest

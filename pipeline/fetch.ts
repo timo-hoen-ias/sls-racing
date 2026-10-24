@@ -30,8 +30,9 @@ ${area}
   way["leisure"~"park|pitch|garden|playground"]${f};
   way["amenity"="parking"]${f};
   node["natural"="tree"]${f};
-  node["highway"~"^(traffic_signals|stop|give_way|bus_stop|street_lamp|crossing)$"]${f};
+  node["highway"~"^(traffic_signals|stop|give_way|bus_stop|street_lamp|crossing|motorway_junction)$"]${f};
   node["kerb"]${f};
+  node["place"~"^(city|town|village|suburb|quarter|hamlet)$"]${f};
   node["barrier"~"^(bollard|block)$"]${f};
   node["amenity"~"^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling)$"]${f};
   node["emergency"="fire_hydrant"]${f};

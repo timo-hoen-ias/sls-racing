@@ -10,6 +10,9 @@
 Der Sportwagen (generisches Coupé, keine reale Marke) ist per Blender-Python-Skript gebaut (`tools/blender/make_sportscar.py`), der Motorsound ist prozedural erzeugt.
 CC-lizenzierte Modelle und Sounds werden hier mit Autor, Quelle und Lizenz eingetragen.
 
+### Schrift der Schilder (public/fonts/)
+[Barlow Semi Condensed](https://github.com/jpt/barlow) Medium von Jeremy Tribby, **SIL Open Font License 1.1** (`public/fonts/OFL-barlow.txt`), aus dem npm-Paket `@fontsource/barlow-semi-condensed`.
+
 ### PBR-Texturen (public/textures/pbr/)
 Alle Materialien stammen von [ambientCG](https://ambientcg.com) (Lennart Demes) und stehen unter **CC0 1.0** (gemeinfrei).
 Sie werden von `tools/textures/build-textures.ts` heruntergeladen, zu Atlanten gepackt und als KTX2 (Basis Universal) kodiert.

@@ -18,12 +18,15 @@ import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
 import { ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
-import { runCommand } from './debug/registry.ts';
+import { registerCommand, runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { loadAssists, registerPhysicsCommands } from './vehicle/physicsCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { weatherCommands } from './weather/commands.ts';
+import { patchWorldMaterials } from './weather/weatherMaterials.ts';
+import { WeatherSystem } from './weather/weatherSystem.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
 
@@ -48,7 +51,9 @@ async function boot() {
   const view = createScene($('game') as HTMLCanvasElement, quality);
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
-  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, createMaterials(), quality);
+  const materials = createMaterials();
+  patchWorldMaterials(materials);
+  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, materials, quality);
   view.scene.add(streamer.root);
 
   const spawn = index.spawn;
@@ -69,6 +74,9 @@ async function boot() {
   const bigMap = new BigMap($('bigmap'), graph, nav);
   bigMap.onClose = () => (input.mapOpen = false);
   $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
+  const weather = new WeatherSystem(quality, view);
+  weather.onChange = (text) => navHud.toast(text);
+  for (const c of weatherCommands(weather)) registerCommand(c);
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);
   view.scene.add(routeLine.mesh);
   let streetTimer = 0;
@@ -81,6 +89,7 @@ async function boot() {
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sound.onBackfire = () => effects.backfire(ip, iq, car.body.linvel());
     await sound.resume().catch(() => {});
+    await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
   });
 
@@ -161,7 +170,7 @@ async function boot() {
     for (const e of input.takeEvents()) {
       if (e === 'reset') resetCar();
       if (e === 'camera') cam.next();
-      if (e === 'mute') sound?.toggleMute();
+      if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
       if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
       if (e === 'gearbox') setManual(!car.drivetrain.manual);
       if (e === 'shiftUp' || e === 'shiftDown') {
@@ -195,6 +204,7 @@ async function boot() {
     }
 
     vehicleDebug.update();
+    weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
     const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
     if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
     else frozenAt = null;
@@ -242,6 +252,9 @@ async function boot() {
       hitCooldown = 0.25;
     }
     hit = 0;
+    effects.road.wet = weather.weather.wet;
+    effects.road.snow = weather.weather.snowCover;
+    effects.road.puddle = weather.puddle;
     effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
     cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     view.follow(ip);
@@ -283,6 +296,7 @@ async function boot() {
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),
+      weather: weather.weather,
     };
     requestAnimationFrame(frame);
   };

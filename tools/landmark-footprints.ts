@@ -8,6 +8,12 @@ import proj4 from 'proj4';
 const LANDMARKS: { id: string; ways: number[] }[] = [
   { id: 'ludwigskirche', ways: [72077603] },
   { id: 'rathaus', ways: [185464136] },
+  { id: 'kommandantur', ways: [73205872] },
+  { id: 'altes-rathaus', ways: [318150393] },
+  { id: 'st-marien', ways: [292276921] },
+  { id: 'kasematten-sw', ways: [71891987] },
+  { id: 'kasematten-no', ways: [71891988] },
+  { id: 'festung-vauban-insel', ways: [71892595] },
 ];
 
 const UTM = '+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs';

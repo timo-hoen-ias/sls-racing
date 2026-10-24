@@ -375,6 +375,7 @@ async function boot() {
     R: RAPIER, world, scene: view.scene, mats, index, baseUrl: TILES_URL, pos: () => (hold ?? ip),
     teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
     print: (t) => debug.print(t, 'info'),
+    tiles: (fn) => streamer.forEachContent(fn),
   });
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();

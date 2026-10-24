@@ -8,6 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { TileContent, isGzip, tileKey, tileOfLocal, type WorldIndex } from '../src/world/format.ts';
 import { addTileColliders } from '../src/world/tileColliders.ts';
+import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, type Way } from './lib/osm.ts';
 import { halfWidthAt, halfWidths } from './lib/overlap.ts';
@@ -46,6 +47,7 @@ async function main() {
   const regions = [loadRegion(region)];
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   const height = terrainHeight(regions, unproject(cfg.zone));
+  applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
   roadHeights(osm.ways, regions, height);
 
   // Wheel tracks 1 m inside the usable road edges (narrower where a road at another height runs alongside).

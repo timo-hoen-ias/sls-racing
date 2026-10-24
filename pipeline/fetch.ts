@@ -175,11 +175,14 @@ async function main() {
     const n = await fetchTerrarium(paths.terrain, tiles, region.far.zoom);
     console.log(`Far terrain: ${tiles.length} tiles (${n} new) at z${region.far.zoom}`);
   }
-  if (region.laser) await fetchLaser(region.laser, JSON.parse(readFileSync(osmFile, 'utf8')));
+  if (region.laser || region.lod2) await fetchLaser(region, JSON.parse(readFileSync(osmFile, 'utf8')));
 }
 
-/** DGM1 for every km tile that holds part of a way (so every tile the build emits); DOM1 only where there are bridges. */
-async function fetchLaser(laser: NonNullable<RegionConfig['laser']>, osm: { elements: any[] }) {
+/**
+ * DGM1 for every km tile that holds part of a way (so every tile the build emits); DOM1 only where there are
+ * bridges; LoD2 building models wherever there are buildings.
+ */
+async function fetchLaser({ laser, lod2 }: RegionConfig, osm: { elements: any[] }) {
   const { project } = loadWorld();
   const nodes = new Map<number, [number, number]>();
   for (const el of osm.elements) if (el.type === 'node') nodes.set(el.id, project(el.lon, el.lat));
@@ -193,6 +196,11 @@ async function fetchLaser(laser: NonNullable<RegionConfig['laser']>, osm: { elem
         }
     return [...set].map((k) => k.split('_').map(Number) as [number, number]);
   };
+  if (lod2?.length) {
+    const b = await fetchLaserTiles(paths.lod2, lod2, km((t) => !!t.building && t.building !== 'no'), console.log, { match: /LoD2_32_(\d+)_(\d+)_1_.*\.gml$/, ext: 'gml' });
+    console.log(`LoD2: ${b.have} km tiles (${b.fetched} new, ${b.missing} outside the data)`);
+  }
+  if (!laser) return;
   const dgm = await fetchLaserTiles(paths.dgm1, laser.dgm1, km(() => true));
   console.log(`DGM1: ${dgm.have} km tiles (${dgm.fetched} new, ${dgm.missing} outside the data)`);
   if (!laser.dom1?.length) return;

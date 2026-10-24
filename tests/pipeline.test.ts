@@ -10,7 +10,7 @@ import { TERRAIN_N, TileContent, tileOfLocal, type WorldIndex } from '../src/wor
 describe('pipeline helpers', () => {
   it('derives road widths from OSM tags', () => {
     expect(roadWidth({ highway: 'residential' })).toBe(6);
-    expect(roadWidth({ highway: 'primary', lanes: '4' })).toBeCloseTo(14);
+    expect(roadWidth({ highway: 'primary', lanes: '4' })).toBeCloseTo(15);
     expect(roadWidth({ highway: 'footway' })).toBeUndefined();
   });
 

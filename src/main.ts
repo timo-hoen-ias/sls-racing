@@ -36,6 +36,7 @@ import { Water } from './render/water.ts';
 import { registerWaterCommands } from './render/waterCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
+import { registerScaleCommands } from './world/scaleCommands.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
@@ -237,6 +238,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;

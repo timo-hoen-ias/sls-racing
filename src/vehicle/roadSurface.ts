@@ -1,5 +1,5 @@
 import { Ground } from '../world/format.ts';
-import type { RoadGraph } from '../world/roadGraph.ts';
+import type { Edge, RoadGraph } from '../world/roadGraph.ts';
 import type { CarPhysics } from './carPhysics.ts';
 
 // What each wheel is rolling on: asphalt, cobbles, gravel, grass, field, forest floor, pavement or water.
@@ -35,8 +35,8 @@ export const SURFACES: Record<SurfaceKind, SurfaceSpec> = {
   wasser: { label: 'Wasser', grip: 0.3, rolling: 0.35, rumble: 0.2, crunch: 0.3, squeal: 0, dust: '#d6e6f0' },
 };
 
-/** Carriageway half width by road class rank (see pipeline ROAD_CLASSES), with a little margin. */
-const HALF_WIDTH = [1.8, 2.3, 3, 3.3, 3.1, 3.8, 4.1, 4.6, 5.3, 6];
+/** Carriageway half width of an edge, with a little margin. */
+const halfWidth = (e: Edge) => e.width / 2 + 0.3;
 /** Urban streets with a raised kerb along them. */
 const KERBED = (rank: number) => rank >= 2 && rank <= 7;
 /** Pavement width beside kerbed streets (pipeline SIDEWALK.width). */
@@ -45,15 +45,15 @@ const SIDEWALK = 2.2;
 /** Classifies a point: road graph first, the terrain ground class off the road. */
 export function classify(graph: RoadGraph, groundAt: (x: number, z: number) => number | undefined, x: number, z: number): { kind: SurfaceKind; rank: number } {
   const s = graph.snap(x, z, 8);
-  if (s && s.dist <= (HALF_WIDTH[s.edge.rank] ?? 3)) {
+  if (s && s.dist <= halfWidth(s.edge)) {
     const rank = s.edge.rank;
     // Pedestrian zones and living streets in Saarlouis are paved with setts; tracks are gravel.
     return { kind: rank === 0 ? 'schotter' : rank === 2 ? 'pflaster' : 'asphalt', rank };
   }
   // Streets have a raised pavement along both sides.
-  if (s && KERBED(s.edge.rank) && s.dist <= (HALF_WIDTH[s.edge.rank] ?? 3) + SIDEWALK) return { kind: 'gehweg', rank: s.edge.rank };
+  if (s && KERBED(s.edge.rank) && s.dist <= halfWidth(s.edge) + SIDEWALK) return { kind: 'gehweg', rank: s.edge.rank };
   const g = groundAt(x, z);
-  const rank = s && s.dist < (HALF_WIDTH[s.edge.rank] ?? 3) + 4 ? s.edge.rank : -1;
+  const rank = s && s.dist < halfWidth(s.edge) + 4 ? s.edge.rank : -1;
   switch (g) {
     case Ground.urban: return { kind: 'gehweg', rank };
     case Ground.forest: return { kind: 'waldboden', rank };

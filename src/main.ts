@@ -36,6 +36,7 @@ import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
+import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
@@ -119,6 +120,8 @@ async function boot() {
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
+  // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  loadVehicleParts().then((set) => traffic.view.setModels(set, 'glb'), (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
   peds.sim.events.knocked = (_, v) => {

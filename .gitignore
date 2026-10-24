@@ -6,3 +6,4 @@ public/tiles/
 .DS_Store
 .wrangler/
 *.raw.glb
+__pycache__/

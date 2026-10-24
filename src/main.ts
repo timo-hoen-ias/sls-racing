@@ -227,7 +227,7 @@ async function boot() {
   let worldReady = false;
   // The car waits here until the ground under it exists (start and teleports). Without y, it drops onto the ground.
   // With road set, the car goes onto the nearest free road spot (as on reset) once the colliders there exist.
-  let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean } | null = { ...spawn, frames: 0 };
+  let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean; wait?: number } | null = { ...spawn, frames: 0 };
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
     groundRay.origin = { x, y: 2000, z };
@@ -455,7 +455,9 @@ async function boot() {
         h.road = false;
       }
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
-      car.reset({ x: h.x, y: h.y ?? car.body.translation().y, z: h.z }, h.heading);
+      // Until the ground is there the car waits at road height (on a bridge: on the deck, not under it).
+      h.wait ??= (graph.snap(h.x, h.z, 30)?.y ?? car.body.translation().y) + 1;
+      car.reset({ x: h.x, y: h.y ?? h.wait, z: h.z }, h.heading);
       // While the world appears the camera waits behind the held car, not somewhere between old and new place.
       cam.snap();
       if (h.frames > 2 && h.y !== undefined) {

@@ -70,6 +70,8 @@ export interface TileData {
   lamps?: string;
   /** Street furniture and parked cars, Float32 records of PROP_STRIDE values (see propKinds.ts). */
   props?: string;
+  /** Float32 waterway polylines, each [count, width, x0, y0, z0, …], points run downstream. */
+  waterways?: string;
 }
 
 /** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */

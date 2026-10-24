@@ -1,6 +1,7 @@
 import { parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import type { Traffic } from './traffic.ts';
 import { KINDS, type AgentState, type VehicleKind } from './trafficSim.ts';
+import { loadVehicleParts, proceduralVehicleSet } from './vehicleGlb.ts';
 
 // Debug commands for AI traffic (traffic.*).
 
@@ -50,6 +51,33 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
       const n = sim.agents.length;
       return `${n}/${sim.target} Fahrzeuge (${Object.entries(kinds).map(([k, c]) => `${c} ${k}`).join(', ') || '–'}) · ${t.solidCount} mit Kollision\n`
         + `Zustand: ${Object.entries(states).map(([k, c]) => `${k} ${c}`).join(', ') || '–'} · Ø ${n ? ((v / n) * 3.6).toFixed(0) : 0} km/h`;
+    },
+  });
+  registerCommand({
+    name: 'traffic.models',
+    help: 'Fahrzeugmodelle: Blender-GLB (mehrere Varianten, 2 Detailstufen) oder prozedural',
+    args: '[glb|procedural]',
+    complete: () => ['glb', 'procedural'],
+    run([m]) {
+      if (m === undefined) return `traffic.models = ${t.view.models}`;
+      if (m === 'procedural') { t.view.setModels(proceduralVehicleSet(), 'procedural'); return 'prozedurale Fahrzeuge'; }
+      if (m !== 'glb') throw new Error('glb oder procedural');
+      loadVehicleParts().then((set) => t.view.setModels(set, 'glb'), (e) => console.warn('[traffic] GLB nicht geladen', e));
+      return 'lade GLB …';
+    },
+  });
+  registerCommand({
+    name: 'traffic.lod',
+    help: 'Detailstufe der KI-Fahrzeuge erzwingen (0 = voll) oder auto (ab 60 m einfacher)',
+    args: '[auto|0|1]',
+    complete: () => ['auto', '0', '1'],
+    run([m]) {
+      if (m !== undefined) {
+        if (m !== 'auto' && m !== '0' && m !== '1') throw new Error('auto, 0 oder 1');
+        t.view.forcedLod = m === 'auto' ? null : m === '0' ? 0 : 1;
+      }
+      const s = t.view.stats();
+      return `LOD ${t.view.forcedLod ?? 'auto'} · ${s.lod0} nah, ${s.lod1} fern · ${s.tris} Dreiecke`;
     },
   });
   registerCommand({

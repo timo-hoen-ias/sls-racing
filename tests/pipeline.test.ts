@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { densify, roadWidth } from '../pipeline/lib/roads.ts';
 import { buildingHeight } from '../pipeline/lib/buildings.ts';
 import { joinRings } from '../pipeline/lib/osm.ts';
-import { TERRAIN_N, decodeF32, decodeU32, tileOfLocal, type TileData, type WorldIndex } from '../src/world/format.ts';
+import { TERRAIN_N, TileContent, tileOfLocal, type WorldIndex } from '../src/world/format.ts';
 
 describe('pipeline helpers', () => {
   it('derives road widths from OSM tags', () => {
@@ -39,10 +40,13 @@ describe('fixture world build', () => {
     expect(index.tiles.length).toBeGreaterThan(20);
     const [sx, sy] = tileOfLocal(index.world, index.spawn.x, index.spawn.z);
     expect(index.tiles.some(([x, y]) => x === sx && y === sy)).toBe(true);
-    const tile: TileData = JSON.parse(readFileSync(`public/tiles/t/${sx}_${sy}.json`, 'utf8'));
-    expect(decodeF32(tile.terrain)).toHaveLength(TERRAIN_N * TERRAIN_N);
-    const pos = decodeF32(tile.roads!.pos);
-    const idx = decodeU32(tile.roads!.idx!);
+    expect(index.format).toBe('bin');
+    const buf = gunzipSync(readFileSync(`public/tiles/t/${sx}_${sy}.bin`));
+    const tile = new TileContent(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+    expect([tile.ix, tile.iy]).toEqual([sx, sy]);
+    expect(tile.f32('terrain')).toHaveLength(TERRAIN_N * TERRAIN_N);
+    const pos = tile.f32('roads.pos')!;
+    const idx = tile.u32('roads.idx')!;
     expect(Math.max(...idx)).toBeLessThan(pos.length / 3);
   });
 });

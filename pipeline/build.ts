@@ -2,13 +2,15 @@
 //   node pipeline/build.ts            all regions listed in pipeline/world.json
 //   node pipeline/build.ts saarlouis  only the named regions
 //   node pipeline/build.ts fixture    synthetic test area (no download needed)
-// Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.json
+// Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.bin (gzipped binary container, see encodeTile in format.ts)
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import {
-  Ground, TERRAIN_N, TERRAIN_STEP, encode, localToUtm, tileKey, utmToLocal,
+  FAR_N, FAR_TILE_SIZE, Ground, TERRAIN_N, TERRAIN_STEP, encode, encodeTile, localToUtm, tileKey, utmToLocal,
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
+import { buildProps } from './lib/props.ts';
 import { RoadMask } from './lib/clearance.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
@@ -19,6 +21,8 @@ import { buildRoads } from './lib/roads.ts';
 import { flatSampler, terrariumSampler, type HeightSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
 import { fixtureOsm } from './fixture.ts';
+import { buildFar } from './lib/far.ts';
+import { PROP_NAMES, type PropKind } from '../src/world/propKinds.ts';
 
 function main() {
   const { cfg, info, project } = loadWorld();
@@ -97,6 +101,8 @@ function main() {
     treesByTile.get(k)!.push(x, height(e, n), z, s);
   };
   for (const [e, n] of osm.trees) if (!onRoad.has(e, n)) addTree(e, n, 0.8 + rand(e, n) * 0.5);
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary });
+  console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
@@ -135,9 +141,12 @@ function main() {
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
-    const json = JSON.stringify(tile);
-    bytes += json.length;
-    writeFileSync(`${paths.out}t/${k}.json`, json);
+    const tileProps = props.tiles.get(k);
+    if (tileProps) tile.props = encode(new Float32Array(tileProps));
+    // Gzipped here because static hosting does not compress application/octet-stream; the client inflates it.
+    const bin = gzipSync(encodeTile(tile), { level: 9 });
+    bytes += bin.byteLength;
+    writeFileSync(`${paths.out}t/${k}.bin`, bin);
     index.push([ix, iy]);
   }
 
@@ -152,6 +161,7 @@ function main() {
   }
   const idx: WorldIndex = {
     v: 1,
+    format: 'bin',
     world: info,
     regions: regions.map((r) => ({ id: r.id, name: r.name })),
     tiles: index,
@@ -161,6 +171,23 @@ function main() {
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)', 'Gelände: Terrain Tiles (AWS Open Data, SRTM/EU-DEM)']
       : ['Synthetisches Testgelände'],
   };
+  // Far view (P3): coarse terrain and building blocks around regions that ask for it.
+  const farRegion = regions.find((r) => r.far && existsSync(`${paths.raw(r.id)}far-osm.json`));
+  if (farRegion?.far && terrarium) {
+    const farJson: OsmJson = JSON.parse(readFileSync(`${paths.raw(farRegion.id)}far-osm.json`, 'utf8'));
+    const farOsm = readOsm(farJson, project);
+    // The detailed tiles plus the far margin (the extract itself reaches further along long relations).
+    const m = farRegion.far.marginMeters;
+    const e0 = Math.min(...index.map(([ix]) => ix)) * T - m, e1 = (Math.max(...index.map(([ix]) => ix)) + 1) * T + m;
+    const n0 = Math.min(...index.map(([, iy]) => iy)) * T - m, n1 = (Math.max(...index.map(([, iy]) => iy)) + 1) * T + m;
+    // Detailed terrain where the near tiles have it, so both meet; the coarse zoom beyond.
+    const coarse = terrariumSampler(paths.terrain, farRegion.far.zoom);
+    const farHeight = (e: number, n: number) => {
+      const ll = toLonLat(e, n);
+      try { return sampler.at(...ll); } catch { return coarse.at(...ll); }
+    };
+    idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, out: paths.out }) };
+  }
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);

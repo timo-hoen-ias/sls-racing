@@ -22,6 +22,7 @@ import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
 import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { registerCommand, runCommand } from './debug/registry.ts';
+import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
@@ -31,14 +32,22 @@ import { ReplayPlayer } from './replay/replayPlayer.ts';
 import { Telemetry } from './ui/telemetry.ts';
 import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
+import { Water } from './render/water.ts';
+import { registerWaterCommands } from './render/waterCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerScaleCommands } from './world/scaleCommands.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
+import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
+import { PropLayer } from './world/props.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { registerStreamCommands } from './world/streamCommands.ts';
+import { FarField } from './world/farField.ts';
+import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
+import { PhysicsDebugView } from './debug/physicsDebug.ts';
 import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
 import { FacadeControl } from './render/facades.ts';
@@ -72,10 +81,18 @@ async function boot() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
   const mats = createMaterials();
+  const water = new Water(view.renderer, view.scene, view.camera, view.daylight, quality);
+  mats.water = water.material;
   patchWorldMaterials(mats);
   const facades = new FacadeControl(mats.building);
   const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
+  water.meshes = streamer.waterMeshes;
   view.scene.add(streamer.root);
+  const far = new FarField(TILES_URL, index, streamer, FAR_DIST[quality.name]);
+  view.scene.add(far.root);
+  const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world });
+  props.register(world);
+  view.scene.add(props.root);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -117,6 +134,8 @@ async function boot() {
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
+  // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
   peds.sim.events.knocked = (_, v) => {
@@ -209,8 +228,10 @@ async function boot() {
   const replayRot = [0, 0, 0, 0];
   const motion = { ax: 0, az: 0 };
   registerRenderCommands(view);
+  registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
@@ -233,11 +254,23 @@ async function boot() {
       worldReady = false;
     },
   }, debugState);
+  // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
+  view.renderer.info.autoReset = false;
+  const perf = new PerfMonitor($('perf'), view.renderer);
+  perf.addSource('Kacheln', () => streamer.statsLine());
+  perf.addSource('Physik', () => `${world.colliders.len()} Kollider · ${quality.physicsHz} Hz`);
+  const physDebug = new PhysicsDebugView(world);
+  view.scene.add(physDebug.lines);
+  registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
+  registerStreamCommands(streamer, quality, () => (hold ?? ip));
+  const viewDist = createViewDistance(view, quality, far);
+  if (new URLSearchParams(location.search).has('perf')) perf.setVisible(true);
   // ?cmd=day;nitro.infinite runs commands at startup.
   const bootCmd = new URLSearchParams(location.search).get('cmd');
   if (bootCmd) debug.exec(bootCmd);
 
   const frame = (now: number) => {
+    perf.tick(Math.max(0, now - last));
     // The first rAF timestamp can predate performance.now() at boot.
     const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
     last = now;
@@ -257,9 +290,10 @@ async function boot() {
     }
 
     // Hold the car until the ground under it exists.
+    perf.begin('stream');
     if (hold) {
       const h = hold;
-      streamer.update(h.x, h.z);
+      streamer.update(h.x, h.z, true);
       // Give fresh colliders a couple of physics steps before casting against them.
       if (streamer.isLoadedAround(h.x, h.z)) h.frames++;
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
@@ -278,6 +312,7 @@ async function boot() {
       const t = car.body.translation();
       streamer.update(t.x, t.z);
     }
+    perf.end('stream');
 
     vehicleDebug.update();
     weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
@@ -287,6 +322,7 @@ async function boot() {
     else frozenAt = null;
     // The physics holds still during a replay; the car carries on where it was afterwards.
     acc = replay.active ? 0 : acc + dt * debugState.timeScale;
+    perf.begin('physik');
     while (acc >= STEP) {
       prev.p.copy(curr.p);
       prev.q.copy(curr.q);
@@ -306,6 +342,7 @@ async function boot() {
       prevVel.x = lv.x; prevVel.y = lv.y; prevVel.z = lv.z;
       acc -= STEP;
     }
+    perf.end('physik');
     if (debugState.infiniteNitro) car.nitro = 1;
     const alpha = acc / STEP;
     ip.lerpVectors(prev.p, curr.p, alpha);
@@ -359,6 +396,7 @@ async function boot() {
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
+    props.update(view.camera);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
@@ -370,6 +408,7 @@ async function boot() {
     cam.motion.az = motion.az;
     cam.motion.steer = rs ? rs.steer : car.steer;
     if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    viewDist.afterCamera();
     carView.cockpit.group.visible = cam.mode === 'cockpit' && (!rs || replay.cam === 'chase');
     carView.cockpit.update({
       steer: rs ? rs.steer : car.steer, rpm: rs ? rs.rpm : car.rpm, maxRpm: ENGINE.maxRpm, shiftRpm: ENGINE.shiftRpm,
@@ -398,12 +437,20 @@ async function boot() {
     bigMap.setCar(ip.x, ip.z, heading);
     if (bigMap.open && (mapTimer -= dt) <= 0) { mapTimer = 0.5; bigMap.draw(); }
     routeLine.update(dt);
+    physDebug.update(dt);
+    far.update(ip.x, ip.z, dt);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);
     lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
     boostFx += ((car.boosting ? 1 : 0) - boostFx) * (1 - Math.exp(-dt * 5));
+    perf.begin('render');
+    perf.gpuBegin();
+    view.renderer.info.reset();
+    water.update(dt);
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
+    perf.gpuEnd();
+    perf.end('render');
 
     const dtr = car.drivetrain;
     if (rs) {
@@ -433,6 +480,7 @@ async function boot() {
       $('info').textContent = `${fps} fps · Qualität ${quality.name} · ${input.lastDevice}\nUTM 32N ${e.toFixed(0)} / ${n.toFixed(0)} · Kacheln ${streamer.loadedCount}`;
     }
     (window as any).__sls = {
+      props,
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,

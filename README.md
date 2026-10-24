@@ -42,13 +42,21 @@ Ohne lokalen Netzzugang baut der GitHub-Workflow **World build** die Kacheln und
 
 In der großen Karte setzt ein Klick oder Tipp auf eine Straße das Ziel. Das Navi berechnet die Route, zeigt sie auf Minimap und Straße an und plant neu, wenn du abweichst.
 
-Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`. Mittel und hoch nutzen die HDR-Effektkette: MSAA, volumetrische Wolken mit Wolkenschatten und God Rays, Höhennebel, Motion- und Radial-Blur (Nitro verstärkt ihn), Lens Flare und Bloom; hoch zusätzlich Ambient Occlusion (GTAO) und SMAA.
+Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`. Mittel und hoch nutzen die HDR-Effektkette: MSAA, volumetrische Wolken mit Wolkenschatten und God Rays, Distance Fog (Dunst, der sich der Sichtweite anpasst), Höhennebel in Tälern und über der Saar (morgens und nachts dichter), Motion- und Radial-Blur (Nitro verstärkt ihn), Lens Flare und leichtes Bloom; hoch zusätzlich Ambient Occlusion (GTAO) und SMAA.
 
-Tageszeit: Die Uhr läuft standardmäßig (1 Spielstunde pro echter Minute), Sonne, Himmel, Nebel, Sterne, Scheinwerfer und Straßenlaternen folgen ihr. URL: `?time=21.5` setzt die Startzeit, `?cycle=0` hält die Uhr an, `?nofx=ao,clouds,fog,blur,flare,bloom,smaa` schaltet einzelne Effekte ab. Debug-Konsole: `time 21:30`, `tag`, `nacht`, `abend`, `morgen`, `time.cycle on|off|<h/min>`, `sky.overcast 0..1`, `fx.list`, `fx.fog|blur|radial|nitroblur|godrays|flare|bloom <faktor>`, `fx.clouds 0..1|off`, `fx.ao|smaa|motionblur|atmosphere on|off`.
+Tageszeit: Die Uhr läuft standardmäßig (1 Spielstunde pro echter Minute), Sonne, Himmel, Nebel, Sterne, Scheinwerfer und Straßenlaternen folgen ihr. URL: `?time=21.5` setzt die Startzeit, `?cycle=0` hält die Uhr an, `?nofx=ao,clouds,fog,blur,flare,bloom,smaa` schaltet einzelne Effekte ab. Debug-Konsole: `time 21:30`, `tag`, `nacht`, `abend`, `morgen`, `time.cycle on|off|<h/min>`, `sky.overcast 0..1`, `fx.list`, `fx.fog|heightfog|blur|radial|nitroblur|godrays|flare|bloom <faktor>`, `fx.fogheight <m>` (Dicke der Nebelschicht), `fx.fogbase <m>` (Untergrenze relativ zum Gelände), `fx.clouds 0..1|off`, `fx.ao|smaa|motionblur|atmosphere on|off`.
+
+Wasser: Flüsse, Bäche und Gräben fließen entlang ihrer Ufer (bzw. der Waterway-Linien aus den Kacheln), mit Fresnel, Sonnenglanz, Uferschaum und Regenringen. Auf hoch spiegelt sich die Umgebung echt (Spiegelkamera auf Wasserhöhe), sonst der Himmel. Debug: `wasser`, `water.flow|waves|foam|distortion <wert>`, `water.mirror on|off`, `water.debug` (Fließrichtung einfärben).
 
 ## Debug-Konsole
 
-`^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.
+`^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`.
+
+Performance: `perf.hud` (oder `?perf` in der URL) zeigt FPS, einen Frame-Graph (grün < 17 ms, gelb, rot > 33 ms), CPU-Zeit für Streaming, Physik und Rendern, GPU-Zeit (falls der Browser `EXT_disjoint_timer_query_webgl2` kann), Draw-Calls, Dreiecke, Kollider und Kachel-Lade-/Aufbauzeiten. `perf.log 10` nimmt 10 s auf und gibt Ø, p95, p99 und die Zahl der Ruckler aus, `stream.info` zeigt den Zustand des Kachel-Streamings.
+
+Kachel-Streaming: Die Pipeline schreibt Kacheln als gzip-komprimierten Binärcontainer `t/<ix>_<iy>.bin` (Format in `src/world/format.ts`, `encodeTile`/`TileContent`). Download, Entpacken und Vertex-Aufbau laufen in Web Workern (`src/world/tileWorker.ts`), der Hauptthread verpackt nur noch fertige Arrays in Meshes und baut Kollider, in kleinen Schritten mit Zeitbudget pro Frame. Kollider gibt es nur nahe am Auto (Gelände als Heightfield). Befehle: `stream.worker on|off`, `stream.radius`, `stream.physradius`, `stream.budget`, `stream.inflight`, `stream.around`, `stream.reload`, `phys.colliders show|hide`. Neue Inhalte auf Kacheln (Requisiten, Vegetation …) hängen sich über `registerTileLayer` in `src/world/tileHooks.ts` ein, ohne `streamer.ts` zu ändern.
+
+Fernsicht: Hinter den Detailkacheln liegen grobe Fernkacheln `far/<fx>_<fy>.bin` (2048 m, Gelände im 32-m-Raster, Bodenart und Gebäude als einfache Blöcke), gebaut aus einem eigenen OSM-Ausschnitt 7 km um die Region (`"far"` in `pipeline/regions/<region>.json`). Wo eine Detailkachel sichtbar ist, blendet sich die Fernsicht per Maske aus. Befehle: `lod.far on|off`, `lod.dist <m>`, `fog.dist <m>` (0 = automatisch), `lod.info`, `lod.reload`, `lod.view <m>` hebt die Kamera zum Prüfen an. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.
 
 **Regel:** Jedes neue Feature und jede Anpassung bringt passende Debug-Befehle mit. Registrieren geht aus jedem Modul:
 
@@ -72,6 +80,8 @@ Fußgänger gehen auf den Gehwegen der Stadtstraßen und in der Fußgängerzone,
 
 Fassaden haben Charakter: Die Pipeline ordnet jedem Gebäude einen Typ zu (Wohnhaus, Altbau in der Altstadt, Mehrfamilienhaus, Büro/Geschäft, Halle, Kirche, Garage, Schule/öffentlich; `pipeline/lib/facades.ts`), an Hauptstraßen der Innenstadt bekommt das Erdgeschoss Schaufenster. Nachts leuchten zufällige Fenster. Befehle: `bld.facade [auto|typ]`, `bld.windows`, `bld.shops`, `bld.night auto|0..1`.
 
+Straßenmöbel und parkende Autos kommen aus OpenStreetMap (`pipeline/lib/props.ts`): Bushaltestellen (mit Wartehäuschen, wo gemappt), Verkehrs-, Stopp-, Vorfahrt- und Ortsschilder, Poller, Bänke, Mülleimer, Briefkästen, Container, Hydranten, Fahrradständer, Litfaßsäulen, Zäune, Mauern, Hecken und Leitplanken (auch entlang von Autobahn und Schnellstraße). Was auf der Fahrbahn gemappt ist, rückt an den Bordstein. Parkplätze bekommen Autos in Parkbuchten, Wohnstraßen halb aufgestellte Parker am Rand (`parking:*`-Tags werden beachtet). Leichte Teile sind für den Schadens-Code als umfahrbar markiert (`props.lookup/remove`). Befehle: `props on|off`, `props.toggle schilder|moebel|parker|zaeune|<typ> [on|off]`, `props.radius`, `props.count`, `props.near [radius]`, `props.reset`.
+
 Der Hall folgt der Umgebung: Raycasts links, rechts und nach oben messen Hauswände und Brücken, daraus werden offene Straße, Häuserschlucht und Unterführung überblendet, dazu ein Echo von der nächsten Wand je Seite. Die Geräuschkulisse mischt Stadtgemurmel (bebaut), Vögel und Blätter (grün), Autobahnrauschen und die Saar von dort, wo sie wirklich sind; Aufprallgeräusche klingen nach Material (Gebäude, Baum, Mast, Fahrzeug).
 
 Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb.zone [auto|stadt|gruen|autobahn|wasser]`, `amb.mix`, `amb.layer <schicht> on|off`, `amb.volume`, `amb.impact <material>`, `amb on|off`.
@@ -81,9 +91,13 @@ Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb
 Der Sportwagen wird per Blender-Python-Skript gebaut, nicht von Hand modelliert: `tools/blender/make_sportscar.py` erzeugt Karosserie, Kabine, Räder und Anbauteile, schneidet die Radhäuser per Boolean aus und legt Scheinwerfer, Fenster, Lufteinlässe und Fugen direkt als Flächen der Karosserie an. Export als GLB mit drei Detailstufen (LOD 0/1/2 für Karosserie, 2 für Räder), danach Meshopt-Kompression (`tools/compress-model.ts`, Positionen bleiben float, damit das Schadensmodell Beulen eindrücken kann).
 
 ```bash
-npm run models:build   # braucht Blender 4.2+ im PATH, schreibt public/models/sportscar.glb
+npm run models:build   # braucht Blender 4.2+ im PATH, schreibt public/models/sportscar.glb und traffic.glb
 blender --background --factory-startup --python tools/blender/preview.py -- public/models/sportscar.glb vorschau.png
 ```
+
+Der Verkehr (und später die parkenden Autos) kommt aus `tools/blender/make_traffic.py`: drei Pkw-Varianten (Kleinwagen, Limousine, Kombi), Transporter, Linienbus und Lkw, alle ohne reale Marke. Jede Variante liefert die fünf instanzierten Teile aus `vehicleModels.ts` (Lack, Details mit Vertexfarben, Lichter, Bremslicht, Warnblinker) in zwei Detailstufen; `src/traffic/vehicleGlb.ts` lädt sie, ab 60 m Kameraabstand zeichnet die Verkehrsansicht die einfachere Stufe. Debug: `traffic.models [glb|procedural]`, `traffic.lod [auto|0|1]` (zeigt auch, wie viele Fahrzeuge nah/fern sind und die Dreiecke). Gemeinsame Bausteine der Skripte liegen in `tools/blender/carlib.py`.
+
+Wahrzeichen (W7): `tools/landmark-footprints.ts` holt die OSM-Grundrisse und schreibt `pipeline/landmarks.json` (UTM 32N, je Eintrag `id`, `glb`, `e`, `n`, `heading`, `footprint`). `tools/blender/make_landmarks.py` baut darauf passend je Wahrzeichen ein GLB nach `public/models/landmarks/<id>.glb` mit `<id>_lod0`, `<id>_lod1` und `<id>_collider` (+X Ost, −Z Nord, Ursprung im Grundriss-Schwerpunkt, Sockel 1 m unter Grund), `npm run models:landmarks` baut und komprimiert sie. Bisher: St. Ludwig (neugotische Westfront mit Turm, Böhm-Schiff) und Rathaus (1950er-Bau mit Uhrturm). Die Grundrisse sind exakt, die Höhen sind aus Fotos geschätzt, bis die LoD2-Daten da sind.
 
 Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 
@@ -97,6 +111,7 @@ pipeline/            Offline-Pipeline: OSM + Gelände → Kacheln
 src/
   world/format.ts    Kachelformat und Koordinaten (geteilt von Pipeline und Spiel)
   world/streamer.ts  lädt Kacheln um das Auto, baut Meshes und Kollision
+  world/props.ts     Straßenmöbel und Parker als Kachel-Layer (Modelle in propModels.ts)
   vehicle/           Rapier-Raycast-Fahrzeug mit Arcade-Tuning, Nitro, Drift
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
   world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)

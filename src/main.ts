@@ -9,6 +9,8 @@ import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
 import { createMaterials } from './render/materials.ts';
+import { PbrTextures } from './render/pbr/pbrTextures.ts';
+import { registerTextureCommands } from './render/pbr/texCommands.ts';
 import { CarLights, LampLights } from './render/lights.ts';
 import { markCar } from './render/post/postFx.ts';
 import { createScene } from './render/scene.ts';
@@ -52,6 +54,7 @@ import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
+import { registerWorldCommands } from './world/worldCommands.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
@@ -94,6 +97,10 @@ async function boot() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
   const mats = createMaterials();
+  // PBR atlases (KTX2); the world renders with stand-ins until they are in.
+  const textures = new PbrTextures(view.renderer, quality.name);
+  textures.load().catch((e) => console.warn('[tex] PBR-Texturen nicht geladen', e));
+  registerTextureCommands(textures);
   const water = new Water(view.renderer, view.scene, view.camera, view.daylight, quality);
   mats.water = water.material;
   patchWorldMaterials(mats);
@@ -118,6 +125,7 @@ async function boot() {
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
   const lampLights = new LampLights(quality, mats.lampHead);
   view.scene.add(lampLights.root);
+  view.post?.beams.sources.push(...carLights.heads, ...lampLights.pool);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
@@ -352,6 +360,11 @@ async function boot() {
   registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
   registerStreamCommands(streamer, quality, () => (hold ?? ip));
   const viewDist = createViewDistance(view, quality, far);
+  registerWorldCommands({
+    R: RAPIER, world, scene: view.scene, mats, index, baseUrl: TILES_URL, pos: () => (hold ?? ip),
+    teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
+    print: (t) => debug.print(t, 'info'),
+  });
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();
   registerGameSettings({ view, quality, cam, car, setManual, weather, input, tacho, water });

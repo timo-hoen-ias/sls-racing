@@ -13,10 +13,9 @@ import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.t
 import { terrainHeights } from '../src/world/tileBuild.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { readOsm } from './lib/osm.ts';
-import { liftOverpasses } from './lib/overpasses.ts';
+import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
 import { densify, isDrivable, roadSurfaceHeights, ROAD_CLASSES } from './lib/roads.ts';
-import { flatSampler, terrariumSampler } from './lib/terrain.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -166,11 +165,9 @@ async function main() {
   const { cfg, project } = loadWorld();
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   // Road heights as the build computes them, so the car starts on its road (which may be lifted).
-  const terrain = loadRegion(region).terrain;
-  const sampler = terrain.source === 'terrarium' ? terrariumSampler(paths.terrain, terrain.zoom) : flatSampler();
-  const toLonLat = unproject(cfg.zone);
-  const height = (e: number, n: number) => sampler.at(...toLonLat(e, n));
-  liftOverpasses(osm.ways, height);
+  const regions = [loadRegion(region)];
+  const height = terrainHeight(regions, unproject(cfg.zone));
+  roadHeights(osm.ways, regions, height);
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
   let candidates = osm.ways.filter((w) =>

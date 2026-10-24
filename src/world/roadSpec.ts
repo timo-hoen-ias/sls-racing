@@ -44,6 +44,10 @@ export interface RoadSection {
   dividers: number[];
   /** Centre of the rightmost lane in the direction of travel (a → b for one-way roads). */
   rightLane: number;
+  /** Paved strip outside the outer lane edge (where the edge line sits), metres. */
+  outer: number;
+  /** Paved strip left of a one-way carriageway's leftmost lane, metres. */
+  inner: number;
   /** Where the width came from, for the debug console. */
   source: 'width' | 'lanes' | 'default';
 }
@@ -71,5 +75,5 @@ export function roadSection(tags: Record<string, string>): RoadSection | undefin
     dividers.push(o);
   }
   const rightLane = oneway ? left + (lanes - 0.5) * lane : lanes >= 2 ? (Math.floor(lanes / 2) - 0.5) * lane + (lanes % 2 ? lane / 2 : 0) : width / 4;
-  return { width, lanes, lane, oneway, dividers, rightLane, source: explicit ? 'width' : tagged > 0 && tagged < 10 ? 'lanes' : 'default' };
+  return { width, lanes, lane, oneway, dividers, rightLane, outer: s.outer * k, inner: s.inner * k, source: explicit ? 'width' : tagged > 0 && tagged < 10 ? 'lanes' : 'default' };
 }

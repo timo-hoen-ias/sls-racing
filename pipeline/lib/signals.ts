@@ -6,8 +6,10 @@ import type { RoadGraphData } from '../../src/world/format.ts';
 const GROUP_RADIUS = 45;
 const NODE_RADIUS = 30;
 
-/** Lights seen on street-level photos count only when a group has a mapped light or this many photo sightings. */
-const MIN_PHOTOS = 3;
+/** Lights seen on street-level photos count only when a group has a mapped light, or photo lights at this many
+ *  different spots (SPOT m apart): a junction has heads on several corners, a pedestrian crossing only two. */
+const MIN_SPOTS = 3;
+const SPOT = 6;
 
 /** points: local x, z of the signal nodes, photos: lights detected on photos. Returns [graph node, group] pairs. */
 export function signalJunctions(graph: RoadGraphData, mapped: [number, number][], photos: [number, number][] = []): [number, number][] {
@@ -28,9 +30,16 @@ export function signalJunctions(graph: RoadGraphData, mapped: [number, number][]
     }
     groups++;
   }
-  // Groups backed by OSM or by several photos.
+  // Groups backed by OSM, or by photo lights on several corners.
   const support = new Array<number>(groups).fill(0);
-  group.forEach((g, i) => (support[g] += i < mapped.length ? MIN_PHOTOS : 1));
+  const spots: [number, number][][] = Array.from({ length: groups }, () => []);
+  group.forEach((g, i) => {
+    if (i < mapped.length) { support[g] = MIN_SPOTS; return; }
+    const [x, z] = points[i];
+    if (spots[g].some(([sx, sz]) => Math.hypot(sx - x, sz - z) < SPOT)) return;
+    spots[g].push([x, z]);
+    support[g] = Math.max(support[g], spots[g].length);
+  });
   const degree = new Uint16Array(graph.nodes.length / 3);
   for (const e of graph.edges) { degree[e.a]++; degree[e.b]++; }
   const out: [number, number][] = [];
@@ -39,7 +48,7 @@ export function signalJunctions(graph: RoadGraphData, mapped: [number, number][]
     const x = graph.nodes[n * 3], z = graph.nodes[n * 3 + 2];
     let best = -1, bd = NODE_RADIUS;
     points.forEach(([px, pz], i) => {
-      if (support[group[i]] < MIN_PHOTOS) return;
+      if (support[group[i]] < MIN_SPOTS) return;
       const d = Math.hypot(px - x, pz - z);
       if (d < bd) { bd = d; best = i; }
     });

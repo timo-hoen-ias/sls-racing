@@ -10,12 +10,13 @@ function graph(): RoadGraphData {
 }
 
 describe('signal junctions', () => {
-  it('takes mapped lights, and photo lights only when seen several times', () => {
+  it('takes mapped lights, and photo lights only on several corners', () => {
     const g = graph();
     expect(signalJunctions(g, [[5, 5]]).map(([n]) => n)).toEqual([0]);
-    // Two photo sightings near the second junction are not enough, three are.
-    expect(signalJunctions(g, [[5, 5]], [[290, 8], [310, -9]]).map(([n]) => n)).toEqual([0]);
-    expect(signalJunctions(g, [[5, 5]], [[290, 8], [310, -9], [295, 12]]).map(([n]) => n)).toEqual([0, 5]);
+    // Lights on two corners of the second junction (a pedestrian crossing?) are not enough, three corners are;
+    // repeated sightings of the same light count once.
+    expect(signalJunctions(g, [[5, 5]], [[290, 8], [310, -9], [291, 9], [289, 7]]).map(([n]) => n)).toEqual([0]);
+    expect(signalJunctions(g, [[5, 5]], [[290, 8], [310, -9], [308, 10]]).map(([n]) => n)).toEqual([0, 5]);
     // A photo light next to a mapped one joins its group.
     const both = signalJunctions(g, [[5, 5]], [[-8, 6]]);
     expect(both).toEqual([[0, 0]]);

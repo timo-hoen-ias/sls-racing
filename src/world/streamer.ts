@@ -5,7 +5,7 @@ import { Ground, TERRAIN_N, TERRAIN_STEP, TileContent, tileKey, tileOfLocal, til
 import type { Quality } from '../quality.ts';
 import type { Materials } from '../render/materials.ts';
 import { Samples } from '../debug/perf.ts';
-import type { MeshArrays } from './tileBuild.ts';
+import { waterSurface, type MeshArrays } from './tileBuild.ts';
 import { tileColliderSteps } from './tileColliders.ts';
 import { tileLayers } from './tileHooks.ts';
 import { loadTile, type LoadedTileData } from './tileLoad.ts';
@@ -438,14 +438,15 @@ export class WorldStreamer implements KnockableSource {
     const wm = mesh('water', b.water, this.mats.water);
     if (wm) {
       const g = t.u8('ground')!;
-      const h = t.f32('terrain')!;
+      const h = waterSurface(t);
       let level = 0, cells = 0;
-      for (let i = 0; i < g.length; i++) if (g[i] === Ground.water) { level += h[i] - 0.15; cells++; }
+      for (let i = 0; i < g.length; i++) if (g[i] === Ground.water) { level += h[i]; cells++; }
       const [ox, oz] = tileOriginLocal(this.index.world, t.ix, t.iy);
       const { shore, flow } = waterAttributes((i) => g[i] === Ground.water, TERRAIN_N, TERRAIN_STEP, ox, oz, t.f32('waterways'));
       wm.geometry.setAttribute('shore', new THREE.BufferAttribute(shore, 1));
       wm.geometry.setAttribute('flow', new THREE.BufferAttribute(flow, 2));
       wm.userData.level = level / Math.max(1, cells);
+      wm.userData.smoothLevel = t.has('waterLevel');
       wm.renderOrder = 1;
       this.waterMeshes.add(wm);
     }

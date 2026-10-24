@@ -39,6 +39,6 @@ export function pickQuality(): Quality {
   switch (name) {
     case 'niedrig': return { name, pixelRatio: Math.min(dpr, 1.25), shadows: 0, radius: 420, antialias: false, trees: true, physicsHz: 60, effects: { skids: 1500, particles: 0.5 }, reverb: false, traffic: 24, peds: 20, props: 160, grass: 0, lod: { trees: 80, billboards: 240, bushes: 70, cars: 90 } };
     case 'mittel': return { name, pixelRatio: Math.min(dpr, 1.5), shadows: 1024, radius: 560, antialias: true, trees: true, physicsHz: 60, effects: { skids: 3000, particles: 0.8 }, reverb: true, traffic: 40, peds: 40, props: 260, grass: 2500, lod: { trees: 110, billboards: 340, bushes: 90, cars: 120 } };
-    default: return { name, pixelRatio: Math.min(dpr, 2), shadows: 2048, radius: 720, antialias: true, trees: true, physicsHz: 120, effects: { skids: 8000, particles: 1.5 }, reverb: true, traffic: 70, peds: 80, props: 400, grass: 6000, lod: { trees: 140, billboards: 450, bushes: 120, cars: 160 } };
+    default: return { name, pixelRatio: Math.min(dpr, 2), shadows: 4096, radius: 720, antialias: true, trees: true, physicsHz: 120, effects: { skids: 8000, particles: 1.5 }, reverb: true, traffic: 70, peds: 80, props: 400, grass: 6000, lod: { trees: 140, billboards: 450, bushes: 120, cars: 160 } };
   }
 }

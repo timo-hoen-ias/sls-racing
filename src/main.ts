@@ -51,6 +51,8 @@ import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
+import { loadShops } from './world/shopGlb.ts';
+import { ShopLayer } from './world/shops.ts';
 import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
@@ -114,6 +116,8 @@ async function boot() {
   view.scene.add(far.root);
   const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world, carBoxes: quality.lod.cars });
   props.register(world);
+  const shops = new ShopLayer(index.world);
+  shops.register();
   const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
@@ -156,6 +160,7 @@ async function boot() {
   bigMap.onClose = () => (input.mapOpen = false);
   $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
   const weather = new WeatherSystem(quality, view);
+  weather.precipitation.lights.push(...carLights.heads, ...lampLights.pool);
   weather.onChange = (text) => navHud.toast(text);
   for (const c of weatherCommands(weather)) registerCommand(c);
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);
@@ -178,6 +183,7 @@ async function boot() {
     if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
     peds.view.setVariants(set.peds);
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
+  loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
   peds.sim.events.knocked = (_, v) => {
     sound?.impact(Math.min(0.5, v / 30));
     input.rumble(0.5, 150);
@@ -283,6 +289,11 @@ async function boot() {
     car.reset({ x: r.x, y: r.y + 1.2, z: r.z }, r.heading);
     prevVel.x = prevVel.y = prevVel.z = 0;
     hitCooldown = 0.6;
+    // No interpolation between the old and the new spot, and no camera flight across town.
+    capture(curr);
+    prev.p.copy(curr.p);
+    prev.q.copy(curr.q);
+    cam.snap();
   };
 
   loadAssists(car);
@@ -332,6 +343,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
@@ -395,6 +407,8 @@ async function boot() {
     perf.tick(Math.max(0, now - last));
     // The first rAF timestamp can predate performance.now() at boot.
     const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+    // The fps counter uses the real frame time: dt is capped, which would show 10 fps when the game really runs at 3.
+    fpsT += Math.max(0, now - last) / 1000;
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
@@ -431,6 +445,8 @@ async function boot() {
       }
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
       car.reset({ x: h.x, y: h.y ?? car.body.translation().y, z: h.z }, h.heading);
+      // While the world appears the camera waits behind the held car, not somewhere between old and new place.
+      cam.snap();
       if (h.frames > 2 && h.y !== undefined) {
         hold = null;
         worldReady = true;
@@ -439,6 +455,7 @@ async function boot() {
         capture(curr);
         prev.p.copy(curr.p);
         prev.q.copy(curr.q);
+        cam.snap();
       }
       $('loading').hidden = worldReady;
     } else {
@@ -537,6 +554,7 @@ async function boot() {
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
+    shops.update(view.camera, view.daylight.daylight);
     vegetation.update(dt, view.camera, weather.weather);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
@@ -614,7 +632,6 @@ async function boot() {
     if (rs) tacho.update({ rpm: rs.rpm, gear: rs.gear, manual: dtr.manual, kmh: Math.abs(rs.speed) * 3.6, nitro: rs.nitro, boosting: rs.boost > 0.5, limiter: false }, dt, now / 1000);
     else tacho.update({ rpm: dtr.rpm, gear: dtr.gear, manual: dtr.manual, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
     frames++;
-    fpsT += dt;
     if (fpsT > 0.5) {
       fps = Math.round(frames / fpsT);
       frames = 0;

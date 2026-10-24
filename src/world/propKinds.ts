@@ -11,7 +11,8 @@ export const Prop = {
 } as const;
 export type PropKind = (typeof Prop)[keyof typeof Prop];
 
-/** Sign faces in props.glb. A Prop.sign record's size is the type's index here + 1 (0 = unknown sign). */
+/** Sign faces in props.glb. A Prop.sign record's size is the type's index here + 1 (0 = unknown sign),
+ * negative for signs found on photos (see DETECTED). */
 export const SIGN_TYPES = ['vorfahrtstrasse', 'vorfahrt', 'vorfahrt-achten', 'stop', 'einfahrt-verboten', 'tempo-30', 'tempo-50', 'tempo-70', 'tempo-100', 'ortsschild', 'zusatz', 'fussgaenger'] as const;
 export type SignType = (typeof SIGN_TYPES)[number];
 
@@ -20,8 +21,13 @@ export function signTypeOf(kind: PropKind, size: number): SignType | undefined {
   if (kind === Prop.stopSign) return 'stop';
   if (kind === Prop.giveWay) return 'vorfahrt-achten';
   if (kind === Prop.cityLimit) return 'ortsschild';
-  return kind === Prop.sign ? SIGN_TYPES[Math.round(size) - 1] : undefined;
+  return kind === Prop.sign ? SIGN_TYPES[Math.round(size < 0 ? DETECTED - size : size) - 1] : undefined;
 }
+
+/** Point props found on street-level photos (Mapillary) rather than in OSM have a negative size: DETECTED - sign size. */
+export const DETECTED = -1;
+export const DETECTED_KINDS = new Set<PropKind>([Prop.sign, Prop.stopSign, Prop.giveWay, Prop.bench, Prop.bin, Prop.hydrant]);
+export const isDetected = (kind: PropKind, size: number) => size < 0 && DETECTED_KINDS.has(kind);
 
 export const PROP_NAMES: Record<PropKind, string> = {
   1: 'bushaltestelle', 2: 'schild', 3: 'stoppschild', 4: 'vorfahrt-achten', 5: 'poller', 6: 'betonblock', 7: 'bank', 8: 'muelleimer',

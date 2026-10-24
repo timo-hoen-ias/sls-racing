@@ -26,9 +26,15 @@ interface ShopTile {
 const LOD_DISTANCE = 120;
 /** Fronts are drawn on tiles within this distance (m). */
 const DRAW_DISTANCE = 450;
+/** Emissive strength of the sign faces at full night. */
+const SIGN_GLOW = 0.9;
 
 export class ShopLayer {
   visible = true;
+  /** Lit signs: 'auto' follows the time of day, otherwise fixed 0..1. */
+  night: 'auto' | number = 'auto';
+  /** Current sign light 0..1. */
+  glow = 0;
   set?: ShopSet;
   private tiles = new Map<string, ShopTile>();
   private info: WorldInfo;
@@ -63,7 +69,14 @@ export class ShopLayer {
 
   setShopSet(set: ShopSet) {
     this.set = set;
-    if (set.signMaterial) patchMaterial(set.signMaterial, { wet: 0.4, snow: 0.6 });
+    if (set.signMaterial) {
+      patchMaterial(set.signMaterial, { wet: 0.4, snow: 0.6 });
+      // The sign faces glow in their own colours after dark.
+      set.signMaterial.emissive.set(0xffffff);
+      set.signMaterial.emissiveMap = set.signMaterial.map;
+      set.signMaterial.emissiveIntensity = 0;
+      set.signMaterial.needsUpdate = true;
+    }
     for (const t of this.tiles.values()) this.build(t);
   }
 
@@ -128,7 +141,9 @@ export class ShopLayer {
     }
   }
 
-  update(camera: THREE.Camera) {
+  update(camera: THREE.Camera, daylight = 1) {
+    this.glow = this.night === 'auto' ? THREE.MathUtils.smoothstep(1 - daylight, 0.35, 0.8) : this.night;
+    if (this.set?.signMaterial) this.set.signMaterial.emissiveIntensity = this.glow * SIGN_GLOW;
     const cx = camera.position.x, cz = camera.position.z;
     for (const t of this.tiles.values()) {
       const dist = Math.hypot(t.cx - cx, t.cz - cz);
@@ -175,6 +190,15 @@ export class ShopLayer {
         const p = player();
         const names = Object.entries(ShopFlag);
         return this.near(p.x, p.z, parseNum(n, 'Anzahl', 1, 50)).map((s) => `${s.kind} ${s.d.toFixed(0)} m (${s.x.toFixed(0)} ${s.z.toFixed(0)}, blickt ${Math.round((s.heading * 180) / Math.PI)}°) · ${s.width.toFixed(1)} m breit · ${names.filter(([, b]) => s.flags & b).map(([k]) => k).join(', ') || 'schlicht'}`).join('\n') || 'keine Läden in der Nähe';
+      },
+    });
+    registerCommand({
+      name: 'shops.night', help: 'Leuchtende Ladenschilder: auto (nach Tageszeit) oder fest 0..1', args: '[auto|0..1]',
+      complete: () => ['auto', '0', '1'],
+      run: ([v]) => {
+        if (v === 'auto') this.night = 'auto';
+        else if (v !== undefined) this.night = parseNum(v, 'Schilderlicht', 0, 1);
+        return `Schilderlicht ${this.night} (jetzt ${this.glow.toFixed(2)})`;
       },
     });
     registerCommand({

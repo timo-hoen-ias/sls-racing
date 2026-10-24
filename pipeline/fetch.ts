@@ -5,6 +5,8 @@ import { loadRegion, paths } from './lib/region.ts';
 import { fetchTerrarium, tilesForBbox } from './lib/terrain.ts';
 
 const OVERPASS = process.env.OVERPASS_URL ?? 'https://overpass-api.de/api/interpreter';
+// Overpass rejects generic clients; identify the project as its usage policy asks.
+const HEADERS = { 'User-Agent': 'sls-racing-pipeline/0.1 (+https://github.com/timo-hoen-ias/sls-racing)', Accept: 'application/json' };
 
 function overpassQuery(area: string, f: string): string {
   return `[out:json][timeout:300];
@@ -51,11 +53,11 @@ async function main() {
       filter = `(${b.south},${b.west},${b.north},${b.east})`;
     }
     console.log(`Overpass: ${region.name} …`);
-    const res = await fetch(OVERPASS, { method: 'POST', body: new URLSearchParams({ data: overpassQuery(area, filter) }) });
+    const res = await fetch(OVERPASS, { method: 'POST', headers: HEADERS, body: new URLSearchParams({ data: overpassQuery(area, filter) }) });
     if (!res.ok) throw new Error(`Overpass HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const json = await res.json();
     if (boundaryQuery) {
-      const b = await fetch(OVERPASS, { method: 'POST', body: new URLSearchParams({ data: boundaryQuery }) });
+      const b = await fetch(OVERPASS, { method: 'POST', headers: HEADERS, body: new URLSearchParams({ data: boundaryQuery }) });
       if (!b.ok) throw new Error(`Overpass boundary HTTP ${b.status}`);
       json.elements.push(...(await b.json()).elements);
     }

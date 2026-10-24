@@ -18,7 +18,11 @@ jobs:
       - run: npm ci
       - name: Download OSM and terrain
         run: |
-          for i in 1 2 3; do npm run world:fetch && break; echo "retry in 60 s"; sleep 60; done
+          for i in 1 2 3; do
+            npm run world:fetch && exit 0
+            echo "retry in 60 s"; sleep 60
+          done
+          exit 1
       - run: npm run world:build
       - name: Summary
         run: |

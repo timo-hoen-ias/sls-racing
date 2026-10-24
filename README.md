@@ -46,6 +46,8 @@ Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`. Mittel und hoch nutz
 
 Tageszeit: Die Uhr läuft standardmäßig (1 Spielstunde pro echter Minute), Sonne, Himmel, Nebel, Sterne, Scheinwerfer und Straßenlaternen folgen ihr. URL: `?time=21.5` setzt die Startzeit, `?cycle=0` hält die Uhr an, `?nofx=ao,clouds,fog,blur,flare,bloom,smaa` schaltet einzelne Effekte ab. Debug-Konsole: `time 21:30`, `tag`, `nacht`, `abend`, `morgen`, `time.cycle on|off|<h/min>`, `sky.overcast 0..1`, `fx.list`, `fx.fog|blur|radial|nitroblur|godrays|flare|bloom <faktor>`, `fx.clouds 0..1|off`, `fx.ao|smaa|motionblur|atmosphere on|off`.
 
+Wasser: Flüsse, Bäche und Gräben fließen entlang ihrer Ufer (bzw. der Waterway-Linien aus den Kacheln), mit Fresnel, Sonnenglanz, Uferschaum und Regenringen. Auf hoch spiegelt sich die Umgebung echt (Spiegelkamera auf Wasserhöhe), sonst der Himmel. Debug: `wasser`, `water.flow|waves|foam|distortion <wert>`, `water.mirror on|off`, `water.debug` (Fließrichtung einfärben).
+
 ## Debug-Konsole
 
 `^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.

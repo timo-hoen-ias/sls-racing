@@ -1,5 +1,6 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { waterAttributes } from '../render/water.ts';
 import {
   Ground, TERRAIN_N, TERRAIN_STEP, decodeF32, decodeU32, decodeU8, tileKey, tileOfLocal, tileOriginLocal,
   type PackedMesh, type TileData, type WorldIndex,
@@ -72,6 +73,9 @@ export class WorldStreamer {
     const head = new THREE.BoxGeometry(0.3, 0.12, 0.6).translate(0, 6.84, 1.55);
     this.lampGeo = { pole, head };
   }
+
+  /** Water surfaces of the loaded tiles (the water mirror picks its plane from them). */
+  readonly waterMeshes = new Set<THREE.Mesh>();
 
   get loadedCount() { return this.loaded.size; }
 
@@ -214,11 +218,15 @@ export class WorldStreamer {
     group.add(terrain);
     this.world.createCollider(this.R.ColliderDesc.trimesh(pos, idx).setFriction(0.9), body);
 
-    // Water surface where the ground is water.
+    // Water surface where the ground is water, with bank distance and flow for the water shader.
     if (g.some((v) => v === Ground.water)) {
       const wg = tg.clone();
       const wp = wg.getAttribute('position') as THREE.BufferAttribute;
-      for (let i = 0; i < N * N; i++) wp.setY(i, h[i] - 0.15);
+      let level = 0, cells = 0;
+      for (let i = 0; i < N * N; i++) {
+        wp.setY(i, h[i] - 0.15);
+        if (g[i] === Ground.water) { level += h[i] - 0.15; cells++; }
+      }
       const wi: number[] = [];
       for (let r = 0; r < N - 1; r++)
         for (let c = 0; c < N - 1; c++) {
@@ -227,8 +235,15 @@ export class WorldStreamer {
         }
       wg.setIndex(wi);
       wg.deleteAttribute('color');
-      wg.computeVertexNormals();
-      group.add(new THREE.Mesh(wg, this.mats.water));
+      wg.deleteAttribute('normal');
+      const { shore, flow } = waterAttributes((i) => g[i] === Ground.water, N, TERRAIN_STEP, ox, oz, t.waterways ? decodeF32(t.waterways) : undefined);
+      wg.setAttribute('shore', new THREE.BufferAttribute(shore, 1));
+      wg.setAttribute('flow', new THREE.BufferAttribute(flow, 2));
+      const wm = new THREE.Mesh(wg, this.mats.water);
+      wm.userData.level = level / Math.max(1, cells);
+      wm.renderOrder = 1;
+      group.add(wm);
+      this.waterMeshes.add(wm);
     }
 
     const mesh = (p: PackedMesh | undefined, mat: THREE.Material, opts: { collide?: boolean; cast?: boolean; receive?: boolean; flatNormals?: boolean } = {}) => {
@@ -307,6 +322,7 @@ export class WorldStreamer {
   private removeTile(t: LoadedTile) {
     this.root.remove(t.group);
     t.group.traverse((o) => {
+      this.waterMeshes.delete(o as THREE.Mesh);
       if ((o as THREE.Mesh).isMesh && !(o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.Mesh).geometry.dispose();
       if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose();
     });

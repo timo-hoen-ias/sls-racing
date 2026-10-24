@@ -30,6 +30,8 @@ import { ReplayPlayer } from './replay/replayPlayer.ts';
 import { Telemetry } from './ui/telemetry.ts';
 import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
+import { Water } from './render/water.ts';
+import { registerWaterCommands } from './render/waterCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
@@ -61,8 +63,11 @@ async function boot() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
   const materials = createMaterials();
+  const water = new Water(view.renderer, view.scene, view.camera, view.daylight, quality);
+  materials.water = water.material;
   patchWorldMaterials(materials);
   const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, materials, quality);
+  water.meshes = streamer.waterMeshes;
   view.scene.add(streamer.root);
 
   const spawn = index.spawn;
@@ -178,6 +183,7 @@ async function boot() {
   const replayRot = [0, 0, 0, 0];
   const motion = { ax: 0, az: 0 };
   registerRenderCommands(view);
+  registerWaterCommands(water);
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
@@ -362,6 +368,7 @@ async function boot() {
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);
     lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
     boostFx += ((car.boosting ? 1 : 0) - boostFx) * (1 - Math.exp(-dt * 5));
+    water.update(dt);
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
 
     const dtr = car.drivetrain;

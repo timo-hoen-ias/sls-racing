@@ -46,8 +46,11 @@ import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
+import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
+import { RailLayer } from './world/rails.ts';
+import { registerRoadsideCommands } from './world/roadsideCommands.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
@@ -60,6 +63,7 @@ import { registerStreamCommands } from './world/streamCommands.ts';
 import { registerLandmarkCommands, registerWorldCommands } from './world/worldCommands.ts';
 import { registerGroundCommands } from './world/groundCommands.ts';
 import { Landmarks } from './world/landmarks.ts';
+import { GuideSignLayer, loadSignFont } from './world/guideSignLayer.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
@@ -117,6 +121,9 @@ async function boot() {
   view.scene.add(far.root);
   const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world, carBoxes: quality.lod.cars });
   props.register(world);
+  // Guard rails: drawn per tile; their colliders come with the tile physics.
+  const rails = new RailLayer();
+  rails.register();
   const shops = new ShopLayer(index.world);
   shops.register();
   const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
@@ -125,6 +132,12 @@ async function boot() {
   view.scene.add(props.root);
   const landmarks = await Landmarks.fetch(RAPIER, world, TILES_URL, import.meta.env.BASE_URL, quality.shadows > 0);
   view.scene.add(landmarks.root);
+  // Place-name, street name, direction and motorway signs with their real text (signs.*).
+  const guideSigns = await GuideSignLayer.fetch(TILES_URL, { radius: Math.round(quality.props * 1.2), farRadius: Math.max(900, Math.round(quality.radius * 1.6)), shadows: quality.shadows > 0 });
+  guideSigns.registerPhysics(RAPIER, world);
+  view.scene.add(guideSigns.root);
+  loadSignFont().then((family) => guideSigns.setFont(family));
+  const joints = await BridgeJoints.fetch(TILES_URL, index.world);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -177,7 +190,7 @@ async function boot() {
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
-  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root);
+  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root, guideSigns.root);
   // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
   loadProps().then((set) => {
     props.setPropSet(set);
@@ -209,6 +222,7 @@ async function boot() {
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
+    joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});
     await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
@@ -220,7 +234,7 @@ async function boot() {
   let worldReady = false;
   // The car waits here until the ground under it exists (start and teleports). Without y, it drops onto the ground.
   // With road set, the car goes onto the nearest free road spot (as on reset) once the colliders there exist.
-  let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean } | null = { ...spawn, frames: 0 };
+  let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean; wait?: number } | null = { ...spawn, frames: 0 };
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
     groundRay.origin = { x, y: 2000, z };
@@ -343,6 +357,7 @@ async function boot() {
   registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  peds.sim.shops = shops;
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
@@ -371,6 +386,8 @@ async function boot() {
   };
   registerGameCommands({ R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar, teleport }, debugState);
   registerAddressCommands({ world: index.world, graph, nav, pos: ip, teleport: (x, z, heading) => teleport(x, z, heading, true) });
+  rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
+  registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
   const perf = new PerfMonitor($('perf'), view.renderer);
@@ -390,6 +407,7 @@ async function boot() {
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
   registerGroundCommands({ index, pos: () => (hold ?? ip), tiles: (fn) => streamer.forEachContent(fn) });
+  guideSigns.registerCommands(() => (hold ?? ip), (x, z, heading) => teleport(x, z, heading, true));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();
   registerGameSettings({ view, quality, cam, car, setManual, weather, input, tacho, water });
@@ -446,7 +464,9 @@ async function boot() {
         h.road = false;
       }
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
-      car.reset({ x: h.x, y: h.y ?? car.body.translation().y, z: h.z }, h.heading);
+      // Until the ground is there the car waits at road height (on a bridge: on the deck, not under it).
+      h.wait ??= (graph.snap(h.x, h.z, 30)?.y ?? car.body.translation().y) + 1;
+      car.reset({ x: h.x, y: h.y ?? h.wait, z: h.z }, h.heading);
       // While the world appears the camera waits behind the held car, not somewhere between old and new place.
       cam.snap();
       if (h.frames > 2 && h.y !== undefined) {
@@ -520,6 +540,7 @@ async function boot() {
     const night = 1 - view.daylight.daylight;
     const braking = drive.brake > 0 && car.speed > 1;
     carView.setNight(night);
+    props.setNight(night);
     const rs = replay.active ? replay.update(dt) : null;
     if (rs) {
       for (let i = 0; i < 4; i++) {
@@ -601,6 +622,8 @@ async function boot() {
     physDebug.update(dt);
     far.update(ip.x, ip.z, dt);
     landmarks.update(ip.x, ip.z);
+    guideSigns.update(view.camera.position, night, worldReady ? ip : undefined, dt);
+    joints.update(dt, ip.x, ip.y, ip.z, car.speed);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);

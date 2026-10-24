@@ -88,6 +88,8 @@ export interface TileData {
   rows?: string;
   /** Uint8 sRGB ground colour per vertex from the aerial survey (3 bytes). */
   tint?: string;
+  /** Guard rail runs, Float32 [count, flags, start, total, x0, y0, z0, …] (see guardRail.ts). */
+  rails?: string;
 }
 
 /** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */
@@ -111,6 +113,8 @@ export interface RoadGraphData {
     l?: number;
     /** Centre of the rightmost lane, metres right of the centreline (a → b on one-way roads). */
     r?: number;
+    /** Pavement with a raised kerb: bit 1 right, bit 2 left of a → b; missing in older graphs. */
+    k?: number;
     /** Polyline x, y, z from a to b, including both ends. */
     p: number[];
   }[];
@@ -176,7 +180,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

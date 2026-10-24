@@ -3,8 +3,9 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { TERRAIN_N, type TileContent, type WorldInfo, tileOriginLocal } from './format.ts';
 import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
 import { terrainHeights } from './tileBuild.ts';
+import { addRailColliders } from './guardRail.ts';
 
-export type ColliderKind = 'terrain' | 'building' | 'bridge' | 'road' | 'tree' | 'lamp';
+export type ColliderKind = 'terrain' | 'building' | 'bridge' | 'road' | 'tree' | 'lamp' | 'rail';
 
 /** Largest trimesh piece; bigger building meshes are split so no single collider build takes long. */
 export const MAX_TRIS_PER_COLLIDER = 3000;
@@ -70,6 +71,8 @@ export function tileColliderSteps(
     const l = t.f32('lamps');
     if (l) for (let i = 0; i + 3 < l.length; i += 4) add(R.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i], l[i + 1] + 3.5, l[i + 2]), 'lamp', i / 4);
   });
+  // Guard rails: boxes along the beam (guardRail.ts), the same in the game and the drive test.
+  if (t.has('rails')) steps.push(() => addRailColliders(R, world, body, t.f32('rails'), (c) => onCollider?.(c, 'rail', 0)));
   return { body, steps };
 }
 

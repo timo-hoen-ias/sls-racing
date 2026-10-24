@@ -11,21 +11,24 @@ import {
 } from '../src/world/format.ts';
 import { buildBuildings, buildLod2 } from './lib/buildings.ts';
 import { landmarkArea, landmarkList, readLandmarks } from './lib/landmarks.ts';
-import { Footprints, isTrafficStructure, lod2Buildings, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
+import { Footprints, isTrafficStructure, lod2Buildings, lod2TileCount, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
+import { buildGuideSigns, type Place } from './lib/guideSigns.ts';
 import { type ShopBuilding, buildShops } from './lib/shops.ts';
 import { signalJunctions } from './lib/signals.ts';
-import { RoadMask } from './lib/clearance.ts';
+import { RoadLines, RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
-import { roadHeights, terrainHeight } from './lib/heights.ts';
+import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
-import { buildRoads } from './lib/roads.ts';
+import { buildRoads, type Railing } from './lib/roads.ts';
+import { planKerbs } from './lib/kerbs.ts';
+import { buildRoadside } from './lib/roadside.ts';
 import { terrariumSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
@@ -71,16 +74,22 @@ function main() {
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
   roadHeights(osm.ways, regions, height, console.log);
+  // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
+  const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
+  console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const carve = new RoadCarve(TERRAIN_STEP);
-  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
+  // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
+  const real = regions.some((r) => r.boundary.type !== 'fixture');
+  const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
+  const railings: Railing[] = [];
+  const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
+  const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings });
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
   const lod2Dir = regions.some((r) => r.lod2?.length) ? paths.lod2 : undefined;
-  // Landmark models replace the generic buildings on their footprints (real regions only).
-  const real = regions.some((r) => r.boundary.type !== 'fixture');
-  const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
+  if (lod2Dir && !lod2TileCount(lod2Dir)) throw missing('LoD2', lod2Dir, regions);
   const landmarkFoot = landmarkArea(landmarks);
   const centre = (r: [number, number][]) => r.reduce(([a, b], [e, n]) => [a + e / r.length, b + n / r.length], [0, 0]);
   const footprints = new Footprints();
@@ -93,11 +102,19 @@ function main() {
     const r = b.ground[0] ?? [];
     return !r.length || !used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`);
   };
+  // Buildings a road runs through (canopies, garages, passages the survey models solid) would block it.
+  const lines = new RoadLines(osm.ways);
+  let blocking = 0;
+  const blocks = (rings: [number, number][][]) => {
+    const hit = rings.some((r) => lines.through(r) !== undefined);
+    if (hit) blocking++;
+    return hit;
+  };
   const shopBuildings: ShopBuilding[] = [];
   const onBuilding = (b: ShopBuilding) => shopBuildings.push(b);
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)), onBuilding });
-  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM`);
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding });
+  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM, ${blocking} left out on roads`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
   const T = info.tileSize;
@@ -182,10 +199,31 @@ function main() {
       if (kind) detected.push({ kind, e, n, size: kind === Prop.sign ? signSize(mapillarySignType(value)) : 0 });
     }
   }
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected });
+  // Text signs (place names, street names, direction and motorway signs); places beyond the region from the far view extract.
+  const farPlaces: Place[] = [];
+  for (const r of regions) {
+    const f = `${paths.raw(r.id)}far-osm.json`;
+    if (!existsSync(f)) continue;
+    for (const el of (JSON.parse(readFileSync(f, 'utf8')) as OsmJson).elements)
+      if (el.type === 'node' && el.tags?.place && el.tags.name) farPlaces.push({ name: el.tags.name, place: el.tags.place, ...((([e, n]) => ({ e, n }))(project(el.lon, el.lat))) });
+  }
+  const guide = buildGuideSigns(osm, { world: info, height, farPlaces });
+  console.log(`Guide signs: ${Object.entries(guide.counts).map(([k, c]) => `${k} ${c}`).join(', ')} (${farPlaces.length} places beyond the region) · skipped: ${Object.entries(guide.skipped).map(([k, c]) => `${k} ${c}`).join(', ')}`);
+  // Mapped place-name signs replace the generic ones where roads cross the postal boundary.
+  const cityLimits = guide.counts.ort === 0;
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
   const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
+  // Guard rails, delineators and chevron boards outside town (roadside.ts).
+  const roadside = buildRoadside(osm.ways, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), dressed });
+  for (const [k, list] of roadside.props) {
+    if (!props.tiles.has(k)) props.tiles.set(k, []);
+    props.tiles.get(k)!.push(...list);
+  }
+  const railTiles = roadside.rails.tiles();
+  const rc = roadside.counts;
+  console.log(`Roadside: ${rc.railKm} km guard rail (${rc.motorway} motorway, ${rc.bridges} bridge, ${rc.mapped} mapped runs, ${rc.embankments} embankment roads), ${rc.posts} delineators, ${rc.chevrons} chevron boards`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
@@ -271,6 +309,8 @@ function main() {
     if (crowns?.some((c) => c > 0)) tile.treeCrowns = encode(new Uint8Array(crowns));
     const bushes = bushesByTile.get(k);
     if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
+    const rails = railTiles.get(k);
+    if (rails) tile.rails = encode(new Float32Array(rails));
     const tileShops = shops.tiles.get(k);
     if (tileShops) tile.shops = encode(new Float32Array(tileShops));
     const tileProps = props.tiles.get(k);
@@ -332,6 +372,7 @@ function main() {
   const placed = landmarkList(landmarks, info, height, (e, n) => want.has(`${Math.floor(e / T)}_${Math.floor(n / T)}`));
   writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
   console.log(`Landmarks: ${placed.length} models placed`);
+  writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);

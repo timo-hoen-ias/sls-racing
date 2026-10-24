@@ -13,6 +13,8 @@ export interface Edge {
   lanes: number;
   /** Centre of the rightmost lane, metres right of the centreline (a → b on one-way roads). */
   rightLane: number;
+  /** Pavement sides: bit 1 right, bit 2 left of a → b; -1 when the graph predates it. */
+  kerb: number;
   /** Polyline x, y, z. */
   p: Float32Array;
   /** Cumulative length at each polyline point. */
@@ -68,7 +70,7 @@ export class RoadGraph {
       for (let i = 1; i < cum.length; i++) cum[i] = cum[i - 1] + Math.hypot(p[i * 3] - p[i * 3 - 3], p[i * 3 + 2] - p[i * 3 - 1]);
       const width = e.w ?? RANK_WIDTH[e.c] ?? 6;
       const rightLane = e.r ?? (e.o && e.c < 8 ? 0 : width / 4);
-      const edge: Edge = { id, a: e.a, b: e.b, name: e.n >= 0 ? data.names[e.n] : '', rank: e.c, oneway: !!e.o, width, lanes: e.l ?? 0, rightLane, p, cum, length: cum[cum.length - 1] };
+      const edge: Edge = { id, a: e.a, b: e.b, name: e.n >= 0 ? data.names[e.n] : '', rank: e.c, oneway: !!e.o, width, lanes: e.l ?? 0, rightLane, kerb: e.k ?? -1, p, cum, length: cum[cum.length - 1] };
       this.edges.push(edge);
       this.adj[e.a].push([id, e.b]);
       this.adj[e.b].push([id, e.a]);

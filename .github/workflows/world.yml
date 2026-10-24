@@ -5,7 +5,7 @@ name: World build
 on:
   workflow_dispatch:
   pull_request:
-    paths: ['pipeline/**', 'src/world/format.ts', 'src/world/tileColliders.ts']
+    paths: ['pipeline/**', 'src/world/format.ts', 'src/world/tileColliders.ts', 'src/world/signSpec.ts', 'src/world/signColliders.ts']
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,7 +31,7 @@ jobs:
       - name: Drive test (autopilot on 200 real roads)
         run: npm run world:drivetest -- --routes=200
       - name: Gap check (every road, every 2 m, no holes or steps)
-        run: npm run world:gaps -- --max=160 # ratchet: lower as bridge fixes land
+        run: npm run world:gaps -- --max=145 # ratchet: lower as bridge fixes land
       - name: Summary
         run: |
           echo "### Welt-Kacheln" >> $GITHUB_STEP_SUMMARY

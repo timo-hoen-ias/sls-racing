@@ -1,5 +1,5 @@
 // Street furniture and parked cars from OSM: signs, bus stops, bollards, benches, bins, post boxes, hydrants,
-// advertising columns, fences, walls, hedges, guard rails along motorways, the Saarlouis city limit signs, and
+// advertising columns, fences, walls, hedges, the Saarlouis city limit signs, and
 // parked cars on car parks and along residential streets. Everything stays off the driving lanes.
 // Output: per tile Float32 records (see src/world/propKinds.ts).
 
@@ -8,7 +8,8 @@ import { DETECTED, PROP_STRIDE, Prop, type PropKind, SIGN_TYPES, type SignType }
 import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
-import { ROAD_LIFT, densify, isDrivable, roadSurfaceHeights, roadWidth } from './roads.ts';
+import { KERB } from '../../src/world/roadSpec.ts';
+import { ROAD_LIFT, densify, isDrivable, roadSurfaceHeights, roadWidth, type Railing } from './roads.ts';
 
 interface Seg {
   ae: number; an: number; be: number; bn: number;
@@ -73,6 +74,10 @@ export interface PropOptions {
   nearLanes?: (e: number, n: number) => boolean;
   junctions: Junction[];
   boundary?: [number, number][][];
+  /** False when the place-name signs come from guideSigns.ts: no props for city limits then (default true). */
+  cityLimits?: boolean;
+  /** Pedestrian railings along bridge caps, from buildRoads. */
+  railings?: Railing[];
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
   detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
@@ -93,7 +98,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     if (!out.has(k)) out.set(k, []);
     const [x, z] = utmToLocal(o.world, e, n);
     const near = roads.nearest(e, n, 12);
-    const h = y ?? (near && near.d < near.seg.width / 2 + 3 ? Math.max(o.height(e, n), near.y - ROAD_LIFT) + ROAD_LIFT + 0.14 : o.height(e, n));
+    const h = y ?? (near && near.d < near.seg.width / 2 + 3 ? Math.max(o.height(e, n), near.y - ROAD_LIFT) + ROAD_LIFT + KERB.height : o.height(e, n));
     out.get(k)!.push(kind, r2(x), r2(h), r2(z), r3(heading), r2(size));
     counts[kind] = (counts[kind] ?? 0) + 1;
   };
@@ -132,7 +137,11 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     if (t.highway === 'bus_stop') { kind = Prop.busStop; size = t.shelter === 'yes' ? 1 : 0; }
     else if (t.highway === 'stop') kind = Prop.stopSign;
     else if (t.highway === 'give_way') kind = Prop.giveWay;
-    else if (t.traffic_sign) { kind = Prop.sign; size = signSize(osmSignType(t.traffic_sign)); }
+    else if (t.traffic_sign) {
+      kind = Prop.sign;
+      size = signSize(osmSignType(t.traffic_sign));
+      if (o.cityLimits === false && size === signSize('ortsschild')) continue;
+    }
     else if (t.barrier === 'bollard') kind = Prop.bollard;
     else if (t.barrier === 'block') kind = Prop.block;
     else if (t.amenity === 'bench') kind = Prop.bench;
@@ -149,6 +158,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   const same = (a: PropKind, b: PropKind) => a === b || (SIGNS.includes(a) && SIGNS.includes(b));
   let detected = 0;
   for (const d of o.detected ?? []) {
+    if (o.cityLimits === false && d.kind === Prop.sign && d.size === signSize('ortsschild')) continue;
     let dup = false;
     const ce = Math.floor(d.e / DEDUPE), cn = Math.floor(d.n / DEDUPE);
     for (let a = -1; a <= 1 && !dup; a++)
@@ -160,13 +170,13 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     detected++;
   }
 
-  // Fences, walls, hedges and mapped guard rails, in pieces of up to 4 m.
+  // Fences, walls and hedges, in pieces of up to 4 m (mapped guard rails: roadside.ts).
   for (const w of osm.ways) {
     const b = w.tags.barrier;
-    const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : b === 'guard_rail' ? Prop.guardRail : undefined;
+    const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : undefined;
     if (!kind) continue;
-    // Guard rails belong right at the edge; the rest keeps a car's clearance.
-    const clear = kind === Prop.guardRail ? o.onLanes : o.nearLanes ?? o.onLanes;
+    // Keep a car's clearance from the lanes.
+    const clear = o.nearLanes ?? o.onLanes;
     pieces(w.pts, 4, (e, n, de, dn, len) => {
       // The whole piece stays off the lanes, not only its centre (a barrier way crossing a street).
       for (const f of [-0.5, -0.25, 0, 0.25, 0.5]) if (clear(e + de * len * f, n + dn * len * f)) return;
@@ -174,28 +184,13 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     });
   }
 
-  // Guard rails along motorways and trunk roads, both sides, except where other roads join.
-  for (const w of osm.ways) {
-    if (!/^(motorway|trunk)$/.test(w.tags.highway) || !isDrivable(w.tags)) continue;
-    const off = roadWidth(w.tags)! / 2 + 0.8;
-    const ys = roadSurfaceHeights(w, o.height);
-    const cum = [0];
-    for (let i = 1; i < w.pts.length; i++) cum.push(cum[i - 1] + Math.hypot(w.pts[i][0] - w.pts[i - 1][0], w.pts[i][1] - w.pts[i - 1][1]));
-    let seg = 0;
-    pieces(w.pts, 4, (e, n, de, dn, len, along) => {
-      while (seg < cum.length - 2 && along > cum[seg + 1]) seg++;
-      const t = Math.min(1, Math.max(0, (along - cum[seg]) / (cum[seg + 1] - cum[seg] || 1)));
-      const y = ys[seg] + (ys[seg + 1] - ys[seg]) * t - ROAD_LIFT;
-      for (const s of [1, -1]) {
-        const pe = e + dn * off * s, pn = n - de * off * s;
-        if (o.onLanes(pe, pn) || junctionNear(pe, pn, 6)) continue;
-        add(Prop.guardRail, pe, pn, headingOf(de, dn), len, y);
-      }
-    });
-  }
+  // Guard rails (motorways, embankments, bridges, mapped ones) are their own tile field now: roadside.ts.
+
+  // Bridge railings, at the cap height buildRoads gave them.
+  for (const r of o.railings ?? []) add(Prop.railing, r.e, r.n, headingOf(r.de, r.dn), r.len, r.y);
 
   // City limit signs where roads cross the boundary.
-  for (const ring of o.boundary ?? []) {
+  for (const ring of o.cityLimits === false ? [] : o.boundary ?? []) {
     for (const w of osm.ways) {
       if (!isDrivable(w.tags) || !/^(primary|secondary|tertiary|unclassified|trunk)$/.test(w.tags.highway)) continue;
       for (let i = 1; i < w.pts.length; i++) {

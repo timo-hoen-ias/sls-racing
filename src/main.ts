@@ -43,6 +43,7 @@ import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
+import { Vegetation } from './world/vegetation.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { FarField } from './world/farField.ts';
@@ -98,6 +99,9 @@ async function boot() {
   view.scene.add(far.root);
   const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world });
   props.register(world);
+  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass });
+  vegetation.register(quality.trees);
+  view.scene.add(vegetation.root);
   view.scene.add(props.root);
 
   const spawn = index.spawn;
@@ -238,6 +242,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  vegetation.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
@@ -419,6 +424,7 @@ async function boot() {
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
+    vegetation.update(dt, view.camera, weather.weather);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
@@ -504,6 +510,7 @@ async function boot() {
     }
     (window as any).__sls = {
       props,
+      vegetation,
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,

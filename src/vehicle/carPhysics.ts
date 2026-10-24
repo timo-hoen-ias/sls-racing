@@ -1,6 +1,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { DriveInput } from '../input/input.ts';
-import { CAR } from './tuning.ts';
+import { Drivetrain } from './drivetrain.ts';
+import { CAR, ENGINE } from './tuning.ts';
 
 type R = typeof RAPIER_NS;
 
@@ -10,6 +11,20 @@ const YAW_INERTIA = (CAR.mass * ((2 * CAR.halfExtents.x) ** 2 + (2 * CAR.halfExt
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
+/** Per-wheel contact state for tyre marks, smoke and sound. */
+export interface WheelState {
+  contact: boolean;
+  /** Contact point and surface normal (world). */
+  p: { x: number; y: number; z: number };
+  n: { x: number; y: number; z: number };
+  /** Sideways sliding speed of the contact patch (m/s). */
+  lateral: number;
+  /** Longitudinal slip 0..1 (wheelspin or locked wheel). */
+  long: number;
+  /** Combined slip 0..1 as it would be heard and seen. */
+  slip: number;
+}
+
 /** Raycast vehicle with arcade assists. Body space: +z forward, +x left, +y up. */
 export class CarPhysics {
   readonly body: RAPIER_NS.RigidBody;
@@ -18,10 +33,13 @@ export class CarPhysics {
   boosting = false;
   steer = 0;
   speed = 0; // m/s along forward
-  gear = 1;
-  rpm: number = CAR.rpm.idle;
+  readonly drivetrain = new Drivetrain(ENGINE);
+  readonly wheels: WheelState[] = [0, 1, 2, 3].map(() => ({ contact: false, p: { x: 0, y: 0, z: 0 }, n: { x: 0, y: 1, z: 0 }, lateral: 0, long: 0, slip: 0 }));
+  /** Strongest tyre slip of all four wheels, 0..1. */
+  slip = 0;
   drifting = false;
   airborne = false;
+  private wheelspin = 0;
   private R: R;
 
   constructor(R: R, world: RAPIER_NS.World, pos: { x: number; y: number; z: number }, heading: number) {
@@ -30,7 +48,7 @@ export class CarPhysics {
     const desc = R.RigidBodyDesc.dynamic()
       .setTranslation(pos.x, pos.y, pos.z)
       .setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) })
-      .setLinearDamping(0.05)
+      .setLinearDamping(0.005)
       .setAngularDamping(0.8)
       .setCanSleep(false)
       .setCcdEnabled(true);
@@ -83,21 +101,33 @@ export class CarPhysics {
     this.boosting = input.nitro && this.nitro > 0.02 && input.throttle > 0.1;
     if (this.boosting) this.nitro = Math.max(0, this.nitro - CAR.nitro.drain * dt);
     else this.nitro = Math.min(1, this.nitro + (this.drifting ? CAR.nitro.driftRefill : CAR.nitro.refill) * dt);
-    const top = CAR.engine.topSpeed * (this.boosting ? CAR.nitro.topSpeed : 1);
-    const force = CAR.engine.force * (this.boosting ? CAR.nitro.force : 1);
 
-    // Engine and brakes. Brake pedal reverses once (nearly) stopped.
-    let engine = 0;
+    // Pedals: the brake pedal selects reverse once (nearly) stopped, the gas pedal brakes while reversing.
+    const dt0 = this.drivetrain;
+    const reversing = input.throttle === 0 && ((v < 1 && input.brake > 0) || (v < -0.5 && dt0.gear === -1));
     let brake = 0;
-    if (input.throttle > 0) {
-      if (v < -1) brake = CAR.brake.force * input.throttle;
-      else engine = force * input.throttle * clamp(1 - v / top, 0, 1) ** 0.6;
-    }
-    if (input.brake > 0) {
-      if (v > 1) brake = Math.max(brake, CAR.brake.force * input.brake);
-      else if (input.throttle === 0) engine = -force * 0.5 * input.brake * clamp(1 + v / CAR.engine.reverseSpeed, 0, 1);
-    }
-    if (input.throttle === 0 && input.brake === 0) brake = 6; // engine braking / rolling resistance
+    if (input.throttle > 0 && v < -1) brake = CAR.brake.force * input.throttle;
+    if (input.brake > 0 && v > 1) brake = Math.max(brake, CAR.brake.force * input.brake);
+    if (input.throttle === 0 && input.brake === 0 && absV < 1) brake = 6; // holds the car on slopes
+    const pedal = reversing ? input.brake * clamp((CAR.reverseSpeed + v) / 2, 0, 1) : v < -1 ? 0 : input.throttle;
+    dt0.update({
+      speed: v,
+      throttle: pedal,
+      brake: reversing ? 0 : input.brake,
+      reverse: reversing,
+      airborne: this.airborne,
+      freeRev: input.handbrake && input.throttle > 0 && absV < 25,
+      boost: this.boosting ? CAR.nitro.torque : 1,
+      wheelspin: this.wheelspin,
+      dt,
+    });
+    // Arcade traction control: what the tyres cannot put down spins them instead.
+    const tractionLimit = CAR.traction * CAR.mass * 9.81 * (contacts / 4) * (this.boosting ? CAR.nitro.traction : 1);
+    const wanted = dt0.force;
+    // Rapier ignores the brakes on a wheel with engine force, so braking overrides engine braking.
+    const engine = brake > 6 ? 0 : Math.sign(wanted) * Math.min(Math.abs(wanted), tractionLimit);
+    const spin = wanted > 0 && tractionLimit > 0 ? clamp((wanted / tractionLimit - 1.15) / 0.9, 0, 1) : 0;
+    this.wheelspin = absV < 30 ? spin : 0;
     // All-wheel drive, 35 % front / 65 % rear.
     for (let i = 0; i < 4; i++) {
       vc.setWheelEngineForce(i, engine * (i < 2 ? 0.35 : 0.65) * 0.5);
@@ -161,23 +191,58 @@ export class CarPhysics {
       body.applyTorqueImpulse({ x: right.x * pitch + up.x * yaw, y: right.y * pitch + up.y * yaw, z: right.z * pitch + up.z * yaw }, true);
     }
     if (this.boosting && !this.airborne) {
-      const push = 1800 * dt;
+      const push = CAR.nitro.push * dt;
       body.applyImpulse({ x: fwd.x * push, y: fwd.y * push, z: fwd.z * push }, true);
     }
-
-    // Simple gearbox for the engine sound and the HUD.
-    const ratios = CAR.gears;
-    const wheelRpm = (absV / (2 * Math.PI * CAR.wheel.radius)) * 60;
-    const rpmFor = (g: number) => wheelRpm * ratios[g] * 3.9;
-    if (v < -0.5) this.gear = -1;
-    else {
-      if (this.gear < 1) this.gear = 1;
-      if (rpmFor(this.gear) > CAR.rpm.max * 0.95 && this.gear < ratios.length - 1) this.gear++;
-      else if (this.gear > 1 && rpmFor(this.gear - 1) < CAR.rpm.max * 0.6) this.gear--;
+    // Air drag and rolling resistance oppose the velocity.
+    {
+      const lv = body.linvel();
+      const sp = Math.hypot(lv.x, lv.y, lv.z);
+      if (sp > 0.3) {
+        const f = (CAR.aero.drag * sp * sp + (this.airborne ? 0 : CAR.aero.rolling * mass * 9.81)) * dt;
+        body.applyImpulse({ x: (-lv.x / sp) * f, y: (-lv.y / sp) * f, z: (-lv.z / sp) * f }, true);
+      }
     }
-    const target = this.gear === -1 ? wheelRpm * ratios[1] * 3.9 : rpmFor(this.gear);
-    const free = CAR.rpm.idle + input.throttle * 2500;
-    this.rpm = clamp(Math.max(target, this.airborne || (input.handbrake && input.throttle) ? free + 2000 : CAR.rpm.idle), CAR.rpm.idle, CAR.rpm.max);
+    this.measureWheels(input, rot);
+  }
+
+  get rpm() { return this.drivetrain.rpm; }
+  get gear() { return this.drivetrain.gear; }
+
+  /** Contact patches and their slip, from the body's velocity at each wheel. */
+  private measureWheels(input: DriveInput, rot: { x: number; y: number; z: number; w: number }) {
+    const vc = this.controller;
+    const lv = this.body.linvel();
+    const av = this.body.angvel();
+    const c = this.body.translation();
+    const absV = Math.abs(this.speed);
+    // ABS lets the wheels lock briefly under a full stop from speed.
+    const lockBrake = input.brake > 0.75 && this.speed > 12 ? (input.brake - 0.75) * 2.4 : 0;
+    let max = 0;
+    for (let i = 0; i < 4; i++) {
+      const w = this.wheels[i];
+      w.contact = vc.wheelIsInContact(i);
+      if (!w.contact) { w.lateral = 0; w.long = 0; w.slip = 0; continue; }
+      const p = vc.wheelContactPoint(i);
+      const n = vc.wheelContactNormal(i);
+      if (!p || !n) { w.contact = false; continue; }
+      w.p.x = p.x; w.p.y = p.y; w.p.z = p.z;
+      w.n.x = n.x; w.n.y = n.y; w.n.z = n.z;
+      const rx = p.x - c.x, ry = p.y - c.y, rz = p.z - c.z;
+      const vx = lv.x + av.y * rz - av.z * ry;
+      const vy = lv.y + av.z * rx - av.x * rz;
+      const vz = lv.z + av.x * ry - av.y * rx;
+      const a = vc.wheelSteering(i) ?? 0;
+      const axle = rotate(rot, Math.cos(a), 0, -Math.sin(a));
+      w.lateral = Math.abs(vx * axle.x + vy * axle.y + vz * axle.z);
+      const rear = i >= 2;
+      let long = Math.max(this.wheelspin * (rear ? 1 : 0.6), lockBrake);
+      if (rear && input.handbrake && absV > 3) long = Math.max(long, 0.8);
+      w.long = clamp(long, 0, 1);
+      w.slip = Math.max(clamp((w.lateral - 2.2) / 6, 0, 1), w.long);
+      max = Math.max(max, w.slip);
+    }
+    this.slip = max;
   }
 
   /** Puts the car upright at a position, facing heading (0 = north). */

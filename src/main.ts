@@ -349,6 +349,8 @@ async function boot() {
     perf.tick(Math.max(0, now - last));
     // The first rAF timestamp can predate performance.now() at boot.
     const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+    // The fps counter uses the real frame time: dt is capped, which would show 10 fps when the game really runs at 3.
+    fpsT += Math.max(0, now - last) / 1000;
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
@@ -379,6 +381,8 @@ async function boot() {
       if (streamer.isLoadedAround(h.x, h.z)) h.frames++;
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
       car.reset({ x: h.x, y: h.y ?? car.body.translation().y, z: h.z }, h.heading);
+      // While the world appears the camera waits behind the held car, not somewhere between old and new place.
+      cam.snap();
       if (h.frames > 2 && h.y !== undefined) {
         hold = null;
         worldReady = true;
@@ -557,7 +561,6 @@ async function boot() {
     if (rs) tacho.update({ rpm: rs.rpm, gear: rs.gear, manual: dtr.manual, kmh: Math.abs(rs.speed) * 3.6, nitro: rs.nitro, boosting: rs.boost > 0.5, limiter: false }, dt, now / 1000);
     else tacho.update({ rpm: dtr.rpm, gear: dtr.gear, manual: dtr.manual, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
     frames++;
-    fpsT += dt;
     if (fpsT > 0.5) {
       fps = Math.round(frames / fpsT);
       frames = 0;

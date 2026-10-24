@@ -63,9 +63,17 @@ export class WeatherSound {
     return this.ctx.resume();
   }
 
+  /** Player volume from the options menu (audio.weather × audio.master). */
+  private volume = 1;
+
   toggleMute() {
     this.muted = !this.muted;
-    this.master.gain.setTargetAtTime(this.muted ? 0 : 1, this.ctx.currentTime, 0.05);
+    this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.ctx.currentTime, 0.05);
+  }
+
+  setVolume(v: number) {
+    this.volume = v;
+    this.master.gain.setTargetAtTime(this.muted ? 0 : v, this.ctx.currentTime, 0.05);
   }
 
   update(s: WeatherSoundState) {

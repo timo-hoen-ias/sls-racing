@@ -11,7 +11,7 @@ import {
 } from '../src/world/format.ts';
 import { buildBuildings, buildLod2 } from './lib/buildings.ts';
 import { landmarkArea, landmarkList, readLandmarks } from './lib/landmarks.ts';
-import { Footprints, isTrafficStructure, lod2Buildings, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
+import { Footprints, isTrafficStructure, lod2Buildings, lod2TileCount, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps } from './lib/props.ts';
@@ -20,7 +20,7 @@ import { RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
-import { roadHeights, terrainHeight } from './lib/heights.ts';
+import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
@@ -72,6 +72,7 @@ function main() {
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
   const lod2Dir = regions.some((r) => r.lod2?.length) ? paths.lod2 : undefined;
+  if (lod2Dir && !lod2TileCount(lod2Dir)) throw missing('LoD2', lod2Dir, regions);
   // Landmark models replace the generic buildings on their footprints (real regions only).
   const real = regions.some((r) => r.boundary.type !== 'fixture');
   const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];

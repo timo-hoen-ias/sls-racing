@@ -5,7 +5,8 @@ import { patchMaterial } from '../weather/weatherMaterials.ts';
 import { Ground, TERRAIN_N, TERRAIN_STEP, type WorldInfo, tileOriginLocal } from './format.ts';
 import type { RoadGraph } from './roadGraph.ts';
 import { registerTileLayer } from './tileHooks.ts';
-import { BUSH_STRIDE, TREE_NAMES, Tree, type TreeKind } from './vegKinds.ts';
+import { SPECIES_BY_KIND, type VegetationSet, loadVegetation } from './vegGlb.ts';
+import { BUSH_STRIDE, Bush, TREE_NAMES, Tree, type TreeKind } from './vegKinds.ts';
 import { buildBushGeometries, buildGrassGeometry, buildTreeGeometries, grassTexture } from './vegModels.ts';
 
 // Vegetation (W6) as a tile layer: trees by species with two levels of detail, bushes, grass clumps around the
@@ -89,18 +90,40 @@ float vgNoise(vec2 p) {
   mat.needsUpdate = true;
 }
 
+/** One way to draw a kind: geometries per detail tier (near, mid, far), their materials, and a size factor. */
+interface VegModel {
+  lods: THREE.BufferGeometry[];
+  mats: THREE.Material[];
+  /** Height factor and crown width factor on top of the tile's scale. */
+  h: number;
+  w: number;
+}
+
+interface VegGroup {
+  kind: TreeKind | -1;
+  /** One instanced mesh per detail tier. */
+  meshes: THREE.InstancedMesh[];
+  n: number;
+}
+
 interface VegTile {
   key: string;
   cx: number;
   cz: number;
-  /** Per kind: [lod0, lod1] meshes and the full instance count. */
-  trees: { kind: TreeKind; lod: [THREE.InstancedMesh, THREE.InstancedMesh]; n: number }[];
-  bushes: { mesh: THREE.InstancedMesh; n: number }[];
+  group: THREE.Group;
+  shadows: boolean;
+  trees?: Float32Array;
+  kinds?: Uint8Array;
+  bushes?: Float32Array;
+  groups: VegGroup[];
   heights: Float32Array;
   ground: Uint8Array;
   ox: number;
   oz: number;
 }
+
+/** Height of the Blender species (all 8 m) per kind, relative to a tree of scale 1. */
+const KIND_HEIGHT: Record<TreeKind, number> = { 0: 1.05, 1: 1.35, 2: 1.7, 3: 1.1, 4: 0.6 };
 
 export class Vegetation {
   /** Grass clumps around the camera (the trees and bushes live in the tile groups). */
@@ -113,13 +136,16 @@ export class Vegetation {
   wind: 'auto' | number = 'auto';
   windNow = 0.3;
   /** Forces one LOD for all tiles (veg.lod 0|1), undefined = by distance. */
-  forcedLod?: 0 | 1;
+  forcedLod?: 0 | 1 | 2;
+  /** Which tree models are in use. */
+  models: 'glb' | 'procedural' = 'procedural';
   grassOn: boolean;
   grassRadius = 32;
   readonly groundUniforms = { uVegFields: { value: 1 } };
   private tiles = new Map<string, VegTile>();
-  private treeGeo = buildTreeGeometries();
-  private bushGeo = buildBushGeometries();
+  private treeModels = {} as Record<TreeKind, VegModel[]>;
+  private bushModels: Record<number, VegModel[]> = {};
+  private billboardMat?: THREE.MeshStandardMaterial;
   private treeMat: THREE.MeshStandardMaterial;
   private bushMat: THREE.MeshStandardMaterial;
   private grass: THREE.InstancedMesh;
@@ -145,6 +171,7 @@ export class Vegetation {
     this.root.name = 'vegetation';
     this.root.add(this.grass);
     patchGroundDetail(opts.mats.ground, this.groundUniforms);
+    this.setProcedural();
   }
 
   /** Hooks into the tile streamer; call once at startup, before tiles load. */
@@ -154,41 +181,13 @@ export class Vegetation {
       visual: (t, ctx) => {
         const [ox, oz] = tileOriginLocal(this.info, t.ix, t.iy);
         const tile: VegTile = {
-          key: t.key, cx: ox + this.info.tileSize / 2, cz: oz + this.info.tileSize / 2, trees: [], bushes: [],
+          key: t.key, cx: ox + this.info.tileSize / 2, cz: oz + this.info.tileSize / 2, group: ctx.group, shadows: ctx.shadows, groups: [],
           heights: t.f32('terrain')!.slice(), ground: t.u8('ground')!.slice(), ox, oz,
+          trees: trees ? t.f32('trees')?.slice() : undefined,
+          kinds: trees && t.has('treeKinds') ? t.u8('treeKinds')?.slice() : undefined,
+          bushes: trees && t.has('bushes') ? t.f32('bushes')?.slice() : undefined,
         };
-        const tr = trees ? t.f32('trees') : undefined;
-        if (tr?.length) {
-          const kinds = t.has('treeKinds') ? t.u8('treeKinds') : undefined;
-          const byKind = new Map<TreeKind, number[]>();
-          for (let i = 0; i < tr.length / 4; i++) {
-            const k = (kinds?.[i] ?? Tree.broadleaf) as TreeKind;
-            if (!byKind.has(k)) byKind.set(k, []);
-            byKind.get(k)!.push(i);
-          }
-          for (const [kind, list] of byKind) {
-            const lod = this.treeGeo[kind].map((g) => this.instances(g, this.treeMat, list.length, ctx.shadows)) as [THREE.InstancedMesh, THREE.InstancedMesh];
-            this.fill(lod, shuffled(list), (i) => [tr[i * 4], tr[i * 4 + 1] - 0.15, tr[i * 4 + 2], tr[i * 4 + 3]], kind === Tree.conifer ? 0.03 : 0.07);
-            ctx.group.add(...lod);
-            tile.trees.push({ kind, lod, n: list.length });
-          }
-        }
-        const bu = trees && t.has('bushes') ? t.f32('bushes') : undefined;
-        if (bu?.length) {
-          const byKind = new Map<number, number[]>();
-          for (let i = 0; i < bu.length / BUSH_STRIDE; i++) {
-            const k = bu[i * BUSH_STRIDE + 4];
-            if (!byKind.has(k)) byKind.set(k, []);
-            byKind.get(k)!.push(i);
-          }
-          for (const [kind, list] of byKind) {
-            const mesh = this.instances(this.bushGeo[kind as 0 | 1], this.bushMat, list.length, ctx.shadows);
-            const o = (i: number) => i * BUSH_STRIDE;
-            this.fill([mesh], shuffled(list), (i) => [bu[o(i)], bu[o(i) + 1] - 0.1, bu[o(i) + 2], bu[o(i) + 3]], 0.08);
-            ctx.group.add(mesh);
-            tile.bushes.push({ mesh, n: list.length });
-          }
-        }
+        this.buildTile(tile);
         this.tiles.set(t.key, tile);
         this.grassAt.x = Infinity;
       },
@@ -199,6 +198,84 @@ export class Vegetation {
     });
   }
 
+  /** Uses the Blender species (vegGlb.ts) instead of the procedural models, for loaded and future tiles. */
+  setModels(set: VegetationSet) {
+    if (set.billboardMaterial && !this.billboardMat) {
+      this.billboardMat = set.billboardMaterial;
+      patchWind(this.billboardMat, 0.35, 'billboard');
+    }
+    const pick = (name: string) => (SPECIES_BY_KIND[name] ?? []).map((id) => set.species[id]).filter((sp) => !!sp);
+    const trees: Partial<Record<TreeKind, VegModel[]>> = {};
+    for (const kind of Object.values(Tree)) {
+      const list = pick(TREE_NAMES[kind]).map((sp): VegModel => {
+        const lods = [sp.lod0, sp.lod1, ...(sp.billboard && this.billboardMat ? [sp.billboard] : [])];
+        return { lods, mats: lods.map((_, i) => (i === 2 ? this.billboardMat! : this.treeMat)), h: KIND_HEIGHT[kind], w: KIND_HEIGHT[kind] ** 0.7 };
+      });
+      if (list.length) trees[kind] = list;
+    }
+    Object.assign(this.treeModels, trees);
+    const bush = (name: string, k: number) => {
+      const sp = pick(name)[0];
+      if (sp) this.bushModels[k] = [{ lods: [sp.lod0, sp.lod1], mats: [this.bushMat, this.bushMat], h: 1, w: 1 }];
+    };
+    bush('busch', Bush.round);
+    bush('gebuesch', Bush.scrub);
+    this.models = 'glb';
+    for (const t of this.tiles.values()) this.buildTile(t);
+  }
+
+  /** Back to the procedural models of vegModels.ts. */
+  setProcedural() {
+    const g = buildTreeGeometries(), b = buildBushGeometries();
+    for (const kind of Object.values(Tree)) this.treeModels[kind] = [{ lods: g[kind], mats: [this.treeMat, this.treeMat], h: 1, w: 1 }];
+    for (const k of Object.values(Bush)) this.bushModels[k] = [{ lods: [b[k]], mats: [this.bushMat], h: 1, w: 1 }];
+    this.models = 'procedural';
+    for (const t of this.tiles.values()) this.buildTile(t);
+  }
+
+  /** (Re)builds a tile's instanced meshes from its tree and bush records. */
+  private buildTile(t: VegTile) {
+    for (const g of t.groups) for (const im of g.meshes) { t.group.remove(im); im.dispose(); }
+    t.groups = [];
+    const add = (kind: TreeKind | -1, models: VegModel[], list: number[], at: (i: number) => [number, number, number, number], tint: number) => {
+      // Spread the records over the model variants by position.
+      const byModel = models.map(() => [] as number[]);
+      for (const i of list) {
+        const [x, , z] = at(i);
+        byModel[Math.floor(fract(Math.sin(x * 3.17 + z * 7.31) * 9187.37) * models.length)].push(i);
+      }
+      models.forEach((model, v) => {
+        const ids = byModel[v];
+        if (!ids.length) return;
+        const meshes = model.lods.map((g, l) => this.instances(g, model.mats[l], ids.length, t.shadows));
+        this.fill(meshes, shuffled(ids), at, tint, model);
+        t.group.add(...meshes);
+        t.groups.push({ kind, meshes, n: ids.length });
+      });
+    };
+    const tr = t.trees;
+    if (tr?.length) {
+      const byKind = new Map<TreeKind, number[]>();
+      for (let i = 0; i < tr.length / 4; i++) {
+        const k = (t.kinds?.[i] ?? Tree.broadleaf) as TreeKind;
+        if (!byKind.has(k)) byKind.set(k, []);
+        byKind.get(k)!.push(i);
+      }
+      for (const [kind, list] of byKind) add(kind, this.treeModels[kind], list, (i) => [tr[i * 4], tr[i * 4 + 1] - 0.15, tr[i * 4 + 2], tr[i * 4 + 3]], kind === Tree.conifer ? 0.03 : 0.07);
+    }
+    const bu = t.bushes;
+    if (bu?.length) {
+      const byKind = new Map<number, number[]>();
+      for (let i = 0; i < bu.length / BUSH_STRIDE; i++) {
+        const k = bu[i * BUSH_STRIDE + 4];
+        if (!byKind.has(k)) byKind.set(k, []);
+        byKind.get(k)!.push(i);
+      }
+      const o = (i: number) => i * BUSH_STRIDE;
+      for (const [kind, list] of byKind) add(-1, this.bushModels[kind] ?? this.bushModels[Bush.round], list, (i) => [bu[o(i)], bu[o(i) + 1] - 0.1, bu[o(i) + 2], bu[o(i) + 3]], 0.08);
+    }
+  }
+
   private instances(g: THREE.BufferGeometry, mat: THREE.Material, n: number, shadows: boolean) {
     const im = new THREE.InstancedMesh(g, mat, n);
     im.userData.sharedGeometry = true;
@@ -207,13 +284,13 @@ export class Vegetation {
     return im;
   }
 
-  private fill(meshes: THREE.InstancedMesh[], order: number[], at: (i: number) => [number, number, number, number], tint: number) {
+  private fill(meshes: THREE.InstancedMesh[], order: number[], at: (i: number) => [number, number, number, number], tint: number, model: VegModel) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
     order.forEach((i, n) => {
       const [x, y, z, sc] = at(i);
       const h = fract(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453);
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, h * Math.PI * 2);
-      s.set(sc, sc * (0.9 + 0.2 * fract(h * 7.1)), sc);
+      s.set(sc * model.w, sc * model.h * (0.9 + 0.2 * fract(h * 7.1)), sc * model.w);
       m.compose(p.set(x, y, z), q, s);
       // Each tree a little lighter or darker, warmer or cooler.
       c.setRGB(1 + (fract(h * 3.7) - 0.5) * tint * 2, 1 + (fract(h * 5.3) - 0.5) * tint * 2, 1 - tint);
@@ -233,15 +310,15 @@ export class Vegetation {
     vegUniforms.uVegWind.value = this.windNow;
     const cx = camera.position.x, cz = camera.position.z;
     for (const t of this.tiles.values()) {
-      const near = this.forcedLod !== undefined ? this.forcedLod === 0 : Math.hypot(t.cx - cx, t.cz - cz) < this.lodDistance;
-      for (const tr of t.trees) {
-        tr.lod[0].visible = near;
-        tr.lod[1].visible = !near;
-        tr.lod[0].count = tr.lod[1].count = Math.round(tr.n * this.density);
-      }
-      for (const b of t.bushes) {
-        b.mesh.visible = near || this.forcedLod === 1;
-        b.mesh.count = Math.round(b.n * this.density);
+      const d = Math.hypot(t.cx - cx, t.cz - cz);
+      const tier = this.forcedLod ?? (d < this.lodDistance ? 0 : d < this.lodDistance * 2.5 ? 1 : 2);
+      for (const g of t.groups) {
+        // Bushes only near; trees fall back to the last tier they have.
+        const show = g.kind === -1 && tier > 0 && this.forcedLod === undefined ? -1 : Math.min(tier, g.meshes.length - 1);
+        g.meshes.forEach((im, l) => {
+          im.visible = l === show;
+          im.count = Math.round(g.n * this.density);
+        });
       }
     }
     this.grass.visible = this.grassOn;
@@ -310,12 +387,12 @@ export class Vegetation {
     const trees = new Map<string, number>();
     let bushes = 0, near = 0;
     for (const t of this.tiles.values()) {
-      t.trees.forEach((tr) => {
-        const name = TREE_NAMES[tr.kind];
-        trees.set(name, (trees.get(name) ?? 0) + tr.n);
-        if (tr.lod[0].visible) near += tr.n;
-      });
-      for (const b of t.bushes) bushes += b.n;
+      for (const g of t.groups) {
+        if (g.kind === -1) { bushes += g.n; continue; }
+        const name = TREE_NAMES[g.kind];
+        trees.set(name, (trees.get(name) ?? 0) + g.n);
+        if (g.meshes[0].visible) near += g.n;
+      }
     }
     return { trees, bushes, near, grass: this.grass.count };
   }
@@ -324,10 +401,10 @@ export class Vegetation {
     registerValue('veg.density', 'Anteil der gezeichneten Bäume und Büsche 0..1', () => this.density, (v) => (this.density = v), [0, 1]);
     registerValue('veg.lod', 'Entfernung (m), bis zu der Bäume detailliert gezeichnet werden', () => this.lodDistance, (v) => { this.lodDistance = v; this.forcedLod = undefined; }, [0, 3000]);
     registerCommand({
-      name: 'veg.lod.force', help: 'Alle Bäume in einer Detailstufe zeigen (0 = detailliert, 1 = einfach) oder auto', args: '0|1|auto',
-      complete: () => ['0', '1', 'auto'],
+      name: 'veg.lod.force', help: 'Alle Bäume in einer Detailstufe zeigen (0 = detailliert, 1 = einfach, 2 = Billboard) oder auto', args: '0|1|2|auto',
+      complete: () => ['0', '1', '2', 'auto'],
       run: ([v = 'auto']) => {
-        this.forcedLod = v === 'auto' ? undefined : v === '0' ? 0 : v === '1' ? 1 : (() => { throw new Error('0, 1 oder auto'); })();
+        this.forcedLod = v === 'auto' ? undefined : v === '0' ? 0 : v === '1' ? 1 : v === '2' ? 2 : (() => { throw new Error('0, 1, 2 oder auto'); })();
         return `Detailstufe: ${this.forcedLod ?? 'nach Entfernung'}`;
       },
     });
@@ -337,6 +414,16 @@ export class Vegetation {
       run: ([v]) => {
         if (v !== undefined) this.wind = v === 'auto' ? 'auto' : parseNum(v, 'Wind', 0, 2);
         return `Wind ${this.wind === 'auto' ? 'auto' : this.wind} · gerade ${this.windNow.toFixed(2)}`;
+      },
+    });
+    registerCommand({
+      name: 'veg.models', help: 'Baummodelle: glb (Blender) oder procedural', args: '[glb|procedural]',
+      complete: () => ['glb', 'procedural'],
+      run: ([m]) => {
+        if (m === 'procedural') this.setProcedural();
+        else if (m === 'glb') loadVegetation().then((set) => this.setModels(set), (e) => console.warn('[veg] GLB nicht geladen', e));
+        else if (m !== undefined) throw new Error('glb oder procedural');
+        return `Baummodelle: ${m ?? this.models}`;
       },
     });
     registerToggle('veg.grass', 'Grasbüschel um die Kamera', () => this.grassOn, (v) => { this.grassOn = v; this.grassAt.x = Infinity; });

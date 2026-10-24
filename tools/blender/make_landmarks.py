@@ -37,6 +37,7 @@ def materials():
     pbr('roof.grass', 0x5f7a3a, 0.0, 0.95)     # grassed rampart (Kasematten)
     pbr('copper.bronze', 0x3d3a2e, 0.8, 0.45)  # dark bronze (fountain, statues)
     pbr('glass.water', 0x3c5a5a, 0.2, 0.05)    # fountain water
+    pbr('copper.alu', 0xb8bcc0, 0.8, 0.35)     # cast aluminium (BrunnenPflanze)
 
 
 class Frame:
@@ -164,7 +165,7 @@ def local_footprint(entry):
     return [(e - entry['e'], n - entry['n']) for e, n in entry['footprint']]
 
 
-ALL_MATS = ['stone', 'stone.dark', 'stone.light', 'stone.red', 'plaster', 'plaster.white', 'roof', 'roof.grass', 'slate', 'copper', 'copper.bronze', 'glass', 'glass.water', 'wood']
+ALL_MATS = ['stone', 'stone.dark', 'stone.light', 'stone.red', 'plaster', 'plaster.white', 'roof', 'roof.grass', 'slate', 'copper', 'copper.bronze', 'copper.alu', 'glass', 'glass.water', 'wood']
 
 
 # ---------------------------------------------------------------- St. Ludwig
@@ -765,6 +766,34 @@ def schleusenbruecke(entry, root, lod, deck=0.0):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
+def brunnenpflanze(entry, root, lod):
+    """BrunnenPflanze (Oswald Hiery, 1983): a cluster of slender cast-aluminium stems, 2.8 to 4.3 m tall, each
+    carrying a lens-shaped cap, with angular aluminium pieces at their feet, on a steel grate."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    f.prism('stone.dark', fp, -1.0, 0.05)                                              # steel grate
+    seg = 12 if f.detail else 6
+    stems = [(-1.3, 0.3, 3.2, 0.62, 0.7), (-0.5, -0.4, 3.9, 0.7, 0.8), (0.3, 0.5, 4.3, 0.6, 0.78),
+             (1.0, -0.2, 3.6, 0.72, 0.8), (1.5, 0.6, 2.8, 0.52, 0.62)]
+    for e, n, h, r, ch in stems:
+        f.spire('copper.alu', n, e, 0.05, h - 0.5, 0.12, seg=seg, r_top=0.08)               # stem
+        f.spire('copper.alu', n, e, h - 0.55, h - ch * 0.4, 0.08, seg=seg, r_top=0.3)       # flare into the cap
+        bm = f.bm
+        res = bmesh.ops.create_uvsphere(bm, u_segments=16 if f.detail else 8, v_segments=8 if f.detail else 4, radius=1.0)
+        bmesh.ops.scale(bm, vec=(r, r, ch / 2), verts=res['verts'])
+        bmesh.ops.translate(bm, vec=(e, n, h - ch * 0.2), verts=res['verts'])
+        f._mat(res['verts'], 'copper.alu')
+        if f.detail:                                                                        # angular foot piece
+            f.box('copper.alu', n - 0.25, n + 0.05, e + 0.1, e + 0.45, 0.05, 0.4, turn=0.6)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    for e, n, h, r, ch in stems:
+        c.box('stone', n - 0.15, n + 0.15, e - 0.15, e + 0.15, -1.0, h)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
 BUILDERS = {
     'ludwigskirche': ludwigskirche, 'rathaus': rathaus, 'kommandantur': kommandantur,
     'st-marien': st_marien, 'kasematten-sw': lambda e, r, l: kasematten(e, r, l, gate=True), 'kasematten-no': kasematten,
@@ -772,7 +801,7 @@ BUILDERS = {
     'kaserne-4': kaserne, 'kaserne-6': kaserne, 'katerturm': katerturm, 'haus-ludwig': villa, 'theater-am-ring': theater,
     'festung-ravelin-5': lambda e, r, l: vauban_insel(e, r, l, top=0.9, base=-1.5),
     'festung-bastion-6': lambda e, r, l: vauban_insel(e, r, l, top=0.6, base=-3.5),
-    'schleusenbruecke': schleusenbruecke,
+    'schleusenbruecke': schleusenbruecke, 'brunnenpflanze': brunnenpflanze,
 }
 
 

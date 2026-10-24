@@ -162,7 +162,21 @@ export class CarPhysics {
     const sf = this.surface;
     const rate = (CAR.steer.rate * sf.steer) / (1 + absV / CAR.steer.rateSpeed);
     const pull = this.steerPull * clamp(absV / 8, 0, 1);
-    this.steer += clamp(input.steer * maxSteer + pull - this.steer, -rate * dt, rate * dt);
+    let target = input.steer * maxSteer + pull;
+    if (as.steer > 0 && absV > 4 && !input.handbrake) {
+      // Steering assist: no more lock than puts the front tyres at their peak slip angle (they would
+      // only push wide past it). Countersteer is never limited.
+      const front = this.wheels.slice(0, 2).filter((w) => w.contact);
+      if (front.length) {
+        const kin = this.steer - front.reduce((a, w) => a + w.alpha, 0) / front.length;
+        const lim = CAR.tyre.peakSlip;
+        let capped = target;
+        if (target > 0) capped = Math.min(target, Math.max(0, kin + lim));
+        else if (target < 0) capped = Math.max(target, Math.min(0, kin - lim));
+        target += (capped - target) * as.steer;
+      }
+    }
+    this.steer += clamp(target - this.steer, -rate * dt, rate * dt);
     // Body +x is left, so steering right is a negative angle.
     vc.setWheelSteering(0, -this.steer);
     vc.setWheelSteering(1, -this.steer);
@@ -239,7 +253,8 @@ export class CarPhysics {
       if (as.esp > 0) {
         const w = body.angvel();
         const yawRate = w.x * up.x + w.y * up.y + w.z * up.z;
-        const maxYaw = input.handbrake ? 2.4 : 1.7;
+        // Without the handbrake no more than the tyres can hold (~1.4 g at this speed), so turn-in does not overshoot.
+        const maxYaw = input.handbrake ? 2.4 : Math.min(1.7, 13.5 / Math.max(absV, 1));
         if (Math.abs(yawRate) > maxYaw) {
           const k = -(yawRate - Math.sign(yawRate) * maxYaw) * YAW_INERTIA * 0.5 * as.esp;
           body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
@@ -320,8 +335,14 @@ export class CarPhysics {
     const rear = splitAxle(drive * (1 - CAR.frontDrive), capX[2], capX[3], CAR.diff.rear);
     const drives = [front[0], front[1], rear[0], rear[1]];
     // Traction control: drive beyond the grip is cut (fully at 1, not at all at 0).
+    // It also leaves the cornering force its share of the friction circle (from the last step's side force).
     const tcLimit = 1.02 + (1 - as.tcs) * 4;
-    for (let i = 0; i < 4; i++) if (drives[i] > 0) drives[i] = Math.min(drives[i], capX[i] * tcLimit);
+    for (let i = 0; i < 4; i++) {
+      if (drives[i] <= 0) continue;
+      const side = capY[i] > 0 ? Math.min(1, Math.abs(this.wheels[i].fy) / capY[i]) : 0;
+      const room = 1 - as.tcs + as.tcs * Math.max(0.2, Math.sqrt(1 - side * side));
+      drives[i] = Math.min(drives[i], capX[i] * tcLimit * room);
+    }
     // Rapier would ignore the brakes on a driven wheel; here drive and brake add up, so drop drive when braking hard.
     if (brake > 500) for (let i = 0; i < 4; i++) drives[i] = Math.min(drives[i], 0);
 

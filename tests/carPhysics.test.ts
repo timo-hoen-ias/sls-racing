@@ -1,7 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { DriveInput } from '../src/input/input.ts';
-import { CarPhysics, maxSteerAngle } from '../src/vehicle/carPhysics.ts';
+import { CarPhysics, maxSteerAngle, rotate } from '../src/vehicle/carPhysics.ts';
+import { CAR } from '../src/vehicle/tuning.ts';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -178,5 +179,29 @@ describe('Vehicle dynamics', () => {
     let spin = 0;
     for (let i = 0; i < 60; i++) { drive({ throttle: 1 }, 1 / 60); spin = Math.max(spin, car.wheels[2].long); }
     expect(spin).toBeGreaterThan(0.3);
+  });
+  // Drift angle of the body (rad): sideways against forward speed.
+  const driftAngle = (car: CarPhysics) => {
+    const rot = car.body.rotation();
+    const v = car.body.linvel();
+    const f = rotate(rot, 0, 0, 1), l = rotate(rot, 1, 0, 0);
+    return Math.atan2(v.x * l.x + v.z * l.z, v.x * f.x + v.z * f.z);
+  };
+
+  it('keeps the front tyres at their grip peak at full lock (arcade)', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    while (car.speed < 40 / 3.6) drive({ throttle: 1 }, 1 / 60);
+    drive({ throttle: 0.3, steer: 1 }, 2);
+    expect(Math.abs(car.wheels[0].alpha)).toBeLessThan(CAR.tyre.peakSlip * 1.15);
+  });
+
+  it('does not slide out under full throttle in a corner (arcade)', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    while (car.speed < 40 / 3.6) drive({ throttle: 1 }, 1 / 60);
+    let worst = 0;
+    for (let i = 0; i < 180; i++) { drive({ throttle: 1, steer: 1 }, 1 / 60); worst = Math.max(worst, Math.abs(driftAngle(car))); }
+    expect(worst).toBeLessThan(0.12);
   });
 });

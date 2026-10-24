@@ -46,6 +46,7 @@ import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
+import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
@@ -124,6 +125,7 @@ async function boot() {
   view.scene.add(props.root);
   const landmarks = await Landmarks.fetch(RAPIER, world, TILES_URL, import.meta.env.BASE_URL, quality.shadows > 0);
   view.scene.add(landmarks.root);
+  const joints = await BridgeJoints.fetch(TILES_URL, index.world);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -208,6 +210,7 @@ async function boot() {
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
+    joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});
     await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
@@ -600,6 +603,7 @@ async function boot() {
     physDebug.update(dt);
     far.update(ip.x, ip.z, dt);
     landmarks.update(ip.x, ip.z);
+    joints.update(dt, ip.x, ip.y, ip.z, car.speed);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);

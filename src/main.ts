@@ -44,6 +44,8 @@ import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
+import { loadVegetation } from './world/vegGlb.ts';
+import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
@@ -146,6 +148,11 @@ async function boot() {
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
   // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  loadVegetation().then((set) => {
+    vegetation.setModels(set);
+    const hedge = set.species.hecke;
+    if (hedge) props.setModel(Prop.hedge, hedge.lod0);
+  }, (e) => console.warn('[veg] GLB nicht geladen, nehme die prozeduralen Bäume', e));
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);

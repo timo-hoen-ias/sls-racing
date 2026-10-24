@@ -76,10 +76,13 @@ function main() {
   const carve = new RoadCarve(TERRAIN_STEP);
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
   // Footpaths, cycle paths and steps on the terrain mesh as carved for the roads, stopping at carriageways and sidewalks.
-  const kerbs = new CarriagewayIndex();
-  for (const w of osm.ways)
-    if (isDrivable(w.tags) && !isBridge(w.tags)) kerbs.add(w, roadProfile(w, height, info), roadWidth(w.tags)! / 2 + (hasSidewalk(w.tags) ? SIDEWALK_WIDTH : 0));
-  const pathStats = buildPaths(osm.ways, info, meshHeight((e, n) => carve.apply(e, n, height.raw(e, n))), tiles, (x, z) => kerbs.onOther(undefined, x, z, 0.2));
+  const pathStats = (() => {
+    // Scoped so the index is freed before the tiles are written.
+    const kerbs = new CarriagewayIndex();
+    for (const w of osm.ways)
+      if (isDrivable(w.tags) && !isBridge(w.tags)) kerbs.add(w, roadProfile(w, height, info), roadWidth(w.tags)! / 2 + (hasSidewalk(w.tags) ? SIDEWALK_WIDTH : 0));
+    return buildPaths(osm.ways, info, meshHeight((e, n) => carve.apply(e, n, height.raw(e, n))), tiles, (x, z) => kerbs.onOther(undefined, x, z, 0.2));
+  })();
   graph.w = pathStats.lines;
   const km = (m: number) => (m / 1000).toFixed(1);
   console.log(`Paths: ${pathStats.lines.length} ways, ${Object.entries(pathStats.drawn).map(([k, m]) => `${k} ${km(m)} km`).join(', ')}; ${km(pathStats.clipped)} km on roads left out · closed to cars: ${graph.edges.filter((e) => e.x).length} graph edges`);

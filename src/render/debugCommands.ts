@@ -119,6 +119,7 @@ export function registerRenderCommands(view: SceneSetup) {
       return `fx.hazegain = ${post.hazeGain}`;
     },
   });
+  factor('beams', 'fx.beams', 'Lichtkegel der Scheinwerfer und Lichthöfe der Laternen in Nebel und Regen', 10);
   factor('heightFog', 'fx.heightfog', 'Höhennebel in Tälern und über der Saar (morgens und nachts dichter)', 20);
   const meters = (key: 'fogHeight' | 'fogBase', name: string, help: string, min: number, max: number) =>
     registerCommand({

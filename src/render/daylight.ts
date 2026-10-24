@@ -168,8 +168,10 @@ export class Daylight {
     // Overcast: flat grey haze.
     const grey = (this.fogColor.r + this.fogColor.g + this.fogColor.b) / 3;
     this.fogColor.lerp(new THREE.Color(grey, grey * 1.02, grey * 1.06).multiplyScalar(0.85), oc);
-    (this.stars.material as THREE.PointsMaterial).opacity = smooth(night, 0.6, 1) * (1 - oc);
-    this.stars.visible = night > 0.6 && oc < 1;
+    // Even a thin cloud deck hides the stars (rain and snow always come with clouds).
+    const starsThrough = 1 - smooth(oc, 0.05, 0.35);
+    (this.stars.material as THREE.PointsMaterial).opacity = smooth(night, 0.6, 1) * starsThrough;
+    this.stars.visible = night > 0.6 && starsThrough > 0;
     this.ambTop.setRGB(0.42, 0.52, 0.68).lerp(new THREE.Color(0.55, 0.42, 0.45), golden * 0.6).multiplyScalar(lerp(0.05, 1, this.daylight));
     this.ambBottom.setRGB(0.22, 0.25, 0.3).lerp(new THREE.Color(0.35, 0.22, 0.18), golden * 0.6).multiplyScalar(lerp(0.05, 1, this.daylight));
 

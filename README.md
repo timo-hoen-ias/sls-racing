@@ -118,6 +118,10 @@ Straßenmöbel und Fußgänger: `tools/blender/make_props.py` baut `public/model
 
 Straßenbrücken: Deck, Rampen und Kollision baut die Pipeline (`public/tiles/bridges.json`). `tools/blender/make_bridges.py` setzt darauf für jede Brücke ab 30 m Länge Brüstung mit Gesims, Stahlgeländer und Pfeiler mit Querträger (`public/models/landmarks/bruecke-<way id>.glb`, Kollision nur außerhalb des Fahrbahnbands). `node tools/landmark-footprints.ts` trägt sie mit `bridge` und Deckhöhe `y` ins Manifest ein, `npm run models:bridges` baut sie (nach `npm run world:build`).
 
+Weitere Spielerautos: `tools/blender/make_hothatch.py` baut einen Hot Hatch (Kompaktsportler, keine reale Marke) nach `public/models/cars/hothatch.glb` (`npm run models:cars`), mit demselben Knotenaufbau wie der Sportwagen und Extras `name`, `length`, `width`, `wheel` am Knoten `car` für eigenes Tuning. Die Räder sitzen wie beim Coupé, daher fährt er mit der heutigen Physik. Debug: `car.model hothatch`. `tools/blender/make_gt.py` baut zusätzlich einen GT (Frontmotor-Gran-Turismo, 4,7 m, Radstand 2,75 m; die Radpositionen stehen in den Extras, bis es eigenes Tuning gibt passen die Räder nicht genau in die Radhäuser), Debug: `car.model gt`.
+
+Ladenteile für die Altstadt: `tools/blender/make_shops.py` baut `public/models/shops.glb` (`npm run models:shops`): Markise (gestreift, zum Einfärben), Markisenkasten, Nasenschild mit Wandarm, Ladenschild (je 1 m breit, über die Ladenbreite skaliert; die Fassade ist die Ebene z = 0), Café-Tisch mit zwei Stühlen und Aufsteller, dazu Schilderflächen für 13 Ladenarten (Bäckerei, Metzgerei, Café, Restaurant, Apotheke nur mit Schriftzug, Friseur, Mode, Bücher, Blumen, Eiscafé, Kiosk, Bank, Laden) aus einem selbst gezeichneten Atlas. `src/world/shopGlb.ts` lädt sie.
+
 Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 
 ## Aufbau

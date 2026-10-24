@@ -113,7 +113,7 @@ export function registerRenderCommands(view: SceneSetup) {
   registerCommand({
     name: 'fx.hazegain',
     args: '[faktor]',
-    help: 'Wie hell Dunst und Nebel höchstens leuchten, relativ zur Horizontfarbe (Standard 2)',
+    help: 'Wie hell Dunst und Nebel höchstens leuchten, relativ zur Horizontfarbe (Standard 1.5)',
     run: ([a]) => {
       if (a) post.hazeGain = parseNum(a, 0.1, 20);
       return `fx.hazegain = ${post.hazeGain}`;

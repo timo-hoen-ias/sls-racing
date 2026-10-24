@@ -19,7 +19,8 @@ OUT_DIR = os.path.join(ROOT, 'public', 'models', 'landmarks')
 MANIFEST = json.load(open(os.path.join(ROOT, 'pipeline', 'landmarks.json')))
 BRIDGES = {b['id']: b for b in json.load(open(os.path.join(ROOT, 'public', 'tiles', 'bridges.json')))['bridges']}
 
-PARAPET = 0.45      # width of the concrete parapet beyond the collision deck
+PARAPET = 0.8       # width of the concrete parapet beyond the collision deck
+RAIL = 0.6          # pedestrian railing: centre line this far outside halfWidth (at least 0.5 m, see the pipeline)
 PIER_DEPTH = 14.0   # piers reach this far below the deck (hidden in the ground or the river bed)
 
 
@@ -115,15 +116,15 @@ def build_bridge(entry, lod):
         ribbon(m, fr, hw, hw + PARAPET, -1.25, 0.35, 'plaster', side)                    # parapet + fascia
         if lod == 0:
             ribbon(m, fr, hw + PARAPET - 0.02, hw + PARAPET + 0.04, -1.3, -0.95, 'plaster.dark', side)  # drip edge
-            ribbon(m, fr, hw + 0.15, hw + 0.22, 1.02, 1.1, 'copper', side)                 # handrail
-            ribbon(m, fr, hw + 0.17, hw + 0.2, 0.62, 0.66, 'copper', side)                 # middle rail
+            ribbon(m, fr, hw + RAIL - 0.035, hw + RAIL + 0.035, 1.02, 1.1, 'copper', side)                 # handrail
+            ribbon(m, fr, hw + RAIL - 0.015, hw + RAIL + 0.015, 0.62, 0.66, 'copper', side)                 # middle rail
             # Posts every 2 m.
             s, nxt = 0.0, 1.0
             for (qa, ta, na, ya), (qb, tb, nb, yb) in zip(fr, fr[1:]):
                 seg = (qb - qa).length
                 while nxt <= s + seg:
                     k = (nxt - s) / seg
-                    q = qa.lerp(qb, k) + na * ((hw + 0.18) * side)
+                    q = qa.lerp(qb, k) + na * ((hw + RAIL) * side)
                     y = ya + (yb - ya) * k
                     m.box('copper', (q.x, q.y), ta, na, 0.06, 0.06, y + 0.35, y + 1.1)
                     nxt += 2.0

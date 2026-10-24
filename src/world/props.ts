@@ -4,7 +4,7 @@ import { parseBool, parseNum, registerCommand, registerToggle, registerValue } f
 import { CAR_PALETTE } from '../traffic/trafficSim.ts';
 import { VEHICLE_LOD_DISTANCE, type VehicleSet, proceduralVehicleSet } from '../traffic/vehicleGlb.ts';
 import { patchMaterial } from '../weather/weatherMaterials.ts';
-import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, signTypeOf } from './propKinds.ts';
+import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, isDetected, signTypeOf } from './propKinds.ts';
 import { PROP_LOD_DISTANCE, type PropSet } from './propGlb.ts';
 import { LINEAR, addPropColliders } from './propColliders.ts';
 import { buildPropGeometries } from './propModels.ts';
@@ -47,6 +47,8 @@ export class PropLayer {
   radius: number;
   /** Groups switched off with props.toggle. */
   readonly hiddenKinds = new Set<PropKind>();
+  /** Props found on Mapillary photos (props.mapillary). */
+  showDetected = true;
   private tiles = new Map<string, TileProps>();
   private removedProps = new Set<string>();
   private byCollider = new Map<number, PropHit>();
@@ -218,6 +220,7 @@ export class PropLayer {
         const kind = t.data[i * PROP_STRIDE] as PropKind;
         if (this.hiddenKinds.has(kind) || this.removedProps.has(`${t.key}:${i}`)) continue;
         const size = t.data[i * PROP_STRIDE + 5];
+        if (!this.showDetected && isDetected(kind, size)) continue;
         let model: ModelKey = kind === Prop.busStop && size ? 'busShelter' : kind;
         const o = i * PROP_STRIDE;
         const dist = Math.hypot(t.data[o + 1] - cam.x, t.data[o + 3] - cam.z);
@@ -325,6 +328,14 @@ export class PropLayer {
     return loaded;
   }
 
+  /** Loaded props that come from Mapillary photos. */
+  detectedCount() {
+    let n = 0;
+    for (const t of this.tiles.values())
+      for (let i = 0; i < t.data.length; i += PROP_STRIDE) if (isDetected(t.data[i] as PropKind, t.data[i + 5])) n++;
+    return n;
+  }
+
   get colliderCount() { return this.byCollider.size; }
   get removedCount() { return this.removedProps.size; }
 
@@ -336,6 +347,7 @@ export class PropLayer {
 
   registerCommands(player: () => { x: number; z: number }) {
     registerToggle('props', 'Straßenmöbel und parkende Autos anzeigen', () => this.visible, (v) => (this.visible = v));
+    registerToggle('props.mapillary', 'Schilder, Bänke und Hydranten aus Mapillary-Fotos zeigen (sonst nur OSM)', () => this.showDetected, (v) => { this.showDetected = v; this.dirty = true; });
     registerValue('props.radius', 'Sichtweite der Straßenmöbel und Parker in Metern', () => this.radius, (v) => { this.radius = v; this.dirty = true; }, [30, 1500]);
     registerCommand({
       name: 'props.toggle', help: `Gruppe ein/aus: ${Object.keys(PROP_GROUPS).join(', ')} oder ein einzelner Typ (${Object.values(PROP_NAMES).join(', ')})`, args: '<gruppe> [on|off]',
@@ -355,7 +367,7 @@ export class PropLayer {
         const loaded = this.counts();
         const drawn = (k: PropKind) => this.drawnKinds.get(k) ?? 0;
         const rows = [...loaded.entries()].sort((a, b) => a[0] - b[0]).map(([k, n]) => `${PROP_NAMES[k]} ${drawn(k)}/${n}`);
-        return `${rows.join(', ') || 'keine Requisiten geladen'} · ${this.colliderCount} Kollider · ${this.removedCount} entfernt`;
+        return `${rows.join(', ') || 'keine Requisiten geladen'} · davon ${this.detectedCount()} aus Mapillary · ${this.colliderCount} Kollider · ${this.removedCount} entfernt`;
       },
     });
     registerCommand({
@@ -363,7 +375,7 @@ export class PropLayer {
       run: ([r = '30']) => {
         const p = player();
         const list = this.near(p.x, p.z, parseNum(r, 'Radius', 1, 500)).slice(0, 12);
-        return list.length ? list.map((e) => `${e.name} ${e.d.toFixed(1)} m${LINEAR.has(e.kind) ? ` (${e.size.toFixed(1)} m lang)` : ''}`).join('\n') : 'keine Requisiten in der Nähe';
+        return list.length ? list.map((e) => `${e.name} ${e.d.toFixed(1)} m${LINEAR.has(e.kind) ? ` (${e.size.toFixed(1)} m lang)` : isDetected(e.kind, e.size) ? ' (Mapillary)' : ''}`).join('\n') : 'keine Requisiten in der Nähe';
       },
     });
     registerCommand({

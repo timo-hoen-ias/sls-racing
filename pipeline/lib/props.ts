@@ -4,7 +4,7 @@
 // Output: per tile Float32 records (see src/world/propKinds.ts).
 
 import { type WorldInfo, tileKey, utmToLocal } from '../../src/world/format.ts';
-import { PROP_STRIDE, Prop, type PropKind, SIGN_TYPES, type SignType } from '../../src/world/propKinds.ts';
+import { DETECTED, PROP_STRIDE, Prop, type PropKind, SIGN_TYPES, type SignType } from '../../src/world/propKinds.ts';
 import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
@@ -71,7 +71,12 @@ export interface PropOptions {
   onLanes: (e: number, n: number) => boolean;
   junctions: Junction[];
   boundary?: [number, number][][];
+  /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
+  detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
+
+/** Detected and mapped features of one kind closer than this (m) are the same object. */
+const DEDUPE = 8;
 
 export function buildProps(osm: OsmData, o: PropOptions) {
   const T = o.world.tileSize;
@@ -92,6 +97,32 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   };
 
   // Point features. Anything mapped on the carriageway moves to the kerb.
+  const placed = new Map<string, [PropKind, number, number][]>();
+  const cellOf = (e: number, n: number) => `${Math.floor(e / DEDUPE)}_${Math.floor(n / DEDUPE)}`;
+  const placePoint = (kind: PropKind, e: number, n: number, size: number) => {
+    const road = roads.nearest(e, n, 25);
+    let heading = rand(e, n, 5) * Math.PI * 2;
+    if (road) {
+      const onRoad = o.onLanes(e, n);
+      // Bollards and blocks on a road would close it: drop them.
+      if (onRoad && (kind === Prop.bollard || kind === Prop.block)) return;
+      const side = onRoad ? (kind === Prop.stopSign || kind === Prop.giveWay || kind === Prop.busStop || rand(e, n, 2) < 0.5 ? 1 : -1) : road.side;
+      if (onRoad) {
+        // Right of the way's direction: normal (dn, -de).
+        const off = road.seg.width / 2 + (kind === Prop.busStop ? 1.4 : 0.7);
+        e = road.pe + road.dn * off * side;
+        n = road.pn - road.de * off * side;
+        if (o.onLanes(e, n)) return;
+      }
+      // Face the road; signs face the traffic coming towards them on their side.
+      if (kind === Prop.sign || kind === Prop.stopSign || kind === Prop.giveWay) heading = side > 0 ? headingOf(-road.de, -road.dn) : headingOf(road.de, road.dn);
+      else heading = headingOf(-road.dn * side, road.de * side);
+    }
+    add(kind, e, n, heading, size);
+    const c = cellOf(e, n);
+    if (!placed.has(c)) placed.set(c, []);
+    placed.get(c)!.push([kind, e, n]);
+  };
   for (const p of osm.points) {
     const t = p.tags;
     let kind: PropKind | undefined;
@@ -109,27 +140,22 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     else if (t.emergency === 'fire_hydrant') kind = Prop.hydrant;
     else if (t.amenity === 'bicycle_parking') kind = Prop.bikeStand;
     else if (t.advertising === 'column') kind = Prop.column;
-    if (!kind) continue;
-    let { e, n } = p;
-    const road = roads.nearest(e, n, 25);
-    let heading = rand(e, n, 5) * Math.PI * 2;
-    if (road) {
-      const onRoad = o.onLanes(e, n);
-      // Bollards and blocks on a road would close it: drop them.
-      if (onRoad && (kind === Prop.bollard || kind === Prop.block)) continue;
-      const side = onRoad ? (kind === Prop.stopSign || kind === Prop.giveWay || kind === Prop.busStop || rand(e, n, 2) < 0.5 ? 1 : -1) : road.side;
-      if (onRoad) {
-        // Right of the way's direction: normal (dn, -de).
-        const off = road.seg.width / 2 + (kind === Prop.busStop ? 1.4 : 0.7);
-        e = road.pe + road.dn * off * side;
-        n = road.pn - road.de * off * side;
-        if (o.onLanes(e, n)) continue;
-      }
-      // Face the road; signs face the traffic coming towards them on their side.
-      if (kind === Prop.sign || kind === Prop.stopSign || kind === Prop.giveWay) heading = side > 0 ? headingOf(-road.de, -road.dn) : headingOf(road.de, road.dn);
-      else heading = headingOf(-road.dn * side, road.de * side);
-    }
-    add(kind, e, n, heading, size);
+    if (kind) placePoint(kind, p.e, p.n, size);
+  }
+  // Detected features count only where OSM has none of the same kind (signs: any sign) nearby.
+  const SIGNS: PropKind[] = [Prop.sign, Prop.stopSign, Prop.giveWay];
+  const same = (a: PropKind, b: PropKind) => a === b || (SIGNS.includes(a) && SIGNS.includes(b));
+  let detected = 0;
+  for (const d of o.detected ?? []) {
+    let dup = false;
+    const ce = Math.floor(d.e / DEDUPE), cn = Math.floor(d.n / DEDUPE);
+    for (let a = -1; a <= 1 && !dup; a++)
+      for (let b = -1; b <= 1 && !dup; b++)
+        for (const [k, e, n] of placed.get(`${ce + a}_${cn + b}`) ?? []) if (same(k, d.kind) && Math.hypot(e - d.e, n - d.n) < DEDUPE) { dup = true; break; }
+    if (dup) continue;
+    // Negative size marks the record as detected and keeps the sign type (see DETECTED in propKinds.ts).
+    placePoint(d.kind, d.e, d.n, DETECTED - (d.size ?? 0));
+    detected++;
   }
 
   // Fences, walls, hedges and mapped guard rails, in pieces of up to 4 m.
@@ -210,7 +236,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }, 3);
     }
   }
-  return { tiles: out, counts };
+  return { tiles: out, counts, detected };
 }
 
 /** Variant number for a parked car: colour index × 2 + 1 for a van. */
@@ -318,4 +344,19 @@ export function osmSignType(value: string): SignType | undefined {
     if (code === '310') return 'ortsschild';
   }
   return undefined;
+}
+
+/** Sign type from a Mapillary traffic sign value such as "regulatory--maximum-speed-limit-30--g1". */
+export function mapillarySignType(value: string): SignType | undefined {
+  const v = value.replace(/--g\d+$/, '');
+  const speed = /^regulatory--maximum-speed-limit-(\d+)$/.exec(v);
+  if (speed) {
+    const n = Number(speed[1]);
+    return n <= 30 ? 'tempo-30' : n <= 50 ? 'tempo-50' : n <= 70 ? 'tempo-70' : n <= 100 ? 'tempo-100' : undefined;
+  }
+  const map: Record<string, SignType> = {
+    'regulatory--priority-road': 'vorfahrtstrasse', 'regulatory--yield': 'vorfahrt-achten', 'regulatory--stop': 'stop',
+    'regulatory--no-entry': 'einfahrt-verboten', 'regulatory--speed-limit-zone': 'tempo-30', 'information--pedestrians-crossing': 'fussgaenger',
+  };
+  return map[v];
 }

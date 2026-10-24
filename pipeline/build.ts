@@ -10,7 +10,7 @@ import {
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
-import { buildProps } from './lib/props.ts';
+import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
 import { signalJunctions } from './lib/signals.ts';
 import { RoadMask } from './lib/clearance.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
@@ -23,9 +23,12 @@ import { flatSampler, terrariumSampler, type HeightSampler } from './lib/terrain
 import { TileMap } from './lib/tilebuf.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
-import { PROP_NAMES, type PropKind } from '../src/world/propKinds.ts';
+import { PROP_NAMES, Prop, type PropKind } from '../src/world/propKinds.ts';
 import { BUSH_STRIDE, Bush, type TreeKind } from '../src/world/vegKinds.ts';
 import { areaDensity, areaTreeKind, treeKindOf } from './lib/vegetation.ts';
+import { loadLidar } from './lib/lidar.ts';
+import { categorize, loadMapillary } from './lib/mapillary.ts';
+import { placeLidarTrees, type MeasuredTree } from './lib/lidarTrees.ts';
 
 function main() {
   const { cfg, info, project } = loadWorld();
@@ -98,23 +101,54 @@ function main() {
   };
   const treesByTile = new Map<string, number[]>();
   const treeKindsByTile = new Map<string, number[]>();
+  const treeCrownsByTile = new Map<string, number[]>();
   const bushesByTile = new Map<string, number[]>();
   const push = (m: Map<string, number[]>, e: number, n: number, ...v: number[]) => {
     const k = tileKey(Math.floor(e / T), Math.floor(n / T));
     if (!m.has(k)) m.set(k, []);
     m.get(k)!.push(...v);
   };
-  const addTree = (e: number, n: number, s: number, kind: TreeKind) => {
+  const addTree = (e: number, n: number, s: number, kind: TreeKind, crown = 0) => {
     const [x, z] = utmToLocal(info, e, n);
     push(treesByTile, e, n, x, height(e, n), z, s);
     push(treeKindsByTile, e, n, kind);
+    push(treeCrownsByTile, e, n, crown);
   };
   const addBush = (e: number, n: number, s: number, kind: number) => {
     const [x, z] = utmToLocal(info, e, n);
     push(bushesByTile, e, n, x, height(e, n), z, s, kind);
   };
-  for (const [e, n, tags] of osm.trees) if (!onRoad.has(e, n)) addTree(e, n, 0.8 + rand(e, n) * 0.5, treeKindOf(tags, rand(e, n, 31)));
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary });
+  // Measured trees from the LiDAR survey where there is one; mapped OSM trees they stand on keep their species.
+  const mapped = osm.trees.filter(([e, n]) => !onRoad.has(e, n)).map(([e, n, tags]) => ({ e, n, kind: treeKindOf(tags, rand(e, n, 31)) }));
+  const coverage: [number, number, number, number][] = [];
+  const measured: MeasuredTree[] = [];
+  for (const r of regions) {
+    const l = r.boundary.type === 'fixture' ? undefined : loadLidar(r.id);
+    if (l) { coverage.push(...l.coverage); for (const t of l.trees) measured.push(t); }
+  }
+  const lidar = placeLidarTrees(coverage, measured, {
+    skip: (e, n) => onLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
+    tagsAt: (e, n) => ground.tagsAt(e, n), mapped, rand,
+  });
+  for (const t of lidar.trees) addTree(t.e, t.n, t.scale, t.kind, t.crown);
+  for (const [e, n, s] of lidar.bushes) addBush(e, n, s, Bush.round);
+  mapped.forEach((t, i) => { if (!lidar.merged.has(i)) addTree(t.e, t.n, 0.8 + rand(t.e, t.n) * 0.5, t.kind); });
+  // Street furniture and traffic lights seen on Mapillary's street-level photos, on top of OSM.
+  const DETECTED: Partial<Record<string, PropKind>> = { sign: Prop.sign, stopSign: Prop.stopSign, giveWay: Prop.giveWay, bench: Prop.bench, hydrant: Prop.hydrant };
+  // Bins are left out: the photos mostly show household bins put out on collection day.
+  const detected: { kind: PropKind; e: number; n: number; size: number }[] = [];
+  const detectedLights: [number, number][] = [];
+  for (const r of regions) {
+    const m = r.boundary.type === 'fixture' ? undefined : loadMapillary(r.id);
+    for (const [e, n, value] of m?.features ?? []) {
+      const cat = categorize(value);
+      if (cat === 'trafficLight') detectedLights.push([e, n]);
+      const kind = cat && DETECTED[cat];
+      if (kind) detected.push({ kind, e, n, size: kind === Prop.sign ? signSize(mapillarySignType(value)) : 0 });
+    }
+  }
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary, detected });
+  console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
@@ -144,7 +178,11 @@ function main() {
             const te = e + rand(e, n, i * 2 + 5) * TERRAIN_STEP;
             const tn = n - rand(e, n, i * 2 + 6) * TERRAIN_STEP;
             if (onRoad.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
-            if (i < nt) addTree(te, tn, 0.7 + rand(te, tn) * 0.7, areaTreeKind(tags, rand(te, tn, 7)));
+            if (i < nt) {
+              // Parks and gardens inside the LiDAR survey have their measured trees already.
+              if (cls !== Ground.forest && lidar.covered(te, tn)) continue;
+              addTree(te, tn, 0.7 + rand(te, tn) * 0.7, areaTreeKind(tags, rand(te, tn, 7)));
+            }
             else addBush(te, tn, 0.6 + rand(te, tn, 8) * 0.8, tags?.natural === 'scrub' || cls === Ground.forest ? Bush.scrub : Bush.round);
           }
         }
@@ -161,6 +199,8 @@ function main() {
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
     const treeKinds = treeKindsByTile.get(k);
     if (treeKinds) tile.treeKinds = encode(new Uint8Array(treeKinds));
+    const crowns = treeCrownsByTile.get(k);
+    if (crowns?.some((c) => c > 0)) tile.treeCrowns = encode(new Uint8Array(crowns));
     const bushes = bushesByTile.get(k);
     if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
     const tileProps = props.tiles.get(k);
@@ -211,13 +251,15 @@ function main() {
     idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, out: paths.out }) };
   }
   const signalPts = osm.points.filter((p) => p.tags.highway === 'traffic_signals' && p.tags.crossing !== 'traffic_signals').map((p) => utmToLocal(info, p.e, p.n));
-  graph.s = signalJunctions(graph, signalPts);
-  console.log(`Traffic lights: ${signalPts.length} signal nodes → ${graph.s.length} junctions in ${new Set(graph.s.map((s) => s[1])).size} groups`);
+  // Traffic lights seen on photos stand at the kerb, a little further from the junction node than OSM's.
+  const photoSignals = detectedLights.map(([e, n]) => utmToLocal(info, e, n));
+  graph.s = signalJunctions(graph, signalPts, photoSignals);
+  console.log(`Traffic lights: ${signalPts.length} signal nodes + ${photoSignals.length} from photos → ${graph.s.length} junctions in ${new Set(graph.s.map((s) => s[1])).size} groups`);
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
-  console.log(`Vegetation: ${nTrees} trees, ${nBushes} bushes`);
+  console.log(`Vegetation: ${nTrees} trees (${lidar.trees.length} from LiDAR, ${lidar.merged.size} of them mapped in OSM), ${nBushes} bushes`);
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 

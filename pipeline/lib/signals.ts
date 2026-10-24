@@ -6,8 +6,12 @@ import type { RoadGraphData } from '../../src/world/format.ts';
 const GROUP_RADIUS = 45;
 const NODE_RADIUS = 30;
 
-/** points: local x, z of the signal nodes. Returns [graph node, group] pairs. */
-export function signalJunctions(graph: RoadGraphData, points: [number, number][]): [number, number][] {
+/** Lights seen on street-level photos count only when a group has a mapped light or this many photo sightings. */
+const MIN_PHOTOS = 3;
+
+/** points: local x, z of the signal nodes, photos: lights detected on photos. Returns [graph node, group] pairs. */
+export function signalJunctions(graph: RoadGraphData, mapped: [number, number][], photos: [number, number][] = []): [number, number][] {
+  const points = [...mapped, ...photos];
   // Group signal nodes that are close together (single linkage).
   const group = points.map(() => -1);
   let groups = 0;
@@ -24,6 +28,9 @@ export function signalJunctions(graph: RoadGraphData, points: [number, number][]
     }
     groups++;
   }
+  // Groups backed by OSM or by several photos.
+  const support = new Array<number>(groups).fill(0);
+  group.forEach((g, i) => (support[g] += i < mapped.length ? MIN_PHOTOS : 1));
   const degree = new Uint16Array(graph.nodes.length / 3);
   for (const e of graph.edges) { degree[e.a]++; degree[e.b]++; }
   const out: [number, number][] = [];
@@ -32,6 +39,7 @@ export function signalJunctions(graph: RoadGraphData, points: [number, number][]
     const x = graph.nodes[n * 3], z = graph.nodes[n * 3 + 2];
     let best = -1, bd = NODE_RADIUS;
     points.forEach(([px, pz], i) => {
+      if (support[group[i]] < MIN_PHOTOS) return;
       const d = Math.hypot(px - x, pz - z);
       if (d < bd) { bd = d; best = i; }
     });

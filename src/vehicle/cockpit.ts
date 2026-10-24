@@ -60,6 +60,10 @@ export class Cockpit {
     box(1.52, 0.035, 0.02, carbon, 0, 0.77, 0.27);
     box(0.24, 0.3, 0.12, plastic, 0, 0.62, 0.38, -0.25);
     box(0.24, 0.08, 0.9, leather, 0, 0.5, -0.05);
+    // Lower dash, footwell and floor, so nothing of the outside shows below the dashboard.
+    box(1.52, 0.36, 0.06, plastic, 0, 0.55, 0.36);
+    box(1.56, 0.03, 1.7, alcantara, 0, 0.3, -0.15);
+    for (const s of [1, -1]) box(0.04, 0.5, 0.5, plastic, 0.76 * s, 0.5, 0.5);
     const shifter = box(0.05, 0.07, 0.09, metal, 0, 0.57, 0.05);
     shifter.rotation.x = 0.3;
     // Instrument binnacle and screen.

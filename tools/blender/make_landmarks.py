@@ -698,10 +698,11 @@ def theater(entry, root, lod):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
-def schleusenbruecke(entry, root, lod, deck=5.0):
+def schleusenbruecke(entry, root, lod, deck=0.0):
     """Schleusenbrücke: Vauban's lock-bridge piers (sandstone, with the vertical grooves of the old sluice gates)
     carrying today's concrete foot and cycle deck with steel railings and lamp posts. Not a road bridge, so the
-    deck is part of the model; deck top `deck` m above the origin (an estimate until the terrain is checked)."""
+    deck is part of the model. Like the pipeline's bridges, the origin is on the deck top (manifest `y` gives its
+    absolute height); the piers reach 9 m down into the river."""
     f = Frame(0, ALL_MATS, detail=lod == 0)
     fp = ccw(local_footprint(entry))
     # Bridge axis: the longest edge.
@@ -734,12 +735,12 @@ def schleusenbruecke(entry, root, lod, deck=5.0):
     for u, pv0, pv1 in piers:
         width = pv1 - pv0
         c = U * u + V * ((pv0 + pv1) / 2)
-        obox(f, 'stone', c, V, width, 2.6, -4.0, deck - 0.7)
+        obox(f, 'stone', c, V, width, 2.6, deck - 9.0, deck - 0.7)
         obox(f, 'stone.light', c, V, width + 0.3, 2.9, deck - 1.2, deck - 0.7)              # pier cap
         if f.detail:
             for s_ in (-1, 1):                                                             # sluice grooves
-                obox(f, 'stone.dark', c + U * (s_ * 1.31), V, 0.25, 0.04, -3.0, deck - 1.3)
-                obox(f, 'stone.dark', c + V * (s_ * width * 0.2) + U * (s_ * 1.31), V, 0.12, 0.04, -3.0, deck - 1.3)
+                obox(f, 'stone.dark', c + U * (s_ * 1.31), V, 0.25, 0.04, deck - 8.0, deck - 1.3)
+                obox(f, 'stone.dark', c + V * (s_ * width * 0.2) + U * (s_ * 1.31), V, 0.12, 0.04, deck - 8.0, deck - 1.3)
     # Railings and lamp posts along the long sides.
     for a, dd, nn, LL in edges(fp, 6.0):
         if abs(dd.dot(U)) < 0.9:
@@ -760,7 +761,7 @@ def schleusenbruecke(entry, root, lod, deck=5.0):
     c = Frame(0, ['stone'])
     c.prism('stone', fp, deck - 0.7, deck)
     for u, pv0, pv1 in piers:
-        obox(c, 'stone', U * u + V * ((pv0 + pv1) / 2), V, pv1 - pv0, 2.6, -4.0, deck - 0.7)
+        obox(c, 'stone', U * u + V * ((pv0 + pv1) / 2), V, pv1 - pv0, 2.6, deck - 9.0, deck - 0.7)
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 

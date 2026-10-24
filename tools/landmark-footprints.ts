@@ -5,7 +5,10 @@
 import { writeFileSync } from 'node:fs';
 import proj4 from 'proj4';
 
-const LANDMARKS: { id: string; ways: number[] }[] = [
+// y (optional): absolute height (m NHN) of the model origin, for landmarks whose origin is not on the ground at
+// the centroid. The Schleusenbrücke's origin is its deck top; the map pipeline replaces the estimate with the DGM1
+// height at the bank ends.
+const LANDMARKS: { id: string; ways: number[]; y?: number }[] = [
   { id: 'ludwigskirche', ways: [72077603] },
   { id: 'rathaus', ways: [185464136] },
   { id: 'kommandantur', ways: [73205872] },
@@ -22,7 +25,7 @@ const LANDMARKS: { id: string; ways: number[] }[] = [
   { id: 'theater-am-ring', ways: [71934476] },
   { id: 'festung-ravelin-5', ways: [297024093] },
   { id: 'festung-bastion-6', ways: [372882703] },
-  { id: 'schleusenbruecke', ways: [681793548] },
+  { id: 'schleusenbruecke', ways: [681793548], y: 181.5 },
 ];
 
 const UTM = '+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs';
@@ -57,7 +60,7 @@ for (const l of LANDMARKS) {
   // Multi-way landmarks are listed as separate footprints; the model covers all of them.
   const outlines = await Promise.all(l.ways.map(wayOutline));
   const [e, n] = centroid(outlines[0]);
-  out.push({ id: l.id, glb: `models/landmarks/${l.id}.glb`, e: round(e), n: round(n), heading: 0, footprint: outlines[0].map(([x, y]) => [round(x), round(y)]), osm: l.ways });
+  out.push({ id: l.id, glb: `models/landmarks/${l.id}.glb`, e: round(e), n: round(n), heading: 0, footprint: outlines[0].map(([x, y]) => [round(x), round(y)]), osm: l.ways, ...(l.y !== undefined ? { y: l.y } : {}) });
 }
 writeFileSync(new URL('../pipeline/landmarks.json', import.meta.url), JSON.stringify(out, null, 1) + '\n');
 console.log(out.map((l) => `${l.id}: ${l.e} / ${l.n}, ${l.footprint.length} Ecken`).join('\n'));

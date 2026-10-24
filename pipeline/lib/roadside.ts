@@ -79,10 +79,10 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     }
   }
   /**
-   * Another road's carriageway near (e, n) at about this height. Samples on this road's own centreline (the road
-   * continuing beyond the bridge end) do not count.
+   * Another road's carriageway near (e, n) at about this height, within reach of its edge. Samples on this road's
+   * own centreline (the road continuing beyond the bridge end) do not count.
    */
-  const roadAtLevel = (self: Way, e: number, n: number, y: number) => {
+  const roadAtLevel = (self: Way, e: number, n: number, y: number, reach = 2.5) => {
     const near = (ce: number, cn: number) => {
       const out = [];
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) out.push(...(sgrid.get(`${ce + a}_${cn + b}`) ?? []));
@@ -106,7 +106,7 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
       return false;
     };
     for (const q of list)
-      if (q.w !== self && Math.abs(q.y - y) < 2.5 && Math.hypot(q.e - e, q.n - n) < q.hw + 2.5 && !straightOn(q)) return true;
+      if (q.w !== self && Math.abs(q.y - y) < 2.5 && Math.hypot(q.e - e, q.n - n) < q.hw + reach && !straightOn(q)) return true;
     return false;
   };
   const degree = junctionNodes(roads);
@@ -197,7 +197,8 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
         const ro = railOffset(p, side);
         const e = p.e + p.dy * ro * side, n = p.n - p.dx * ro * side;
         const pe = p.e + p.dy * (ro + PROBE) * side, pn = p.n - p.dx * (ro + PROBE) * side;
-        return !nearJunction(e, n, 8) && (bridge ? !roadAtLevel(way, e, n, p.y) : !o.onLanes(pe, pn));
+        // The lane mask misses a ramp running close beside a motorway (gore, shifted ramps): check the samples too.
+        return !nearJunction(e, n, 8) && (bridge ? !roadAtLevel(way, e, n, p.y) : !o.onLanes(pe, pn) && !roadAtLevel(way, e, n, p.y, 0.3));
       });
       // On bridges keep one more sample (4 m) clear of a road joining at deck level: cars cut that corner.
       const final = want.map((w, i) => w && ok[i] && (!bridge || ((ok[i - 1] ?? true) && (ok[i + 1] ?? true))));
@@ -241,6 +242,7 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
         const postOffset = (side > 0 ? edges.right : edges.left) + ROADSIDE.postOffset;
         const e = p.e + p.dy * postOffset * side, n = p.n - p.dx * postOffset * side;
         if (nearJunction(e, n, 6) || o.onLanes(p.e + p.dy * (postOffset + PROBE) * side, p.n - p.dx * (postOffset + PROBE) * side)) continue;
+        if (roadAtLevel(way, e, n, p.y, 0.3)) continue;
         // Faces the traffic on its own side: right posts look back along the road, left ones forward.
         add(Prop.delineator, e, n, p.y - 0.05, side > 0 ? headingOf(-p.dx, -p.dy) : headingOf(p.dx, p.dy));
         counts.posts++;

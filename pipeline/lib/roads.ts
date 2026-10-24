@@ -189,6 +189,13 @@ export function buildRoads(
         const cy = (p: typeof a) => p.y - Math.max(0, 0.6 - (p.y - height(p.e, p.n)));
         strip(tile.collide, -hw - 0.5, hw + 0.5, [cy(a), cy(a)], [cy(b), cy(b)]);
       }
+      // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
+      if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
+        const o = hw + 0.5;
+        strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1]);
+        wall(tile.sidewalks, off(a, o), off(b, o), a.y - 1, a.y, b.y - 1, b.y, true);
+        wall(tile.sidewalks, off(a, -o), off(b, -o), a.y - 1, a.y, b.y - 1, b.y, false);
+      }
       if (above > 0.6) {
         for (const side of [1, -1]) {
           const o = side * (hw + 0.5);

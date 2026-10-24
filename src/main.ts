@@ -20,6 +20,7 @@ import { Tacho } from './ui/tacho.ts';
 import { ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
+import { loadAssists, registerPhysicsCommands } from './vehicle/physicsCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
@@ -127,6 +128,8 @@ async function boot() {
     hitCooldown = 0.6;
   };
 
+  loadAssists(car);
+  registerPhysicsCommands(car);
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;

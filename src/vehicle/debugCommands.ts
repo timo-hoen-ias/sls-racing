@@ -72,7 +72,7 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
   });
   registerCommand({
     name: 'car.tune',
-    help: 'Fahrwerts-/Physikwert lesen oder setzen, z. B. car.tune grip.rear 3',
+    help: 'Fahrwerts-/Physikwert lesen oder setzen, z. B. car.tune tyre.mu 1.2',
     args: '<pfad> [wert]',
     run: ([path, v]) => {
       if (!path) return Object.keys(CAR).join(', ');

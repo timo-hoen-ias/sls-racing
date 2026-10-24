@@ -119,6 +119,7 @@ async function boot() {
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
   const lampLights = new LampLights(quality, mats.lampHead);
   view.scene.add(lampLights.root);
+  view.post?.beams.sources.push(...carLights.heads, ...lampLights.pool);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);

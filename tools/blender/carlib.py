@@ -294,7 +294,7 @@ def decimate(ob, ratio, name, parent):
 
 
 
-def export(root, out):
+def export(root, out, texcoords=False):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     stack = [root]
     bpy.ops.object.select_all(action='DESELECT')
@@ -304,5 +304,5 @@ def export(root, out):
         stack += list(o.children)
     bpy.ops.export_scene.gltf(filepath=out, use_selection=True, export_format='GLB', export_yup=True,
                               export_apply=True, export_extras=True, export_animations=False,
-                              export_texcoords=False, export_tangents=False, export_vertex_color='ACTIVE')
+                              export_texcoords=texcoords, export_tangents=False, export_vertex_color='ACTIVE')
     print(f'{out}: {os.path.getsize(out) // 1024} KB')

@@ -8,6 +8,8 @@ import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
 import { createMaterials } from './render/materials.ts';
+import { CarLights, LampLights } from './render/lights.ts';
+import { markCar } from './render/post/postFx.ts';
 import { createScene } from './render/scene.ts';
 import { CarPhysics } from './vehicle/carPhysics.ts';
 import { CarView } from './vehicle/carView.ts';
@@ -18,8 +20,9 @@ import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
 import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
-import { runCommand } from './debug/registry.ts';
+import { registerCommand, runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
+import { registerRenderCommands } from './render/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
@@ -27,6 +30,9 @@ import { Traffic } from './traffic/traffic.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { weatherCommands } from './weather/commands.ts';
+import { patchWorldMaterials } from './weather/weatherMaterials.ts';
+import { WeatherSystem } from './weather/weatherSystem.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
 
@@ -48,10 +54,11 @@ async function boot() {
     : { v: 1, names: [], nodes: [], edges: [] };
   const graph = new RoadGraph(graphData);
 
-  const view = createScene($('game') as HTMLCanvasElement, quality);
+  const view = createScene($('game') as HTMLCanvasElement, quality, index.spawn.y);
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
   const mats = createMaterials();
+  patchWorldMaterials(mats);
   const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
   view.scene.add(streamer.root);
 
@@ -59,7 +66,13 @@ async function boot() {
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
   const carView = new CarView();
   view.scene.add(carView.root);
-  const effects = new CarEffects(quality, carView.exhausts);
+  if (view.post) markCar(carView.root);
+  const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
+  const lampLights = new LampLights(quality, mats.lampHead);
+  view.scene.add(lampLights.root);
+  const forEachLamp = streamer.forEachLamp.bind(streamer);
+  let boostFx = 0;
+    const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
   const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
@@ -73,6 +86,9 @@ async function boot() {
   const bigMap = new BigMap($('bigmap'), graph, nav);
   bigMap.onClose = () => (input.mapOpen = false);
   $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
+  const weather = new WeatherSystem(quality, view);
+  weather.onChange = (text) => navHud.toast(text);
+  for (const c of weatherCommands(weather)) registerCommand(c);
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
@@ -100,10 +116,11 @@ async function boot() {
   startBtn.addEventListener('click', async () => {
     startBtn.hidden = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
-    sound.onBackfire = () => effects.backfire(ip, iq, car.body.linvel());
+    sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
     await sound.resume().catch(() => {});
+    await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
   });
 
@@ -151,6 +168,7 @@ async function boot() {
     hitCooldown = 0.6;
   };
 
+  registerRenderCommands(view);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
@@ -160,6 +178,7 @@ async function boot() {
   let fpsT = 0, frames = 0, fps = 0;
   const ip = new THREE.Vector3();
   const iq = new THREE.Quaternion();
+  const fwd = new THREE.Vector3();
 
   const debugState: DebugState = { timeScale: 1, infiniteNitro: false, frozen: false };
   let frozenAt: { p: { x: number; y: number; z: number }; q: { x: number; y: number; z: number; w: number } } | null = null;
@@ -178,13 +197,14 @@ async function boot() {
   if (bootCmd) debug.exec(bootCmd);
 
   const frame = (now: number) => {
-    const dt = Math.min(0.1, (now - last) / 1000);
+    // The first rAF timestamp can predate performance.now() at boot.
+    const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
       if (e === 'reset') resetCar();
       if (e === 'camera') cam.next();
-      if (e === 'mute') sound?.toggleMute();
+      if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
       if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
       if (e === 'gearbox') setManual(!car.drivetrain.manual);
       if (e === 'shiftUp' || e === 'shiftDown') {
@@ -192,6 +212,7 @@ async function boot() {
         if (!car.drivetrain.manual) setManual(true);
         car.drivetrain.shift(e === 'shiftUp' ? 1 : -1);
       }
+      if (e === 'time') view.daylight.nextPreset();
     }
 
     // Hold the car until the ground under it exists.
@@ -218,6 +239,7 @@ async function boot() {
     }
 
     vehicleDebug.update();
+    weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
     const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
     if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
     else frozenAt = null;
@@ -255,7 +277,11 @@ async function boot() {
     }
     if (worldReady && (ip.y < spawn.y - 150 || !streamer.hasTileAt(ip.x, ip.z))) resetCar();
 
-    carView.sync(car, ip, iq, drive.brake > 0 && car.speed > 1, now / 1000);
+    const night = 1 - view.daylight.daylight;
+    const braking = drive.brake > 0 && car.speed > 1;
+    carView.setNight(night);
+    carView.sync(car, ip, iq, braking, now / 1000);
+    carLights.update(night, braking, car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {
       const strength = Math.min(1, (hit - 3.5) / 12);
@@ -266,6 +292,9 @@ async function boot() {
       hitCooldown = 0.25;
     }
     hit = 0;
+    effects.road.wet = weather.weather.wet;
+    effects.road.snow = weather.weather.snowCover;
+    effects.road.puddle = weather.puddle;
     const lvel = car.body.linvel();
     const simDt = debugState.frozen ? 0 : dt * debugState.timeScale;
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
@@ -286,7 +315,11 @@ async function boot() {
     if (bigMap.open && (mapTimer -= dt) <= 0) { mapTimer = 0.5; bigMap.draw(); }
     routeLine.update(dt);
 
-    view.render();
+    // Lamp lights gather around a point ahead of the car, where the driver looks.
+    const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);
+    lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
+    boostFx += ((car.boosting ? 1 : 0) - boostFx) * (1 - Math.exp(-dt * 5));
+    view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
 
     const dtr = car.drivetrain;
     sound?.update({
@@ -307,13 +340,14 @@ async function boot() {
       $('info').textContent = `${fps} fps · Qualität ${quality.name} · ${input.lastDevice}\nUTM 32N ${e.toFixed(0)} / ${n.toFixed(0)} · Kacheln ${streamer.loadedCount}`;
     }
     (window as any).__sls = {
-      fps, speed: car.speed, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
+      fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,
       peds: peds.sim,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),
+      weather: weather.weather,
     };
     requestAnimationFrame(frame);
   };

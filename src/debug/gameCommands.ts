@@ -135,17 +135,12 @@ export function registerGameCommands(g: GameContext, state: DebugState) {
   });
   registerValue('quality.radius', 'Sichtweite für das Kachel-Streaming in m', () => g.quality.radius, (v) => (g.quality.radius = v), [200, 3000]);
   registerValue('fx.pixelratio', 'Renderauflösung (Pixel-Verhältnis)', () => g.view.renderer.getPixelRatio(), (v) => { g.quality.pixelRatio = v; g.view.renderer.setPixelRatio(v); g.view.resize(); }, [0.25, 3]);
-  registerValue('fx.exposure', 'Belichtung des Tone-Mappings', () => g.view.renderer.toneMappingExposure, (v) => (g.view.renderer.toneMappingExposure = v), [0.05, 5]);
+  registerValue('fx.exposure', 'Belichtung des Tone-Mappings (wird vom Tageszyklus überschrieben)', () => g.view.renderer.toneMappingExposure, (v) => (g.view.renderer.toneMappingExposure = v), [0.05, 5]);
   registerToggle('fx.shadows', 'Schatten an/aus', () => g.view.sun.castShadow, (v) => {
     if (v && !g.quality.shadows) throw new Error('Schatten sind in dieser Qualitätsstufe aus ("quality high")');
     g.view.sun.castShadow = v;
   });
-  let savedFog: THREE.Scene['fog'] = null;
-  registerToggle('fx.fog', 'Nebel an/aus', () => !!g.view.scene.fog, (v) => {
-    const sc = g.view.scene;
-    if (!v && sc.fog) { savedFog = sc.fog; sc.fog = null; }
-    if (v && !sc.fog) sc.fog = savedFog;
-  });
+  // fx.fog and the other effect commands live in src/render/debugCommands.ts.
   let wire = false;
   registerToggle('fx.wireframe', 'Drahtgitter für alle Materialien', () => wire, (v) => {
     wire = v;

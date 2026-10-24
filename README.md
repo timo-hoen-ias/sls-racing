@@ -80,6 +80,8 @@ Fußgänger gehen auf den Gehwegen der Stadtstraßen und in der Fußgängerzone,
 
 Fassaden haben Charakter: Die Pipeline ordnet jedem Gebäude einen Typ zu (Wohnhaus, Altbau in der Altstadt, Mehrfamilienhaus, Büro/Geschäft, Halle, Kirche, Garage, Schule/öffentlich; `pipeline/lib/facades.ts`), an Hauptstraßen der Innenstadt bekommt das Erdgeschoss Schaufenster. Nachts leuchten zufällige Fenster. Befehle: `bld.facade [auto|typ]`, `bld.windows`, `bld.shops`, `bld.night auto|0..1`.
 
+Straßenmöbel und parkende Autos kommen aus OpenStreetMap (`pipeline/lib/props.ts`): Bushaltestellen (mit Wartehäuschen, wo gemappt), Verkehrs-, Stopp-, Vorfahrt- und Ortsschilder, Poller, Bänke, Mülleimer, Briefkästen, Container, Hydranten, Fahrradständer, Litfaßsäulen, Zäune, Mauern, Hecken und Leitplanken (auch entlang von Autobahn und Schnellstraße). Was auf der Fahrbahn gemappt ist, rückt an den Bordstein. Parkplätze bekommen Autos in Parkbuchten, Wohnstraßen halb aufgestellte Parker am Rand (`parking:*`-Tags werden beachtet). Leichte Teile sind für den Schadens-Code als umfahrbar markiert (`props.lookup/remove`). Befehle: `props on|off`, `props.toggle schilder|moebel|parker|zaeune|<typ> [on|off]`, `props.radius`, `props.count`, `props.near [radius]`, `props.reset`.
+
 Der Hall folgt der Umgebung: Raycasts links, rechts und nach oben messen Hauswände und Brücken, daraus werden offene Straße, Häuserschlucht und Unterführung überblendet, dazu ein Echo von der nächsten Wand je Seite. Die Geräuschkulisse mischt Stadtgemurmel (bebaut), Vögel und Blätter (grün), Autobahnrauschen und die Saar von dort, wo sie wirklich sind; Aufprallgeräusche klingen nach Material (Gebäude, Baum, Mast, Fahrzeug).
 
 Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb.zone [auto|stadt|gruen|autobahn|wasser]`, `amb.mix`, `amb.layer <schicht> on|off`, `amb.volume`, `amb.impact <material>`, `amb on|off`.
@@ -107,6 +109,7 @@ pipeline/            Offline-Pipeline: OSM + Gelände → Kacheln
 src/
   world/format.ts    Kachelformat und Koordinaten (geteilt von Pipeline und Spiel)
   world/streamer.ts  lädt Kacheln um das Auto, baut Meshes und Kollision
+  world/props.ts     Straßenmöbel und Parker als Kachel-Layer (Modelle in propModels.ts)
   vehicle/           Rapier-Raycast-Fahrzeug mit Arcade-Tuning, Nitro, Drift
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
   world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)

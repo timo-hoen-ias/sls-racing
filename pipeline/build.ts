@@ -10,6 +10,7 @@ import {
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
+import { buildProps } from './lib/props.ts';
 import { RoadMask } from './lib/clearance.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
@@ -21,6 +22,7 @@ import { flatSampler, terrariumSampler, type HeightSampler } from './lib/terrain
 import { TileMap } from './lib/tilebuf.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
+import { PROP_NAMES, type PropKind } from '../src/world/propKinds.ts';
 
 function main() {
   const { cfg, info, project } = loadWorld();
@@ -99,6 +101,8 @@ function main() {
     treesByTile.get(k)!.push(x, height(e, n), z, s);
   };
   for (const [e, n] of osm.trees) if (!onRoad.has(e, n)) addTree(e, n, 0.8 + rand(e, n) * 0.5);
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary });
+  console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
@@ -137,6 +141,8 @@ function main() {
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
+    const tileProps = props.tiles.get(k);
+    if (tileProps) tile.props = encode(new Float32Array(tileProps));
     // Gzipped here because static hosting does not compress application/octet-stream; the client inflates it.
     const bin = gzipSync(encodeTile(tile), { level: 9 });
     bytes += bin.byteLength;

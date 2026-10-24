@@ -25,6 +25,9 @@ export const KINDS: Record<VehicleKind, KindSpec> = {
   truck: { length: 10.5, width: 2.5, height: 3.6, accel: 0.8, decel: 2.2, speed: 0.75 },
 };
 
+/** German car park: lots of grey, black, white and silver, a few colours (parked cars use the same). */
+export const CAR_PALETTE = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0xf0f0ee, 0x4a4e54, 0x5d6168, 0x23365e, 0x6e1a1a, 0x30492f, 0xa8a090, 0x8a5a2b, 0x2a6f9b];
+
 /** Speed limit per road rank (m/s): 30 km/h in residential streets, 50 in town, 90 and 120 on trunk roads and motorways. */
 export const SPEED_LIMIT = [4, 5, 4, 8.3, 11, 13.9, 13.9, 13.9, 25, 33];
 /** Approximate carriageway width per rank, matching the pipeline's road classes. */
@@ -255,8 +258,7 @@ export class TrafficSim {
   private pickColor(kind: VehicleKind): number {
     if (kind === 'bus') return this.rng() < 0.7 ? 0xd9d9d4 : 0xe8c21c;
     if (kind === 'truck') return [0xe8e8e8, 0x2b4f8c, 0xb22a22, 0x2d6b3a][Math.floor(this.rng() * 4)];
-    // German car park: lots of grey, black, white and silver, a few colours.
-    const palette = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0xf0f0ee, 0x4a4e54, 0x5d6168, 0x23365e, 0x6e1a1a, 0x30492f, 0xa8a090, 0x8a5a2b, 0x2a6f9b];
+    const palette = CAR_PALETTE;
     if (kind === 'van') return this.rng() < 0.6 ? 0xf0f0ee : palette[Math.floor(this.rng() * palette.length)];
     return palette[Math.floor(this.rng() * palette.length)];
   }

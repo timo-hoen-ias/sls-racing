@@ -8,6 +8,8 @@ import {
   TERRAIN_N, TERRAIN_STEP, TileContent, isGzip, tileKey, tileOfLocal, tileOriginLocal, utmToLocal, type WorldIndex,
 } from '../src/world/format.ts';
 import { addTileColliders } from '../src/world/tileColliders.ts';
+import { addPropColliders } from '../src/world/propColliders.ts';
+import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.ts';
 import { terrainHeights } from '../src/world/tileBuild.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { readOsm } from './lib/osm.ts';
@@ -42,7 +44,9 @@ const kinds = new Map<number, string>();
 
 /** Same colliders as the game (WorldStreamer → addTileColliders). */
 function addColliders(world: RAPIER.World, t: TileContent) {
-  addTileColliders(RAPIER, world, t, W, (c, kind) => kinds.set(c.handle, kind));
+  const body = addTileColliders(RAPIER, world, t, W, (c, kind) => kinds.set(c.handle, kind));
+  const props = t.has('props') ? t.f32('props') : undefined;
+  if (props) addPropColliders(RAPIER, world, body, props, (c, i) => kinds.set(c.handle, PROP_NAMES[props[i * PROP_STRIDE] as PropKind]));
 }
 
 /** Ground height under (x, z), interpolated on the same triangles as the terrain mesh. */

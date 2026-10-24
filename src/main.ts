@@ -41,6 +41,7 @@ import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
+import { PropLayer } from './world/props.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { FarField } from './world/farField.ts';
@@ -88,6 +89,9 @@ async function boot() {
   view.scene.add(streamer.root);
   const far = new FarField(TILES_URL, index, streamer, FAR_DIST[quality.name]);
   view.scene.add(far.root);
+  const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world });
+  props.register(world);
+  view.scene.add(props.root);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -130,7 +134,7 @@ async function boot() {
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
   // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
-  loadVehicleParts().then((set) => traffic.view.setModels(set, 'glb'), (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
+  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
   peds.sim.events.knocked = (_, v) => {
@@ -226,6 +230,7 @@ async function boot() {
   registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
@@ -389,6 +394,7 @@ async function boot() {
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
+    props.update(view.camera);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
@@ -472,6 +478,7 @@ async function boot() {
       $('info').textContent = `${fps} fps · Qualität ${quality.name} · ${input.lastDevice}\nUTM 32N ${e.toFixed(0)} / ${n.toFixed(0)} · Kacheln ${streamer.loadedCount}`;
     }
     (window as any).__sls = {
+      props,
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,

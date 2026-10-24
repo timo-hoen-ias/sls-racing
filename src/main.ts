@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { EngineSound } from './audio/engineSound.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
+import { registerAddressCommands } from './nav/addressCommands.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
@@ -340,14 +341,13 @@ async function boot() {
   const debug = new DebugConsole();
   debug.onToggle = () => input.releaseAll();
   bigMap.onTeleport = () => debug.exec('tp ziel');
-  registerGameCommands({
-    R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar,
-    teleport: (x, z, heading = car.heading(), road = false) => {
-      if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
-      hold = { x, z, heading, frames: 0, road };
-      worldReady = false;
-    },
-  }, debugState);
+  const teleport = (x: number, z: number, heading = car.heading(), road = false) => {
+    if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
+    hold = { x, z, heading, frames: 0, road };
+    worldReady = false;
+  };
+  registerGameCommands({ R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar, teleport }, debugState);
+  registerAddressCommands({ world: index.world, graph, nav, pos: ip, teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
   const perf = new PerfMonitor($('perf'), view.renderer);

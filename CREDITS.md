@@ -44,3 +44,9 @@ Die Fassaden-Atlanten (Fenster, Schaufenster) zeichnet `src/render/facades.ts` w
 ## Code
 Wolken/God Rays, Motion Blur und Lens Flare (src/render/post/) sind aus dem eigenen Projekt going-vertical übernommen und angepasst.
 Wasser-Shading (src/render/water.ts) nach jbouny/ocean (https://github.com/jbouny/ocean, MIT, © 2013 Jérémy Bouny); die Normal-Map public/textures/waternormals.jpg stammt aus diesem Projekt. Die Spiegelkamera folgt three.js Reflector (MIT).
+
+## Zusatzdaten der Pipeline
+- Bäume (Standort, Höhe, Krone): LiDAR-Punktwolke 2025, © GeoBasis DE/LVGL-SL (2025), Datenlizenz Deutschland – Namensnennung – Version 2.0 (https://www.govdata.de/dl-de/by-2-0).
+- Hausadressen im Navi: Hauskoordinaten, © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0.
+- Straßenraumbreiten: ALKIS Tatsächliche Nutzung, © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0.
+- Verkehrszeichen, Ampeln, Laternen und Straßenmöbel: Mapillary-Mitwirkende, CC BY-SA 4.0 (https://www.mapillary.com). Der Zugangstoken wird nur als Umgebungsvariable MAPILLARY_TOKEN übergeben und nie gespeichert.

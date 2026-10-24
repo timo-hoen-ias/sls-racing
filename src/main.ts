@@ -17,11 +17,13 @@ import { BigMap } from './ui/bigMap.ts';
 import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
-import { ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
+import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
+import { registerTrafficCommands } from './traffic/debugCommands.ts';
+import { Traffic } from './traffic/traffic.ts';
 import { WorldStreamer } from './world/streamer.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -70,6 +72,8 @@ async function boot() {
   $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);
   view.scene.add(routeLine.mesh);
+  const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
+  view.scene.add(traffic.view.root);
   let streetTimer = 0;
   let mapTimer = 0;
 
@@ -79,6 +83,7 @@ async function boot() {
     startBtn.hidden = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sound.onBackfire = () => effects.backfire(ip, iq, car.body.linvel());
+    traffic.attachAudio(sound.context, sound.world);
     await sound.resume().catch(() => {});
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
   });
@@ -92,7 +97,7 @@ async function boot() {
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
     groundRay.origin = { x, y: 2000, z };
-    const hit = world.castRay(groundRay, 4000, true, undefined, undefined, undefined, car.body);
+    const hit = world.castRay(groundRay, 4000, true, undefined, undefined, undefined, car.body, (c) => !traffic.isSolid(c.parent()));
     return hit ? 2000 - hit.timeOfImpact : undefined;
   };
 
@@ -127,6 +132,7 @@ async function boot() {
     hitCooldown = 0.6;
   };
 
+  registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
@@ -239,6 +245,9 @@ async function boot() {
       hitCooldown = 0.25;
     }
     hit = 0;
+    const lvel = car.body.linvel();
+    const simDt = debugState.frozen ? 0 : dt * debugState.timeScale;
+    traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
     cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     view.follow(ip);
@@ -277,6 +286,7 @@ async function boot() {
     (window as any).__sls = {
       fps, speed: car.speed, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
+      traffic: traffic.sim,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),

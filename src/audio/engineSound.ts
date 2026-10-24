@@ -68,6 +68,8 @@ export class EngineSound {
   private popCooldown = 0;
   private lastT = 0;
   muted = false;
+  /** Input for world sounds (traffic, ambience): mixed with the car, muted with it and sent through the reverb. */
+  readonly world: GainNode;
   /** Called when the exhaust backfires audibly (for the flame effect). */
   onBackfire?: () => void;
 
@@ -127,6 +129,8 @@ export class EngineSound {
 
     this.fx = ctx.createGain();
     this.fx.connect(this.master);
+    this.world = ctx.createGain();
+    this.world.connect(this.master);
 
     const noise = ctx.createBufferSource();
     noise.buffer = this.noise;
@@ -179,6 +183,10 @@ export class EngineSound {
 
   resume() {
     return this.ctx.resume();
+  }
+
+  get context() {
+    return this.ctx;
   }
 
   toggleMute() {

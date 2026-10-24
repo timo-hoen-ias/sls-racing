@@ -38,6 +38,7 @@ import { loadLidar } from './lib/lidar.ts';
 import { categorize, loadMapillary } from './lib/mapillary.ts';
 import { placeLidarTrees, type MeasuredTree } from './lib/lidarTrees.ts';
 import { LANDCOVER_ATTRIBUTION, loadLandcover, tileCover } from './lib/landcover.ts';
+import { waterLevels, type TileGrid } from './lib/waterLevel.ts';
 
 function main() {
   const { cfg, info, project } = loadWorld();
@@ -189,9 +190,9 @@ function main() {
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
-  let bytes = 0;
-  const index: [number, number][] = [];
-  for (const k of [...want].sort()) {
+  // Terrain and ground classes of all tiles first: water levels are smoothed across tile borders.
+  const grids = new Map<string, TileGrid>();
+  for (const k of want) {
     const [ix, iy] = k.split('_').map(Number);
     const E0 = ix * T;
     const N0 = (iy + 1) * T;
@@ -203,8 +204,25 @@ function main() {
         const n = N0 - r * TERRAIN_STEP;
         h[r * TERRAIN_N + c] = Math.round(carve.apply(e, n, height.raw(e, n)) * 100) / 100;
         // Brooks become water cells, except under roads (culverts), where the mesh must stay level.
-        const cls = water.has(e, n) && !onRoad.has(e, n) ? Ground.water : ground.at(e, n, Ground.grass);
-        g[r * TERRAIN_N + c] = cls;
+        g[r * TERRAIN_N + c] = water.has(e, n) && !onRoad.has(e, n) ? Ground.water : ground.at(e, n, Ground.grass);
+      }
+    grids.set(k, { h, g });
+  }
+  const levels = waterLevels(grids, TERRAIN_N, Ground.water);
+  console.log(`Water: smooth levels in ${levels.size} tiles`);
+
+  let bytes = 0;
+  const index: [number, number][] = [];
+  for (const k of [...want].sort()) {
+    const [ix, iy] = k.split('_').map(Number);
+    const E0 = ix * T;
+    const N0 = (iy + 1) * T;
+    const { h, g } = grids.get(k)!;
+    for (let r = 0; r < TERRAIN_N; r++)
+      for (let c = 0; c < TERRAIN_N; c++) {
+        const e = E0 + c * TERRAIN_STEP;
+        const n = N0 - r * TERRAIN_STEP;
+        const cls = g[r * TERRAIN_N + c];
         // Scatter trees and bushes in woods, scrub and parks, away from roads. Densities are per 8 m cell and area type, whatever the mesh step.
         if (r % TREE_EVERY === 0 && c % TREE_EVERY === 0 && r < TERRAIN_N - 1 && c < TERRAIN_N - 1 && (cls === Ground.forest || cls === Ground.grass)) {
           const tags = ground.tagsAt(e + TREE_CELL / 2, n - TREE_CELL / 2);
@@ -241,6 +259,8 @@ function main() {
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const bi = lod2.info.get(k);
     if (bi) tile.bldInfo = encode(new Float32Array(bi));
+    const wl = levels.get(k);
+    if (wl) tile.waterLevel = encode(wl);
     const ww = waterways.get(k);
     if (ww) tile.waterways = encode(new Float32Array(ww));
     const trees = treesByTile.get(k);

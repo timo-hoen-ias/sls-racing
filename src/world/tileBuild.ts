@@ -50,6 +50,21 @@ export function terrainHeights(t: TileContent): Float32Array {
   return out;
 }
 
+/** Water surface below the bank. */
+export const WATER_SURFACE_OFFSET = 0.15;
+
+/**
+ * Water surface height per terrain sample: the smoothed level from the pipeline (flat per lake, gently
+ * sloped along rivers), or the terrain itself in older tiles without one.
+ */
+export function waterSurface(t: TileContent): Float32Array {
+  const h = t.f32('terrain')!;
+  const lv = t.f32('waterLevel');
+  const out = new Float32Array(h.length);
+  for (let i = 0; i < h.length; i++) out[i] = (lv && Number.isFinite(lv[i]) ? lv[i] : h[i]) - WATER_SURFACE_OFFSET;
+  return out;
+}
+
 /** Grid triangles (a, d, b) and (b, d, e): the same diagonal as Rapier's heightfield. */
 export function gridIndex(n: number): Uint32Array {
   const idx = new Uint32Array((n - 1) * (n - 1) * 6);
@@ -117,7 +132,8 @@ function buildTerrain(t: TileContent, w: WorldInfo): { terrain: MeshArrays; wate
   let water: MeshArrays | undefined;
   if (g.some((v) => v === Ground.water)) {
     const wp = pos.slice();
-    for (let i = 0; i < N * N; i++) wp[i * 3 + 1] = h[i] - 0.15;
+    const level = waterSurface(t);
+    for (let i = 0; i < N * N; i++) wp[i * 3 + 1] = level[i];
     const wi: number[] = [];
     for (let r = 0; r < N - 1; r++)
       for (let c = 0; c < N - 1; c++) {

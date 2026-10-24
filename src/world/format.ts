@@ -78,6 +78,8 @@ export interface TileData {
   props?: string;
   /** Float32 waterway polylines, each [count, width, x0, y0, z0, …], points run downstream. */
   waterways?: string;
+  /** Float32 water surface height per terrain sample (NaN away from water): flat per lake, gently sloped along rivers. */
+  waterLevel?: string;
   /** Float32 x, z, height above ground, ALKIS function group and code (31001, 1000 = Wohnhaus) per LoD2 building, for `bld.info`. */
   bldInfo?: string;
   /** Uint8 terrain texture weights per vertex, 8 channels (see SPLAT in coverKinds.ts), from the land cover. */
@@ -174,7 +176,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', waterways: 'f32', bldInfo: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

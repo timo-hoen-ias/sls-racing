@@ -4,27 +4,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 import { SPECIES_BY_KIND, vegetationFromScene } from '../src/world/vegGlb.ts';
-
-/** Node has no image decoder: rewrite the GLB without textures so GLTFLoader only builds the geometry. */
-function withoutTextures(buf: Buffer) {
-  const jsonLen = buf.readUInt32LE(12);
-  const json = JSON.parse(buf.subarray(20, 20 + jsonLen).toString());
-  delete json.textures;
-  delete json.images;
-  delete json.samplers;
-  for (const m of json.materials ?? []) if (m.pbrMetallicRoughness) delete m.pbrMetallicRoughness.baseColorTexture;
-  let text = Buffer.from(JSON.stringify(json));
-  text = Buffer.concat([text, Buffer.alloc((4 - (text.length % 4)) % 4, 0x20)]);
-  const bin = buf.subarray(20 + jsonLen);
-  const header = Buffer.alloc(20);
-  header.writeUInt32LE(0x46546c67, 0);
-  header.writeUInt32LE(2, 4);
-  header.writeUInt32LE(20 + text.length + bin.length, 8);
-  header.writeUInt32LE(text.length, 12);
-  header.writeUInt32LE(0x4e4f534a, 16);
-  const out = Buffer.concat([header, text, bin]);
-  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
-}
+import { withoutTextures } from './glbWithoutTextures.ts';
 
 async function load() {
   const buf = readFileSync(new URL('../public/models/vegetation.glb', import.meta.url));

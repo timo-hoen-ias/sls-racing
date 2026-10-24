@@ -35,6 +35,8 @@ def materials():
     pbr('wood', 0x5a3d26, 0.0, 0.8)
     pbr('stone.red', 0x9a4a3a, 0.0, 0.85)       # red sandstone (Kommandantur)
     pbr('roof.grass', 0x5f7a3a, 0.0, 0.95)     # grassed rampart (Kasematten)
+    pbr('copper.bronze', 0x3d3a2e, 0.8, 0.45)  # dark bronze (fountain, statues)
+    pbr('glass.water', 0x3c5a5a, 0.2, 0.05)    # fountain water
 
 
 class Frame:
@@ -162,7 +164,7 @@ def local_footprint(entry):
     return [(e - entry['e'], n - entry['n']) for e, n in entry['footprint']]
 
 
-ALL_MATS = ['stone', 'stone.dark', 'stone.light', 'stone.red', 'plaster', 'plaster.white', 'roof', 'roof.grass', 'slate', 'copper', 'glass', 'wood']
+ALL_MATS = ['stone', 'stone.dark', 'stone.light', 'stone.red', 'plaster', 'plaster.white', 'roof', 'roof.grass', 'slate', 'copper', 'copper.bronze', 'glass', 'glass.water', 'wood']
 
 
 # ---------------------------------------------------------------- St. Ludwig
@@ -315,7 +317,7 @@ def offset(pts, d):
         n0, n1 = Vector((e0.y, -e0.x)), Vector((e1.y, -e1.x))
         m = (n0 + n1)
         m = m.normalized() if m.length > 0.2 else n1          # near-reversals: no long miter spikes
-        k = max(-3 * abs(d), min(3 * abs(d), d / max(0.3, m.dot(n1))))
+        k = max(-2.5 * abs(d), min(2.5 * abs(d), d / max(0.3, m.dot(n1))))
         q = p1 + m * k
         out.append((q.x, q.y))
     return out
@@ -357,7 +359,6 @@ def facade(f, pts, floors, mat='glass', w=1.2, h=1.9, spacing=3.2, frame=None, a
                     obox(f, frame, a + d * s + n * 0.05, d, w + 0.3, 0.1, h0 - 0.2, h0 + h + 0.2)
                 obox(f, mat, c + n * (0.04 if frame else 0), d, w, depth, h0, h0 + h)
                 if arch:
-                    f.spire(mat, *(c + n * (0.04 if frame else 0)), h0 + h, h0 + h + w * 0.5, w * 0.5, seg=4) if False else None
                     obox(f, mat, c + n * (0.04 if frame else 0), d, w * 0.7, depth, h0 + h, h0 + h + w * 0.35)
 
 
@@ -422,26 +423,6 @@ def kommandantur(entry, root, lod):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
-def altes_rathaus(entry, root, lod):
-    """Small sandstone town hall (about 1900): two storeys, hipped slate roof."""
-    f = Frame(0, ALL_MATS, detail=lod == 0)
-    fp = ccw(local_footprint(entry))
-    H = 8.5
-    walls(f, 'stone', fp, -1.0, H)
-    if f.detail:
-        f.prism('stone.dark', offset(fp, 0.05), -1.0, 0.8)
-        f.prism('stone.light', offset(fp, 0.1), H - 0.4, H)
-    quoins(f, fp, 0.8, H - 0.4, mat='stone.light')
-    facade(f, fp, [1.3, 5.0], w=1.1, h=2.1, spacing=2.8, frame='stone.light', min_len=3.0)
-    roof(f, 'slate', offset(fp, 0.35), H, [(3.0, 3.6), (1.6, 1.4)])
-    ob = f.finish(f"{entry['id']}_lod{lod}", root)
-    if lod:
-        return ob, None
-    c = Frame(0, ['stone'])
-    c.prism('stone', fp, -1.0, H + 4.0)
-    return ob, c.finish(f"{entry['id']}_collider", root)
-
-
 def st_marien(entry, root, lod):
     """Plain rendered parish church (Picard): tall nave and chancel under hipped/gabled roofs, west front with
     a bell gable and round-arched windows, small porch."""
@@ -498,7 +479,7 @@ def kasematten(entry, root, lod, gate=False):
                 s = (L - (k - 1) * 4.4) / 2 + i * 4.4
                 c = a + d * s + n * 0.03
                 obox(f, 'glass', c, d, 2.6, 0.1, 0.0, 2.6)
-                f.spire('glass', c.x, c.y, 2.6, 3.4, 1.3, seg=6) if False else obox(f, 'glass', c, d, 1.8, 0.1, 2.6, 3.2)
+                obox(f, 'glass', c, d, 1.8, 0.1, 2.6, 3.2)
                 obox(f, 'stone.light', c + n * 0.03, d, 3.0, 0.08, 3.2, 3.5)
     # Grassy rampart on top, rising in a long mound.
     roof(f, 'roof.grass', offset(fp, -0.4), H, [(1.6, 1.6), (1.8, 0.8)])
@@ -520,14 +501,13 @@ def kasematten(entry, root, lod, gate=False):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
-def vauban_insel(entry, root, lod):
-    """Ravelin on the Vauban island: battered sandstone walls rising from the moat around the whole island,
-    with a low parapet; the island itself (trees, paths) comes from the terrain and vegetation layers."""
+def vauban_insel(entry, root, lod, top=0.5, base=-4.0):
+    """Fortification walls (Vauban island ravelin, bastions): battered sandstone walls around the whole footprint,
+    rising from the moat (base) to a low parapet (top); the ground inside comes from the terrain and vegetation."""
     f = Frame(0, ALL_MATS, detail=lod == 0)
     fp = ccw(local_footprint(entry))
-    top, base = 0.5, -4.0
     outer_top = fp
-    outer_base = offset(fp, 1.0)               # batter: the wall leans back about 1 m over 4.5 m
+    outer_base = offset(fp, 0.5)               # batter: the wall leans back about 0.5 m
     inner = offset(fp, -1.2)
     bm = f.bm
     ot = [bm.verts.new((x, y, top)) for x, y in outer_top]
@@ -566,10 +546,232 @@ def vauban_insel(entry, root, lod):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
+def marienbrunnen(entry, root, lod):
+    """Marian fountain in front of St. Ludwig: round sandstone basin, two bronze bowls on a stem, a stone pedestal
+    and the bronze Madonna on top."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    seg = 24 if f.detail else 10
+    # Basin rim (ring), water, and a low step around it.
+    rim_out, rim_in = fp, offset(fp, -0.45)
+    bm = f.bm
+    for lo_, hi_, outer, inner, mat in ((-1.0, 0.6, rim_out, rim_in, 'stone.light'),):
+        o0 = [bm.verts.new((x, y, lo_)) for x, y in outer]
+        o1 = [bm.verts.new((x, y, hi_)) for x, y in outer]
+        i1 = [bm.verts.new((x, y, hi_)) for x, y in inner]
+        i0 = [bm.verts.new((x, y, 0.1)) for x, y in inner]
+        n = len(outer)
+        fs = []
+        for i in range(n):
+            j = (i + 1) % n
+            fs += [bm.faces.new((o0[i], o0[j], o1[j], o1[i])), bm.faces.new((o1[i], o1[j], i1[j], i1[i])),
+                   bm.faces.new((i1[i], i1[j], i0[j], i0[i]))]
+        for fc in fs:
+            fc.material_index = f.mats.index(mat)
+    f.prism('glass.water', rim_in, 0.1, 0.42)
+    if f.detail:
+        f.prism('stone.light', offset(fp, 0.7), -1.0, 0.12)                                   # step
+    f.spire('stone', 0, 0, 0.1, 1.1, 0.45, seg=seg, r_top=0.4)                                 # stem
+    f.spire('copper.bronze', 0, 0, 1.0, 1.45, 0.5, seg=seg, r_top=2.3)                         # lower bowl
+    f.spire('glass.water', 0, 0, 1.38, 1.42, 2.2, seg=seg, r_top=2.2)
+    f.spire('copper.bronze', 0, 0, 1.45, 2.1, 0.32, seg=seg, r_top=0.3)
+    f.spire('copper.bronze', 0, 0, 2.05, 2.35, 0.35, seg=seg, r_top=1.35)                      # upper bowl
+    f.spire('stone.light', 0, 0, 2.35, 3.9, 0.55, seg=seg, r_top=0.55)                         # pedestal
+    f.spire('stone.light', 0, 0, 3.9, 4.05, 0.65, seg=seg, r_top=0.65)
+    # Madonna with child: robe, shoulders, head, child on the left arm, crown.
+    f.spire('copper.bronze', 0, 0, 4.05, 5.45, 0.42, seg=12 if f.detail else 6, r_top=0.2)
+    f.spire('copper.bronze', 0, 0, 5.4, 5.6, 0.22, seg=10 if f.detail else 6, r_top=0.12)
+    f.spire('copper.bronze', 0, 0, 5.6, 5.9, 0.12, seg=8 if f.detail else 5, r_top=0.11)
+    if f.detail:
+        f.spire('copper.bronze', 0.15, -0.22, 4.9, 5.45, 0.13, seg=6, r_top=0.09)
+        f.spire('copper.bronze', 0, 0, 5.9, 6.05, 0.12, seg=8, r_top=0.14)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, 0.6)
+    c.spire('stone', 0, 0, 0.6, 4.0, 0.6, seg=6, r_top=0.6)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def kaserne(entry, root, lod):
+    """Vauban-era barracks: long two-storey sandstone ashlar block with a deep cornice, quoins, framed windows
+    with segmental heads and a low hipped slate roof."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    H = 9.0
+    walls(f, 'stone', fp, -1.0, H)
+    if f.detail:
+        f.prism('stone.dark', offset(fp, 0.05), -1.0, 0.7)
+        f.prism('stone.light', offset(fp, 0.12), 3.9, 4.1)                                  # string course
+        f.prism('stone.light', offset(fp, 0.3), H - 0.6, H)                                 # cornice
+    quoins(f, fp, 0.7, H - 0.6, mat='stone.light', s=0.7)
+    facade(f, fp, [1.3, 5.0], w=1.1, h=2.0, spacing=3.6, frame='stone.light', arch=True, min_len=6.0)
+    roof(f, 'slate', offset(fp, 0.4), H, [(5.8, 4.2)])
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, H + 3.0)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def katerturm(entry, root, lod):
+    """Katerturm: square rubble-stone tower (about 11 m) with a small steel lookout and lantern, joined by a lower
+    fortification wall with a gate opening along the rest of the footprint."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    a, d, n, L = max(edges(fp, 1.0), key=lambda e: e[3])        # long side
+    depth = min(e[3] for e in edges(fp, 1.0))
+    inward = -n
+    t = min(depth, L / 2)
+    tower = [a, a + d * t, a + d * t + inward * depth, a + inward * depth]
+    tower = ccw([(p.x, p.y) for p in tower])
+    wall = ccw([(p.x, p.y) for p in (a + d * t, a + d * L, a + d * L + inward * depth, a + d * t + inward * depth)])
+    H, W = 11.0, 4.5
+    walls(f, 'stone', tower, -1.0, H)
+    walls(f, 'stone', wall, -1.0, W)
+    if f.detail:
+        f.prism('stone.light', offset(tower, 0.15), H - 0.3, H)
+        f.prism('stone.light', offset(wall, 0.08), W - 0.2, W)
+        for e in edges(tower, 2.0):
+            obox(f, 'stone.dark', e[0] + e[1] * (e[3] / 2) + e[2] * 0.03, e[1], 0.25, 0.1, 5.0, 6.6)
+        g = a + d * (t + (L - t) / 2)
+        for side in (n, -n):                                                          # gate through the wall
+            obox(f, 'stone.dark', g + side * (depth / 2 + 0.03) + inward * (depth / 2), d, 3.2, 0.1, 0.0, 3.3)
+    inner = offset(tower, -0.5)
+    f.prism('copper', inner, H, H + 0.15)                                             # lookout deck
+    if f.detail:
+        for e in edges(tower, 1.0):                                                   # railing
+            obox(f, 'copper', e[0] + e[1] * (e[3] / 2), e[1], e[3], 0.05, H + 0.15, H + 1.1)
+    c0 = sum((Vector(p) for p in tower), Vector((0, 0))) / 4
+    obox(f, 'glass', c0, d, 1.8, 1.8, H + 0.15, H + 1.9)                              # lantern
+    obox(f, 'copper', c0, d, 2.2, 2.2, H + 1.9, H + 2.2)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', tower, -1.0, H + 2.0)
+    c.prism('stone', wall, -1.0, W)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def villa(entry, root, lod):
+    """Two-storey rendered villa (Haus Ludwig): white walls, grey shutters, hipped slate roof with a ribbon dormer."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    H = 7.4
+    walls(f, 'plaster.white', fp, -1.0, H)
+    if f.detail:
+        f.prism('stone.dark', offset(fp, 0.05), -1.0, 0.5)
+        f.prism('plaster', offset(fp, 0.25), H - 0.3, H)
+        facade(f, fp, [1.2, 4.4], w=1.1, h=1.7, spacing=2.9, frame='slate', min_len=4.0)
+    roof(f, 'slate', offset(fp, 0.5), H, [(3.0, 3.2), (1.5, 0.6)])
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, H + 3.0)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def theater(entry, root, lod):
+    """Theater am Ring: light rendered cube with a tall fly tower block, glazed foyer on the ground floor."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    H = 13.0
+    walls(f, 'plaster.white', fp, -1.0, H)
+    if f.detail:
+        f.prism('glass', offset(fp, 0.05), 0.3, 3.6)                                  # foyer glazing
+        f.prism('plaster', offset(fp, 0.15), H - 0.4, H)
+        facade(f, fp, [6.0, 9.5], w=2.4, h=1.8, spacing=5.0, min_len=8.0)
+    roof(f, 'roof', fp, H, [(0.3, 0.0)])
+    # Fly tower over the middle of the footprint.
+    tower = offset(fp, -6.0)
+    f.prism('plaster.white', tower, H, H + 7.0)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, H)
+    c.prism('stone', tower, H, H + 7.0)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def schleusenbruecke(entry, root, lod, deck=5.0):
+    """Schleusenbrücke: Vauban's lock-bridge piers (sandstone, with the vertical grooves of the old sluice gates)
+    carrying today's concrete foot and cycle deck with steel railings and lamp posts. Not a road bridge, so the
+    deck is part of the model; deck top `deck` m above the origin (an estimate until the terrain is checked)."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    # Bridge axis: the longest edge.
+    a0, d, n, L = max(edges(fp, 1.0), key=lambda e: e[3])
+    U = d
+    V = Vector((-d.y, d.x))
+    us = [Vector(p).dot(U) for p in fp]
+    vs = [Vector(p).dot(V) for p in fp]
+    u0, u1, v0, v1 = min(us), max(us), min(vs), max(vs)
+    f.prism('plaster', fp, deck - 0.7, deck)                                              # deck slab
+    if f.detail:
+        f.prism('stone.light', offset(fp, 0.08), deck - 0.75, deck - 0.6)                 # slab edge
+    def section(u):
+        """v range of the footprint across the axis at u."""
+        hits = []
+        for p, q in zip(fp, fp[1:] + fp[:1]):
+            pu, qu = Vector(p).dot(U), Vector(q).dot(U)
+            if (pu - u) * (qu - u) <= 0 and pu != qu:
+                t = (u - pu) / (qu - pu)
+                hits.append(Vector(p).dot(V) + t * (Vector(q).dot(V) - Vector(p).dot(V)))
+        return (min(hits), max(hits)) if len(hits) >= 2 else (v0, v1)
+
+    # Piers every ~9 m, each as wide as the deck above it.
+    k = max(2, int((u1 - u0 - 6) // 9))
+    piers = []
+    for i in range(k):
+        u = u0 + 3 + (u1 - u0 - 6) * (i + 0.5) / k
+        a_, b_ = section(u)
+        piers.append((u, a_ + 0.6, b_ - 0.6))
+    for u, pv0, pv1 in piers:
+        width = pv1 - pv0
+        c = U * u + V * ((pv0 + pv1) / 2)
+        obox(f, 'stone', c, V, width, 2.6, -4.0, deck - 0.7)
+        obox(f, 'stone.light', c, V, width + 0.3, 2.9, deck - 1.2, deck - 0.7)              # pier cap
+        if f.detail:
+            for s_ in (-1, 1):                                                             # sluice grooves
+                obox(f, 'stone.dark', c + U * (s_ * 1.31), V, 0.25, 0.04, -3.0, deck - 1.3)
+                obox(f, 'stone.dark', c + V * (s_ * width * 0.2) + U * (s_ * 1.31), V, 0.12, 0.04, -3.0, deck - 1.3)
+    # Railings and lamp posts along the long sides.
+    for a, dd, nn, LL in edges(fp, 6.0):
+        if abs(dd.dot(U)) < 0.9:
+            continue
+        top = a + nn * -0.15
+        obox(f, 'stone.dark', top + dd * (LL / 2), dd, LL, 0.06, deck + 1.0, deck + 1.1)          # handrail
+        if f.detail:
+            obox(f, 'stone.dark', top + dd * (LL / 2), dd, LL, 0.03, deck + 0.15, deck + 0.2)
+            for j in range(int(LL / 0.25)):
+                obox(f, 'stone.dark', top + dd * (0.12 + j * 0.25), dd, 0.02, 0.02, deck + 0.2, deck + 1.0)
+            for j in range(int(LL // 18) + 1):
+                pc = top + dd * (4 + j * 18) - nn * 0.1
+                obox(f, 'stone.dark', pc, dd, 0.12, 0.12, deck, deck + 6.0)                     # lamp post
+                obox(f, 'plaster.white', pc - nn * 0.5, dd, 0.3, 0.6, deck + 5.8, deck + 6.0)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, deck - 0.7, deck)
+    for u, pv0, pv1 in piers:
+        obox(c, 'stone', U * u + V * ((pv0 + pv1) / 2), V, pv1 - pv0, 2.6, -4.0, deck - 0.7)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
 BUILDERS = {
-    'ludwigskirche': ludwigskirche, 'rathaus': rathaus, 'kommandantur': kommandantur, 'altes-rathaus': altes_rathaus,
+    'ludwigskirche': ludwigskirche, 'rathaus': rathaus, 'kommandantur': kommandantur,
     'st-marien': st_marien, 'kasematten-sw': lambda e, r, l: kasematten(e, r, l, gate=True), 'kasematten-no': kasematten,
-    'festung-vauban-insel': vauban_insel,
+    'festung-vauban-insel': vauban_insel, 'marienbrunnen': marienbrunnen, 'kaserne-1': kaserne,
+    'kaserne-4': kaserne, 'kaserne-6': kaserne, 'katerturm': katerturm, 'haus-ludwig': villa, 'theater-am-ring': theater,
+    'festung-ravelin-5': lambda e, r, l: vauban_insel(e, r, l, top=0.9, base=-1.5),
+    'festung-bastion-6': lambda e, r, l: vauban_insel(e, r, l, top=0.6, base=-3.5),
+    'schleusenbruecke': schleusenbruecke,
 }
 
 

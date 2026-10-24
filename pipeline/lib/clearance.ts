@@ -6,10 +6,10 @@ export class RoadMask {
   private cells = new Set<number>();
   private static readonly CELL = 2;
 
-  constructor(ways: Way[], margin = 1.5) {
+  constructor(ways: Way[], margin = 1.5, only: (tags: Record<string, string>) => boolean = () => true) {
     const C = RoadMask.CELL;
     for (const w of ways) {
-      if (!isDrivable(w.tags)) continue;
+      if (!isDrivable(w.tags) || !only(w.tags)) continue;
       const r = roadWidth(w.tags)! / 2 + margin;
       const k = Math.ceil(r / C);
       for (const [e, n] of densify(w.pts, C)) {

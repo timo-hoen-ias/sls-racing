@@ -32,9 +32,14 @@ import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
+import { registerTrafficCommands } from './traffic/debugCommands.ts';
+import { Traffic } from './traffic/traffic.ts';
+import { WorldAudio } from './audio/worldAudio.ts';
+import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
+import { FacadeControl } from './render/facades.ts';
 import { WeatherSystem } from './weather/weatherSystem.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -60,9 +65,10 @@ async function boot() {
   const view = createScene($('game') as HTMLCanvasElement, quality, index.spawn.y);
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
-  const materials = createMaterials();
-  patchWorldMaterials(materials);
-  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, materials, quality);
+  const mats = createMaterials();
+  patchWorldMaterials(mats);
+  const facades = new FacadeControl(mats.building);
+  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
   view.scene.add(streamer.root);
 
   const spawn = index.spawn;
@@ -71,7 +77,7 @@ async function boot() {
   view.scene.add(carView.root);
   if (view.post) markCar(carView.root);
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
-  const lampLights = new LampLights(quality, materials.lampHead);
+  const lampLights = new LampLights(quality, mats.lampHead);
   view.scene.add(lampLights.root);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
   let boostFx = 0;
@@ -103,6 +109,23 @@ async function boot() {
   for (const c of weatherCommands(weather)) registerCommand(c);
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);
   view.scene.add(routeLine.mesh);
+  const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
+  view.scene.add(traffic.view.root);
+  const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
+  view.scene.add(peds.view.root);
+  peds.sim.events.knocked = (_, v) => {
+    sound?.impact(Math.min(0.5, v / 30));
+    input.rumble(0.5, 150);
+  };
+  const worldAudio = new WorldAudio({
+    R: RAPIER, world, graph, car: car.body, scene: view.scene,
+    ignore: (c) => traffic.isSolid(c.parent()),
+    waterMeshes: () => {
+      const out: THREE.Mesh[] = [];
+      streamer.root.traverse((o) => { if ((o as THREE.Mesh).material === mats.water) out.push(o as THREE.Mesh); });
+      return out;
+    },
+  });
   let streetTimer = 0;
   let mapTimer = 0;
 
@@ -112,6 +135,8 @@ async function boot() {
     startBtn.hidden = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
+    traffic.attachAudio(sound.context, sound.world);
+    worldAudio.attach(sound);
     await sound.resume().catch(() => {});
     await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
@@ -126,7 +151,7 @@ async function boot() {
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
     groundRay.origin = { x, y: 2000, z };
-    const hit = world.castRay(groundRay, 4000, true, undefined, undefined, undefined, car.body);
+    const hit = world.castRay(groundRay, 4000, true, undefined, undefined, undefined, car.body, (c) => !traffic.isSolid(c.parent()));
     return hit ? 2000 - hit.timeOfImpact : undefined;
   };
 
@@ -178,6 +203,8 @@ async function boot() {
   const replayRot = [0, 0, 0, 0];
   const motion = { ax: 0, az: 0 };
   registerRenderCommands(view);
+  registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
+  peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
@@ -286,6 +313,7 @@ async function boot() {
     }
     if (worldReady && (ip.y < spawn.y - 150 || !streamer.hasTileAt(ip.x, ip.z))) resetCar();
 
+    facades.update(view.daylight.daylight);
     const night = 1 - view.daylight.daylight;
     const braking = drive.brake > 0 && car.speed > 1;
     carView.setNight(night);
@@ -303,6 +331,7 @@ async function boot() {
       const strength = Math.min(1, (hit - 3.5) / 12);
       effects.impact({ x: ip.x - hitDir.x * 2, y: ip.y - Math.max(0, hitDir.y) * 0.3, z: ip.z - hitDir.z * 2 }, strength);
       sound?.impact(strength);
+      worldAudio.impact(ip, car.heading(), strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
       // Mostly sideways/longitudinal hits dent the body; hard landings do not.
       if (Math.abs(hitDir.y) < 0.75) {
@@ -318,6 +347,11 @@ async function boot() {
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;
     effects.road.puddle = weather.puddle;
+    const lvel = car.body.linvel();
+    const simDt = debugState.frozen ? 0 : dt * debugState.timeScale;
+    traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
+    peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
+    if (worldReady) worldAudio.update(dt, ip, car.heading());
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
@@ -394,6 +428,8 @@ async function boot() {
     (window as any).__sls = {
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
+      traffic: traffic.sim,
+      peds: peds.sim,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),

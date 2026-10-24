@@ -62,6 +62,20 @@ registerCommand({ name: 'gear.set', help: 'Gang einlegen', args: '<gang>', run: 
 
 Namen sind klein geschrieben mit Namensraum (`car.*`, `gear.*`, `cam.*`, `fx.*`, `weather.*`, `world.*` …), Hilfetexte auf Deutsch. `run` gibt den Ausgabetext zurück oder wirft einen Fehler.
 
+## Stadtleben
+
+KI-Verkehr (Autos, Lieferwagen, Busse, Lkw) fährt auf dem Straßengraph rechts, folgt mit Abstand (Intelligent Driver Model), bremst vor Kurven und Abbiegungen, lässt an Kreuzungen die größere Straße zuerst, sonst gilt rechts vor links, Linksabbieger warten auf Gegenverkehr. Vor dir bremsen die Autos und hupen, wenn du im Weg stehst; nach einem Rempler bleiben sie mit Warnblinker stehen. Im Nahbereich sind sie fest (Kollision), die nächsten fünf haben Motor- und Reifengeräusch mit Doppler-Effekt.
+
+Befehle: `traffic.density 0..1`, `traffic.spawn [anzahl] [car|van|bus|truck]`, `traffic.freeze`, `traffic.debug` (Zustand als Farbe über jedem Fahrzeug), `traffic.info`, `traffic.near` (mit Grund fürs Warten), `traffic.clear`, `traffic.max`, `traffic.radius`, `traffic.sound`, `traffic on|off`.
+
+Fußgänger gehen auf den Gehwegen der Stadtstraßen und in der Fußgängerzone, queren an Kreuzungen (der Verkehr wartet), springen zur Seite, wenn du auf sie zufährst, und stehen nach einem Umfaller wieder auf. Befehle: `peds.density 0..1`, `peds.spawn [n]`, `peds.debug`, `peds.info`, `peds.freeze`, `peds.clear`, `peds.max`, `peds on|off`.
+
+Fassaden haben Charakter: Die Pipeline ordnet jedem Gebäude einen Typ zu (Wohnhaus, Altbau in der Altstadt, Mehrfamilienhaus, Büro/Geschäft, Halle, Kirche, Garage, Schule/öffentlich; `pipeline/lib/facades.ts`), an Hauptstraßen der Innenstadt bekommt das Erdgeschoss Schaufenster. Nachts leuchten zufällige Fenster. Befehle: `bld.facade [auto|typ]`, `bld.windows`, `bld.shops`, `bld.night auto|0..1`.
+
+Der Hall folgt der Umgebung: Raycasts links, rechts und nach oben messen Hauswände und Brücken, daraus werden offene Straße, Häuserschlucht und Unterführung überblendet, dazu ein Echo von der nächsten Wand je Seite. Die Geräuschkulisse mischt Stadtgemurmel (bebaut), Vögel und Blätter (grün), Autobahnrauschen und die Saar von dort, wo sie wirklich sind; Aufprallgeräusche klingen nach Material (Gebäude, Baum, Mast, Fahrzeug).
+
+Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb.zone [auto|stadt|gruen|autobahn|wasser]`, `amb.mix`, `amb.layer <schicht> on|off`, `amb.volume`, `amb.impact <material>`, `amb on|off`.
+
 ## Aufbau
 
 ```
@@ -76,6 +90,8 @@ src/
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
   world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)
   nav/               GPS: Ziel, Fortschritt, Neuberechnung, Abbiegehinweise
+  peds/              Fußgänger auf Gehwegen: Laufen, Queren, Ausweichen
+  traffic/           KI-Verkehr auf dem Straßengraph: Fahrlogik (IDM, Vorfahrt), Modelle, Kollision, Sound
   render/ audio/ ui/ Szene, Post-Processing, Routen-Linie, Motorsound, HUD, Minimap, Karte
 ```
 

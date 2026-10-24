@@ -52,6 +52,7 @@ const LIB = /* glsl */ `
 uniform float uPbrNormal;
 uniform float uPbrTiling;
 uniform float uPbrMacro;
+uniform float uPbrGroundTint;
 uniform float uPbrWear;
 uniform float uPbrDebug;
 uniform float uPbrRoadForce;

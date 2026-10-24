@@ -6,6 +6,7 @@ import {
 } from './format.ts';
 import type { Quality } from '../quality.ts';
 import type { Materials } from '../render/materials.ts';
+import { Samples } from '../debug/perf.ts';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 type R = typeof RAPIER_NS;
@@ -44,6 +45,8 @@ export class WorldStreamer {
   private quality: Quality;
   private treeGeo: { trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry };
   private lampGeo: { pole: THREE.BufferGeometry; head: THREE.BufferGeometry };
+  /** Timings for the performance overlay: download + parse, and building meshes/colliders on the main thread. */
+  readonly stats = { fetchMs: new Samples(64), buildMs: new Samples(64), bytes: 0, fetched: 0, failed: 0, built: 0, dropped: 0 };
 
   constructor(R: R, world: RAPIER_NS.World, baseUrl: string, index: WorldIndex, mats: Materials, quality: Quality) {
     this.R = R;
@@ -71,6 +74,13 @@ export class WorldStreamer {
 
   get loadedCount() { return this.loaded.size; }
   get pendingCount() { return this.loading.size + this.ready.length; }
+  get queuedCount() { return this.queue.length; }
+
+  /** One line for the performance overlay. */
+  statsLine() {
+    const s = this.stats;
+    return `${this.loaded.size} geladen · ${this.loading.size} laden · ${this.ready.length} bereit · ${this.queue.length} Warteschlange · Laden Ø ${s.fetchMs.avg().toFixed(0)} ms · Aufbau Ø ${s.buildMs.avg().toFixed(1)} / max ${s.buildMs.max().toFixed(1)} ms`;
+  }
 
   /** True when the tile under (x, z) is part of the world. */
   hasTileAt(x: number, z: number) {
@@ -112,7 +122,10 @@ export class WorldStreamer {
       this.ready.sort((a, b) => this.dist(a.ix, a.iy, x, z) - this.dist(b.ix, b.iy, x, z));
       const t = this.ready.shift()!;
       this.readyKeys.delete(tileKey(t.ix, t.iy));
+      const t0 = performance.now();
       this.addTile(t);
+      this.stats.buildMs.push(performance.now() - t0);
+      this.stats.built++;
     }
 
     for (const t of this.loaded.values()) {
@@ -128,14 +141,20 @@ export class WorldStreamer {
 
   private async fetchTile(key: string) {
     this.loading.add(key);
+    const t0 = performance.now();
     try {
       const res = await fetch(`${this.baseUrl}/t/${key}.json`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const tile: TileData = await res.json();
+      const text = await res.text();
+      const tile: TileData = JSON.parse(text);
+      this.stats.fetchMs.push(performance.now() - t0);
+      this.stats.bytes += text.length;
+      this.stats.fetched++;
       this.ready.push(tile);
       this.readyKeys.add(key);
     } catch (e) {
       console.warn(`Tile ${key} failed`, e);
+      this.stats.failed++;
       this.available.delete(key);
     } finally {
       this.loading.delete(key);
@@ -284,6 +303,7 @@ export class WorldStreamer {
     });
     this.world.removeRigidBody(t.body);
     this.loaded.delete(t.key);
+    this.stats.dropped++;
   }
 }
 

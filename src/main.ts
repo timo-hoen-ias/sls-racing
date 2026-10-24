@@ -19,6 +19,7 @@ import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
 import { ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { runCommand } from './debug/registry.ts';
+import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
@@ -147,11 +148,19 @@ async function boot() {
       worldReady = false;
     },
   }, debugState);
+  // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
+  view.renderer.info.autoReset = false;
+  const perf = new PerfMonitor($('perf'), view.renderer);
+  perf.addSource('Kacheln', () => streamer.statsLine());
+  perf.addSource('Physik', () => `${world.colliders.len()} Kollider · ${quality.physicsHz} Hz`);
+  registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), print: (t) => debug.print(t, 'info') });
+  if (new URLSearchParams(location.search).has('perf')) perf.setVisible(true);
   // ?cmd=day;nitro.infinite runs commands at startup.
   const bootCmd = new URLSearchParams(location.search).get('cmd');
   if (bootCmd) debug.exec(bootCmd);
 
   const frame = (now: number) => {
+    perf.tick(now - last);
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     input.update(dt);
@@ -169,6 +178,7 @@ async function boot() {
     }
 
     // Hold the car until the ground under it exists.
+    perf.begin('stream');
     if (hold) {
       const h = hold;
       streamer.update(h.x, h.z);
@@ -190,12 +200,14 @@ async function boot() {
       const t = car.body.translation();
       streamer.update(t.x, t.z);
     }
+    perf.end('stream');
 
     vehicleDebug.update();
     const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
     if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
     else frozenAt = null;
     acc += dt * debugState.timeScale;
+    perf.begin('physik');
     while (acc >= STEP) {
       prev.p.copy(curr.p);
       prev.q.copy(curr.q);
@@ -215,6 +227,7 @@ async function boot() {
       prevVel.x = lv.x; prevVel.y = lv.y; prevVel.z = lv.z;
       acc -= STEP;
     }
+    perf.end('physik');
     if (debugState.infiniteNitro) car.nitro = 1;
     const alpha = acc / STEP;
     ip.lerpVectors(prev.p, curr.p, alpha);
@@ -254,7 +267,12 @@ async function boot() {
     if (bigMap.open && (mapTimer -= dt) <= 0) { mapTimer = 0.5; bigMap.draw(); }
     routeLine.update(dt);
 
+    perf.begin('render');
+    perf.gpuBegin();
+    view.renderer.info.reset();
     view.render();
+    perf.gpuEnd();
+    perf.end('render');
 
     const dtr = car.drivetrain;
     sound?.update({

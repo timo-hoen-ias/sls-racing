@@ -117,6 +117,8 @@ Befehle: `ground.aerial 0..2` (0 = nur Klassenfarben), `ground.rows 0..1`, `grou
 
 Parkplätze: Asphaltierte Parkplätze (OSM `amenity=parking` ohne `surface` oder mit Asphalt/Beton, nicht Straßenrand, Tiefgarage oder Parkhaus) bekommen weiße Stellplatzlinien im selben 2,6-m-Raster, in dem die parkenden Autos stehen, als eigenes Mesh-Feld `stalls` (`src/world/stalls.ts`). Befehle: `parking.lines on|off`, `parking.count`.
 
+Fernsicht: Die Fernkacheln bekommen je 32-m-Zelle die mittlere Luftbildfarbe (Feld `tint`, nur wo die ganze Zelle beflogen ist), damit der Boden hinter dem Detailradius so weitergeht wie davor. Befehl: `lod.aerial on|off`.
+
 ## 3D-Modelle (Blender)
 
 Der Sportwagen wird per Blender-Python-Skript gebaut, nicht von Hand modelliert: `tools/blender/make_sportscar.py` erzeugt Karosserie, Kabine, Räder und Anbauteile, schneidet die Radhäuser per Boolean aus und legt Scheinwerfer, Fenster, Lufteinlässe und Fugen direkt als Flächen der Karosserie an. Export als GLB mit drei Detailstufen (LOD 0/1/2 für Karosserie, 2 für Räder), danach Meshopt-Kompression (`tools/compress-model.ts`, Positionen bleiben float, damit das Schadensmodell Beulen eindrücken kann).

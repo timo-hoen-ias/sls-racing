@@ -439,7 +439,7 @@ function main() {
     const farHeight = (e: number, n: number) => {
       try { return height.raw(e, n); } catch { return coarse.at(...toLonLat(e, n)); }
     };
-    idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, out: paths.out }) };
+    idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, colour: landcover && ((e, n) => landcover.colourAt(e, n)), out: paths.out }) };
   }
   const signalPts = osm.points.filter((p) => p.tags.highway === 'traffic_signals' && p.tags.crossing !== 'traffic_signals').map((p) => utmToLocal(info, p.e, p.n));
   // Traffic lights seen on photos stand at the kerb, a little further from the junction node than OSM's.

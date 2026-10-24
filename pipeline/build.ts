@@ -27,6 +27,8 @@ import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './li
 import { buildGraph } from './lib/graph.ts';
 import { buildRoads, type Railing } from './lib/roads.ts';
 import { matchRampHeights, planRamps, rampList } from './lib/ramps.ts';
+import { planKerbs } from './lib/kerbs.ts';
+import { buildRoadside } from './lib/roadside.ts';
 import { terrariumSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
@@ -74,6 +76,9 @@ function main() {
   console.log(`Motorway junctions: ${ramps.stats.runs} auxiliary lanes, ${ramps.stats.moved} ramps moved onto them, ${ramps.stats.plain} ramps as mapped`);
   roadHeights(osm.ways, regions, height, console.log);
   matchRampHeights(ramps);
+  // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
+  const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
+  console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const carve = new RoadCarve(TERRAIN_STEP);
   // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
@@ -196,6 +201,15 @@ function main() {
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
   const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
+  // Guard rails, delineators and chevron boards outside town (roadside.ts).
+  const roadside = buildRoadside(osm.ways, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), dressed });
+  for (const [k, list] of roadside.props) {
+    if (!props.tiles.has(k)) props.tiles.set(k, []);
+    props.tiles.get(k)!.push(...list);
+  }
+  const railTiles = roadside.rails.tiles();
+  const rc = roadside.counts;
+  console.log(`Roadside: ${rc.railKm} km guard rail (${rc.motorway} motorway, ${rc.bridges} bridge, ${rc.mapped} mapped runs, ${rc.embankments} embankment roads), ${rc.posts} delineators, ${rc.chevrons} chevron boards`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
@@ -274,6 +288,8 @@ function main() {
     if (crowns?.some((c) => c > 0)) tile.treeCrowns = encode(new Uint8Array(crowns));
     const bushes = bushesByTile.get(k);
     if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
+    const rails = railTiles.get(k);
+    if (rails) tile.rails = encode(new Float32Array(rails));
     const tileShops = shops.tiles.get(k);
     if (tileShops) tile.shops = encode(new Float32Array(tileShops));
     const tileProps = props.tiles.get(k);

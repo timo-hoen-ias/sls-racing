@@ -6,6 +6,7 @@ import {
 } from './format.ts';
 import type { Quality } from '../quality.ts';
 import type { Materials } from '../render/materials.ts';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 type R = typeof RAPIER_NS;
 
@@ -42,6 +43,7 @@ export class WorldStreamer {
   private mats: Materials;
   private quality: Quality;
   private treeGeo: { trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry };
+  private lampGeo: { pole: THREE.BufferGeometry; head: THREE.BufferGeometry };
 
   constructor(R: R, world: RAPIER_NS.World, baseUrl: string, index: WorldIndex, mats: Materials, quality: Quality) {
     this.R = R;
@@ -58,6 +60,13 @@ export class WorldStreamer {
     const trunk = new THREE.CylinderGeometry(0.18, 0.26, 3.2, 6);
     trunk.translate(0, 1.6, 0);
     this.treeGeo = { trunk, crown };
+    // Street lamp: 7 m pole with an arm reaching over the road (+z).
+    const pole = mergeGeometries([
+      new THREE.CylinderGeometry(0.07, 0.1, 7, 8).translate(0, 3.5, 0),
+      new THREE.CylinderGeometry(0.05, 0.05, 1.6, 6).rotateX(Math.PI / 2).translate(0, 6.9, 0.8),
+    ])!;
+    const head = new THREE.BoxGeometry(0.3, 0.12, 0.6).translate(0, 6.84, 1.55);
+    this.lampGeo = { pole, head };
   }
 
   get loadedCount() { return this.loaded.size; }
@@ -213,6 +222,7 @@ export class WorldStreamer {
       }
     };
     mesh(t.roads, this.mats.road);
+    mesh(t.sidewalks, this.mats.sidewalk);
     mesh(t.markings, this.mats.marking, { receive: true });
     mesh(t.buildings, this.mats.building, { collide: true, cast: true });
     if (t.collide) {
@@ -241,6 +251,25 @@ export class WorldStreamer {
       }
       crowns.castShadow = trunks.castShadow = shadows;
       group.add(trunks, crowns);
+    }
+
+    if (t.lamps) {
+      const l = decodeF32(t.lamps);
+      const n = l.length / 4;
+      const poles = new THREE.InstancedMesh(this.lampGeo.pole, this.mats.lampPole, n);
+      const heads = new THREE.InstancedMesh(this.lampGeo.head, this.mats.lampHead, n);
+      const m = new THREE.Matrix4();
+      const q = new THREE.Quaternion();
+      const one = new THREE.Vector3(1, 1, 1);
+      for (let i = 0; i < n; i++) {
+        q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.PI - l[i * 4 + 3]);
+        m.compose(new THREE.Vector3(l[i * 4], l[i * 4 + 1], l[i * 4 + 2]), q, one);
+        poles.setMatrixAt(i, m);
+        heads.setMatrixAt(i, m);
+        this.world.createCollider(this.R.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i * 4], l[i * 4 + 1] + 3.5, l[i * 4 + 2]), body);
+      }
+      poles.castShadow = shadows;
+      group.add(poles, heads);
     }
 
     this.root.add(group);

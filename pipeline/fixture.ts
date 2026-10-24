@@ -2,6 +2,8 @@
 // Only for tests and offline development. It is not real map data.
 import type { OsmJson } from './lib/osm.ts';
 
+const STREETS = ['Linden', 'Ahorn', 'Birken', 'Eichen', '', 'Kastanien', 'Buchen', 'Ulmen', 'Erlen'];
+
 export function fixtureOsm(origin: { lat: number; lon: number }): OsmJson {
   const mPerLat = 111_320;
   const mPerLon = 111_320 * Math.cos((origin.lat * Math.PI) / 180);
@@ -22,15 +24,25 @@ export function fixtureOsm(origin: { lat: number; lon: number }): OsmJson {
     const col = [] as number[];
     const row = [] as number[];
     for (let y = -S; y <= S; y += B) { col.push(grid.get(`${x}_${y}`)!); row.push(grid.get(`${y}_${x}`)!); }
-    const tags: Record<string, string> = x === 0 ? { highway: 'secondary', name: 'Testachse' } : { highway: 'residential' };
-    way(col, tags);
-    way(row, tags);
+    const main = x === 0;
+    way(col, main ? { highway: 'secondary', name: 'Testachse Nord-Süd' } : { highway: 'residential', name: `${STREETS[(x + S) / B]}straße` });
+    way(row, main ? { highway: 'secondary', name: 'Testachse Ost-West' } : { highway: 'residential', name: `${STREETS[(x + S) / B]}weg` });
   }
   // Ring road like the old fortress ring.
   const ring: number[] = [];
   for (let i = 0; i < 48; i++) ring.push(node(Math.cos((i / 48) * Math.PI * 2) * 560, Math.sin((i / 48) * Math.PI * 2) * 560));
   ring.push(ring[0]);
-  way(ring, { highway: 'primary', name: 'Testring' });
+  way(ring, { highway: 'primary', name: 'Vauban-Ring' });
+  // A few houses with gable roofs along the ring.
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2 + 0.1;
+    const cx = Math.cos(a) * 600, cy = Math.sin(a) * 600;
+    const ux = Math.cos(a), uy = Math.sin(a);
+    const c = (s1: number, s2: number) => node(cx + ux * s1 * 5 - uy * s2 * 7, cy + uy * s1 * 5 + ux * s2 * 7);
+    const ids = [c(-1, -1), c(1, -1), c(1, 1), c(-1, 1)];
+    ids.push(ids[0]);
+    way(ids, { building: 'house', 'building:levels': '2' });
+  }
   // Buildings: four per block, skipping the park and the pond blocks.
   for (let x = -S; x < S; x += B) for (let y = -S; y < S; y += B) {
     if ((x === 100 && y === 100) || (x === -200 && y === 0)) continue;

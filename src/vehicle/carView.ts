@@ -16,7 +16,7 @@ export class CarView {
     const shell = new THREE.Group();
     shell.position.y = -0.45;
     this.root.add(shell);
-    const paint = new THREE.MeshPhysicalMaterial({ color, metalness: 0.6, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.08 });
+    const paint = new THREE.MeshPhysicalMaterial({ color, metalness: 0.55, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.6 });
     const glass = new THREE.MeshPhysicalMaterial({ color: '#0d1218', metalness: 0.2, roughness: 0.05, transmission: 0, clearcoat: 1 });
     const dark = new THREE.MeshStandardMaterial({ color: '#15171a', roughness: 0.7 });
     const W = CAR.halfExtents.x * 2;
@@ -80,6 +80,23 @@ export class CarView {
       this.root.add(steerPivot);
       this.wheels.push(steerPivot);
     }
+
+    // Soft contact shadow, so the car sits on the road even without shadow maps.
+    const blob = document.createElement('canvas');
+    blob.width = blob.height = 64;
+    const bg = blob.getContext('2d')!;
+    const grad = bg.createRadialGradient(32, 32, 4, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(0,0,0,0.55)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    bg.fillStyle = grad;
+    bg.fillRect(0, 0, 64, 64);
+    const shadow = new THREE.Mesh(
+      new THREE.PlaneGeometry(2.6, 5.2).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(blob), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8 }),
+    );
+    shadow.position.y = -0.28;
+    shadow.renderOrder = 1;
+    this.root.add(shadow);
 
     // Nitro flames.
     const flameMat = new THREE.MeshBasicMaterial({ color: '#4fb8ff', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });

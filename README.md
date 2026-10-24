@@ -32,9 +32,12 @@ Ohne lokalen Netzzugang baut der GitHub-Workflow **World build** die Kacheln und
 | Handbremse (Drift) | Leertaste | B oder X | ⟲ |
 | Zurücksetzen | R | Y | |
 | Kamera | C | View | |
+| Karte / Ziel setzen | Tab oder K | Menu | Minimap antippen |
 | Ton an/aus | M | | |
 
-Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`.
+In der großen Karte setzt ein Klick oder Tipp auf eine Straße das Ziel. Das Navi berechnet die Route, zeigt sie auf Minimap und Straße an und plant neu, wenn du abweichst.
+
+Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`. Mittel und hoch nutzen Post-Processing (MSAA, Bloom, auf hoch zusätzlich Ambient Occlusion).
 
 ## Aufbau
 
@@ -48,7 +51,9 @@ src/
   world/streamer.ts  lädt Kacheln um das Auto, baut Meshes und Kollision
   vehicle/           Rapier-Raycast-Fahrzeug mit Arcade-Tuning, Nitro, Drift
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
-  render/ audio/ ui/ Szene, Kamera, Texturen, Motorsound, HUD
+  world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)
+  nav/               GPS: Ziel, Fortschritt, Neuberechnung, Abbiegehinweise
+  render/ audio/ ui/ Szene, Post-Processing, Routen-Linie, Motorsound, HUD, Minimap, Karte
 ```
 
 Die Welt liegt in einem globalen 256-m-Raster (ETRS89 / UTM 32N). Eine neue Stadt ist eine neue Datei in `pipeline/regions/` plus Eintrag in `world.json`; angrenzende Gebiete passen nahtlos zusammen.

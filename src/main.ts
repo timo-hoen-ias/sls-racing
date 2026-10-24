@@ -8,7 +8,13 @@ import { createMaterials } from './render/materials.ts';
 import { createScene } from './render/scene.ts';
 import { CarPhysics } from './vehicle/carPhysics.ts';
 import { CarView } from './vehicle/carView.ts';
-import { localToUtm, type WorldIndex } from './world/format.ts';
+import { Navigation } from './nav/navigation.ts';
+import { RouteLine } from './render/routeLine.ts';
+import { BigMap } from './ui/bigMap.ts';
+import { Minimap } from './ui/minimap.ts';
+import { NavHud } from './ui/navHud.ts';
+import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
+import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -26,6 +32,11 @@ async function boot() {
     RAPIER.init(),
   ]);
 
+  const graphData: RoadGraphData = index.graph
+    ? await fetch(`${TILES_URL}/${index.graph}`).then((r) => r.json())
+    : { v: 1, names: [], nodes: [], edges: [] };
+  const graph = new RoadGraph(graphData);
+
   const view = createScene($('game') as HTMLCanvasElement, quality);
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
@@ -40,6 +51,17 @@ async function boot() {
   const input = new Input();
   if (isTouchDevice()) input.enableTouch();
   $('attribution').textContent = index.attribution.join(' · ');
+
+  const nav = new Navigation(graph);
+  const navHud = new NavHud();
+  const minimap = new Minimap($('minimap') as HTMLCanvasElement, graph, nav);
+  const bigMap = new BigMap($('bigmap'), graph, nav);
+  bigMap.onClose = () => (input.mapOpen = false);
+  $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
+  const routeLine = new RouteLine(RAPIER, world, nav, car.body);
+  view.scene.add(routeLine.mesh);
+  let streetTimer = 0;
+  let mapTimer = 0;
 
   let sound: EngineSound | undefined;
   const startBtn = $('start') as HTMLButtonElement;
@@ -81,6 +103,7 @@ async function boot() {
       if (e === 'reset') car.reset({ x: safe.x, y: safe.y + 1.2, z: safe.z }, safe.heading);
       if (e === 'camera') cam.next();
       if (e === 'mute') sound?.toggleMute();
+      if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
     }
 
     const t = car.body.translation();
@@ -93,7 +116,7 @@ async function boot() {
       $('loading').hidden = worldReady;
     }
 
-    const drive = startBtn.hidden && worldReady ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false };
+    const drive = startBtn.hidden && worldReady && !bigMap.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false };
     acc += dt;
     while (acc >= STEP) {
       prev.p.copy(curr.p);
@@ -119,7 +142,19 @@ async function boot() {
     carView.sync(car, ip, iq, drive.brake > 0 && car.speed > 1, now / 1000);
     cam.update(ip, iq, car.speed, car.boosting, dt);
     view.follow(ip);
-    view.renderer.render(view.scene, view.camera);
+    // Navigation, street name and maps.
+    const heading = car.heading();
+    navHud.update(nav.update(ip.x, ip.z, dt), dt);
+    if ((streetTimer -= dt) <= 0) {
+      streetTimer = 0.25;
+      navHud.showStreet(graph.snap(ip.x, ip.z, 25)?.edge.name ?? '');
+    }
+    minimap.draw(ip.x, ip.z, heading, car.speed);
+    bigMap.setCar(ip.x, ip.z, heading);
+    if (bigMap.open && (mapTimer -= dt) <= 0) { mapTimer = 0.5; bigMap.draw(); }
+    routeLine.update(dt);
+
+    view.render();
 
     const slip = car.drifting ? 1 : drive.brake > 0.5 && Math.abs(car.speed) > 12 ? 0.6 : 0;
     sound?.update({ rpm: car.rpm, throttle: drive.throttle, speed: Math.abs(car.speed), boosting: car.boosting, slip });
@@ -137,7 +172,11 @@ async function boot() {
       const [e, n] = localToUtm(index.world, ip.x, ip.z);
       $('info').textContent = `${fps} fps · Qualität ${quality.name} · ${input.lastDevice}\nUTM 32N ${e.toFixed(0)} / ${n.toFixed(0)} · Kacheln ${streamer.loadedCount}`;
     }
-    (window as any).__sls = { fps, speed: car.speed, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady };
+    (window as any).__sls = {
+      fps, speed: car.speed, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
+      route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
+      setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
+    };
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

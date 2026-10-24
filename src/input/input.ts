@@ -8,7 +8,7 @@ export interface DriveInput {
   handbrake: boolean;
 }
 
-export type InputEvent = 'reset' | 'camera' | 'mute';
+export type InputEvent = 'reset' | 'camera' | 'mute' | 'map';
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const deadzone = (v: number, d = 0.12) => (Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d));
@@ -21,6 +21,8 @@ export class Input {
   private padButtons: boolean[] = [];
   private keySteer = 0;
   usingTouch = false;
+  /** Set by the game while the full map is shown. */
+  mapOpen = false;
   lastDevice: 'keyboard' | 'gamepad' | 'touch' = 'keyboard';
 
   constructor() {
@@ -31,7 +33,8 @@ export class Input {
       if (e.code === 'KeyR') this.pending.push('reset');
       if (e.code === 'KeyC') this.pending.push('camera');
       if (e.code === 'KeyM') this.pending.push('mute');
-      if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
+      if (e.code === 'Tab' || e.code === 'KeyK' || (e.code === 'Escape' && this.mapOpen)) this.pending.push('map');
+      if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab') e.preventDefault();
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());
@@ -97,10 +100,10 @@ export class Input {
       brake = Math.max(brake, b(6)); // LT
       nitro ||= pressed(0) || pressed(5); // A / RB
       handbrake ||= pressed(1) || pressed(2); // B / X
-      // Edge-triggered buttons: Y = reset, Back/View = camera.
-      [3, 8].forEach((i, n) => {
+      // Edge-triggered buttons: Y = reset, Back/View = camera, Start/Menu = map.
+      ([[3, 'reset'], [8, 'camera'], [9, 'map']] as const).forEach(([i, ev]) => {
         const p = pressed(i);
-        if (p && !this.padButtons[i]) this.pending.push(n === 0 ? 'reset' : 'camera');
+        if (p && !this.padButtons[i]) this.pending.push(ev);
         this.padButtons[i] = p;
       });
     }

@@ -13,6 +13,8 @@ export interface Way {
   tags: Record<string, string>;
   /** Projected UTM coordinates. */
   pts: [number, number][];
+  /** OSM node ids, aligned with pts. */
+  ids: number[];
   closed: boolean;
 }
 
@@ -48,10 +50,11 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
   const polygons: Polygon[] = [];
   let boundary: [number, number][][] | undefined;
   for (const [id, w] of wayById) {
-    const pts = toPts(w.nodes);
+    const ids = w.nodes.filter((n) => nodes.has(n));
+    const pts = toPts(ids);
     if (pts.length < 2) continue;
     const closed = w.nodes.length > 3 && w.nodes[0] === w.nodes[w.nodes.length - 1];
-    if (Object.keys(w.tags).length) ways.push({ id, tags: w.tags, pts, closed });
+    if (Object.keys(w.tags).length) ways.push({ id, tags: w.tags, pts, ids, closed });
     if (closed && isArea(w.tags)) polygons.push({ id, tags: w.tags, outer: pts, holes: [] });
   }
   for (const el of json.elements) {

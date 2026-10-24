@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { Quality } from '../quality.ts';
 
 export interface SceneSetup {
@@ -10,6 +15,7 @@ export interface SceneSetup {
   /** Keeps the shadow camera centred on the car. */
   follow(target: THREE.Vector3): void;
   resize(): void;
+  render(): void;
 }
 
 export function createScene(canvas: HTMLCanvasElement, q: Quality): SceneSetup {
@@ -54,15 +60,34 @@ export function createScene(canvas: HTMLCanvasElement, q: Quality): SceneSetup {
     sun.castShadow = true;
     sun.shadow.mapSize.set(q.shadows, q.shadows);
     const s = sun.shadow.camera;
-    s.left = -90; s.right = 90; s.top = 90; s.bottom = -90; s.near = 10; s.far = 700;
+    s.left = -110; s.right = 110; s.top = 110; s.bottom = -110; s.near = 10; s.far = 700;
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.6;
   }
   scene.add(sun, sun.target);
 
+  // Post-processing on medium and high: MSAA, bloom for lights, ambient occlusion on high.
+  let composer: EffectComposer | undefined;
+  if (q.name !== 'niedrig') {
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: q.antialias ? 4 : 0 });
+    composer = new EffectComposer(renderer, target);
+    composer.addPass(new RenderPass(scene, camera));
+    if (q.name === 'hoch') {
+      const ao = new GTAOPass(scene, camera, 1, 1);
+      ao.blendIntensity = 0.75;
+      ao.updateGtaoMaterial({ radius: 1.2, distanceFallOff: 1, thickness: 1 });
+      composer.addPass(ao);
+    }
+    // The physical sky is very bright in linear HDR; a threshold above it keeps bloom to lights and glints.
+    composer.addPass(new UnrealBloomPass(new THREE.Vector2(256, 256), 0.25, 0.35, 40));
+    composer.addPass(new OutputPass());
+  }
+
   const resize = () => {
     const w = innerWidth, h = innerHeight;
     renderer.setSize(w, h, false);
+    composer?.setPixelRatio(q.pixelRatio);
+    composer?.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   };
@@ -71,9 +96,13 @@ export function createScene(canvas: HTMLCanvasElement, q: Quality): SceneSetup {
 
   return {
     renderer, scene, camera, sun, resize,
+    render() {
+      if (composer) composer.render();
+      else renderer.render(scene, camera);
+    },
     follow(target) {
       // Snap to shadow texels so shadows do not shimmer while driving.
-      const step = 180 / Math.max(1, q.shadows);
+      const step = 220 / Math.max(1, q.shadows);
       const t = new THREE.Vector3(Math.round(target.x / step) * step, target.y, Math.round(target.z / step) * step);
       sun.target.position.copy(t);
       sun.position.copy(t).addScaledVector(sunDir, 300);

@@ -26,15 +26,27 @@ export function tilesForBbox(west: number, south: number, east: number, north: n
   return out;
 }
 
+/** Downloads with a few retries: a single dropped connection to S3 should not fail a whole world build. */
+async function download(url: string, what: string, tries = 4): Promise<Buffer> {
+  for (let i = 1; ; i++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    } catch (e) {
+      if (i >= tries) throw new Error(`${what}: ${(e as Error).message}`);
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
+    }
+  }
+}
+
 export async function fetchTerrarium(dir: string, tiles: [number, number][], z: number) {
   mkdirSync(dir, { recursive: true });
   let fetched = 0;
   for (const [x, y] of tiles) {
     const file = `${dir}/${z}_${x}_${y}.png`;
     if (existsSync(file)) continue;
-    const res = await fetch(`${TERRARIUM}/${z}/${x}/${y}.png`);
-    if (!res.ok) throw new Error(`Terrarium ${z}/${x}/${y}: HTTP ${res.status}`);
-    writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+    writeFileSync(file, await download(`${TERRARIUM}/${z}/${x}/${y}.png`, `Terrarium ${z}/${x}/${y}`));
     fetched++;
   }
   return fetched;

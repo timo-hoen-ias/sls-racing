@@ -70,6 +70,16 @@ export class SignalView {
     this.lamps = { green: make(2.55), yellow: make(2.85), red: make(3.15) };
   }
 
+  /** Housing and lamps from props.glb (propGlb.ts), same model space as headGeometry. */
+  setModels(housing: THREE.BufferGeometry, lamps: Record<'red' | 'yellow' | 'green', THREE.BufferGeometry>) {
+    this.housing.geometry = housing;
+    for (const k of ['red', 'yellow', 'green'] as const) if (lamps[k]) this.lamps[k].geometry = lamps[k];
+    this.models = 'glb';
+  }
+
+  /** Which head model is in use. */
+  models: 'glb' | 'procedural' = 'procedural';
+
   update(camera: THREE.Camera) {
     this.root.visible = this.signals.enabled;
     if (!this.signals.enabled) return;

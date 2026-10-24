@@ -46,6 +46,7 @@ import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
+import { loadProps } from './world/propGlb.ts';
 import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
@@ -157,6 +158,12 @@ async function boot() {
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);
+  // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
+  loadProps().then((set) => {
+    props.setPropSet(set);
+    if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
+    peds.view.setVariants(set.peds);
+  }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   peds.sim.events.knocked = (_, v) => {
     sound?.impact(Math.min(0.5, v / 30));
     input.rumble(0.5, 150);

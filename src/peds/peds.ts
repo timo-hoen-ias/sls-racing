@@ -33,6 +33,18 @@ export class Pedestrians {
     registerValue('peds.density', 'Fußgängerdichte 0..1 (Anteil der maximalen Zahl)', () => sim.density, (v) => (sim.density = v), [0, 1]);
     registerValue('peds.max', 'Maximale Zahl der Fußgänger um den Spieler', () => sim.maxPeds, (v) => (sim.maxPeds = Math.round(v)), [0, 400]);
     registerToggle('peds.debug', 'Zustand über jedem Fußgänger: grün geht, gelb quert, pink wartet an der Ampel, orange springt weg, rot liegt, blau steht', () => this.view.debug, (v) => (this.view.debug = v));
+    registerCommand({
+      name: 'peds.models', help: 'Figuren: glb (Blender, vier Varianten) oder procedural', args: '[glb|procedural]',
+      complete: () => ['glb', 'procedural'],
+      run: ([m]) => {
+        if (m === 'procedural') this.view.setProcedural();
+        else if (m === 'glb') {
+          if (!this.view.variants) throw new Error('props.glb ist nicht geladen');
+          this.view.setVariants(this.view.variants);
+        } else if (m !== undefined) throw new Error('glb oder procedural');
+        return `Figuren: ${this.view.models} (${this.view.figureCount} Varianten)`;
+      },
+    });
     registerToggle('peds.jaywalk', 'Fußgänger gehen auch bei Rot über die Ampel', () => sim.jaywalk, (v) => (sim.jaywalk = v));
     registerToggle('peds.freeze', 'Fußgänger anhalten', () => sim.frozen, (v) => (sim.frozen = v));
     registerToggle('peds', 'Fußgänger anzeigen', () => this.visible, (v) => (this.visible = v));

@@ -11,6 +11,18 @@ export const Prop = {
 } as const;
 export type PropKind = (typeof Prop)[keyof typeof Prop];
 
+/** Sign faces in props.glb. A Prop.sign record's size is the type's index here + 1 (0 = unknown sign). */
+export const SIGN_TYPES = ['vorfahrtstrasse', 'vorfahrt', 'vorfahrt-achten', 'stop', 'einfahrt-verboten', 'tempo-30', 'tempo-50', 'tempo-70', 'tempo-100', 'ortsschild', 'zusatz', 'fussgaenger'] as const;
+export type SignType = (typeof SIGN_TYPES)[number];
+
+/** Sign type of a sign record, if known. */
+export function signTypeOf(kind: PropKind, size: number): SignType | undefined {
+  if (kind === Prop.stopSign) return 'stop';
+  if (kind === Prop.giveWay) return 'vorfahrt-achten';
+  if (kind === Prop.cityLimit) return 'ortsschild';
+  return kind === Prop.sign ? SIGN_TYPES[Math.round(size) - 1] : undefined;
+}
+
 export const PROP_NAMES: Record<PropKind, string> = {
   1: 'bushaltestelle', 2: 'schild', 3: 'stoppschild', 4: 'vorfahrt-achten', 5: 'poller', 6: 'betonblock', 7: 'bank', 8: 'muelleimer',
   9: 'briefkasten', 10: 'container', 11: 'hydrant', 12: 'fahrradstaender', 13: 'litfasssaeule', 14: 'parker', 15: 'zaun', 16: 'mauer',

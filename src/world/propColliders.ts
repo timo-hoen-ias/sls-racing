@@ -4,7 +4,7 @@ import { PROP_STRIDE, Prop, type PropKind } from './propKinds.ts';
 
 // Colliders for a tile's props, shared by the game (props.ts) and the drive test.
 
-export const LINEAR = new Set<PropKind>([Prop.fence, Prop.wall, Prop.hedge, Prop.guardRail]);
+export const LINEAR = new Set<PropKind>([Prop.fence, Prop.wall, Prop.hedge, Prop.guardRail, Prop.railing]);
 
 /** Collider per kind: cylinder [radius, height] or cuboid [width, height, depth] in model space. */
 const SHAPES: Partial<Record<PropKind, { r: number; h: number } | { w: number; h: number; d: number }>> = {
@@ -13,7 +13,7 @@ const SHAPES: Partial<Record<PropKind, { r: number; h: number } | { w: number; h
   [Prop.bench]: { w: 1.8, h: 0.9, d: 0.5 }, [Prop.bin]: { r: 0.2, h: 0.9 }, [Prop.postBox]: { w: 0.42, h: 1.3, d: 0.34 },
   [Prop.recycling]: { w: 3.5, h: 1.75, d: 1.1 }, [Prop.hydrant]: { r: 0.13, h: 0.8 }, [Prop.bikeStand]: { w: 2, h: 0.8, d: 0.8 },
   [Prop.column]: { r: 0.62, h: 3.2 }, [Prop.fence]: { w: 0.1, h: 1.4, d: 1 }, [Prop.wall]: { w: 0.32, h: 1.68, d: 1 },
-  [Prop.hedge]: { w: 0.9, h: 1.5, d: 1 }, [Prop.guardRail]: { w: 0.2, h: 0.8, d: 1 },
+  [Prop.hedge]: { w: 0.9, h: 1.5, d: 1 }, [Prop.guardRail]: { w: 0.2, h: 0.8, d: 1 }, [Prop.railing]: { w: 0.1, h: 1.1, d: 1 },
 };
 
 /** Adds one collider per prop record to body; skip(i) leaves a record out (removed props). */

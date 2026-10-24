@@ -95,5 +95,10 @@ export function buildPropGeometries(): Partial<Record<PropKind | 'busShelter', G
     [Prop.wall]: merge([box(0.3, 1.6, 1, 0, 0.8, 0, 0xb3a58e), box(0.36, 0.08, 1, 0, 1.64, 0, 0x9a8e7a)]),
     [Prop.hedge]: merge([box(0.9, 1.3, 1, 0, 0.65, 0, 0x34572a), box(0.7, 0.2, 1, 0, 1.4, 0, 0x3d6431)]),
     [Prop.guardRail]: merge([box(0.05, 0.32, 1, 0, 0.6, 0, 0xb4b9bd), box(0.12, 0.75, 0.12, 0.06, 0.375, 0, 0x8f969c)]),
+    // Bridge railing: handrail, knee rail and bottom rail on a post, galvanised steel.
+    [Prop.railing]: merge([
+      box(0.07, 0.05, 1, 0, 1.08, 0, 0x9aa1a6), box(0.04, 0.04, 1, 0, 0.6, 0, 0x8a9196), box(0.04, 0.04, 1, 0, 0.14, 0, 0x8a9196),
+      box(0.05, 1.08, 0.05, 0, 0.54, 0.47, 0x7d8489),
+    ]),
   };
 }

@@ -8,7 +8,7 @@ import { DETECTED, PROP_STRIDE, Prop, type PropKind, SIGN_TYPES, type SignType }
 import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
-import { ROAD_LIFT, densify, isDrivable, roadSurfaceHeights, roadWidth } from './roads.ts';
+import { ROAD_LIFT, densify, isDrivable, roadSurfaceHeights, roadWidth, type Railing } from './roads.ts';
 
 interface Seg {
   ae: number; an: number; be: number; bn: number;
@@ -73,6 +73,8 @@ export interface PropOptions {
   nearLanes?: (e: number, n: number) => boolean;
   junctions: Junction[];
   boundary?: [number, number][][];
+  /** Pedestrian railings along bridge caps, from buildRoads. */
+  railings?: Railing[];
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
   detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
@@ -193,6 +195,9 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }
     });
   }
+
+  // Bridge railings, at the cap height buildRoads gave them.
+  for (const r of o.railings ?? []) add(Prop.railing, r.e, r.n, headingOf(r.de, r.dn), r.len, r.y);
 
   // City limit signs where roads cross the boundary.
   for (const ring of o.boundary ?? []) {

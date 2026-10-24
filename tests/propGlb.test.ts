@@ -17,9 +17,9 @@ const tris = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.getAttrib
 const box = (g: THREE.BufferGeometry) => new THREE.Box3().setFromBufferAttribute(g.getAttribute('position') as THREE.BufferAttribute);
 
 describe('props GLB', () => {
-  it('has every furniture kind of propKinds (except hedge and parked cars) with two LODs', async () => {
+  it('has every furniture kind of propKinds (except hedge, parked cars and bridge railings) with two LODs', async () => {
     const set = await load();
-    const skip = new Set(['hecke', 'parker', 'schild', 'stoppschild', 'vorfahrt-achten', 'ortsschild']);
+    const skip = new Set(['hecke', 'parker', 'schild', 'stoppschild', 'vorfahrt-achten', 'ortsschild', 'gelaender']);
     for (const name of Object.values(PROP_NAMES)) {
       if (skip.has(name)) continue;
       const p = set.props[name];

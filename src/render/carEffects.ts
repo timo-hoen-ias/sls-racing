@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Quality } from '../quality.ts';
 import type { CarPhysics } from '../vehicle/carPhysics.ts';
+import { SURFACES, type SurfaceKind } from '../vehicle/roadSurface.ts';
 import { CAR } from '../vehicle/tuning.ts';
 import { Particles } from './particles.ts';
 import { type SkidPoint, SkidMarks } from './skidMarks.ts';
@@ -38,6 +39,9 @@ export class CarEffects {
   private sprayAcc = 0;
   /** Road state from the weather: wet roads throw spray instead of smoke, snow throws powder. */
   road = { wet: 0, snow: 0, puddle: 0 };
+  /** What each wheel rolls on (RoadSurface.kinds): loose ground throws dust and clods instead of tyre smoke. */
+  surface: readonly SurfaceKind[] = ['asphalt', 'asphalt', 'asphalt', 'asphalt'];
+  private dustAcc = [0, 0, 0, 0];
 
   private exhausts: THREE.Vector3[];
 
@@ -84,7 +88,7 @@ export class CarEffects {
             life: 1.6 + Math.random() * 1.6,
             size: 0.7 + Math.random() * 0.4,
             grow: 5 + Math.random() * 2,
-            color: '#cfd2d6',
+            color: SURFACES[this.surface[i]].dust ?? '#cfd2d6',
             gravity: -0.25,
             drag: 1.4,
             alpha: 0.32 * Math.min(1, w.slip * 1.2) * (1 - 0.75 * Math.max(this.road.wet, this.road.snow)),
@@ -122,6 +126,7 @@ export class CarEffects {
     }
     this.marks.end();
     this.spray(car, lv, dt);
+    this.dust(car, lv, dt);
 
     // Nitro: blue-white exhaust flame particles.
     if (car.boosting) {
@@ -162,6 +167,41 @@ export class CarEffects {
         alpha: (white ? 0.3 : 0.2) * Math.min(1, amount + puddle),
       });
     }
+  }
+
+  /** Dust trail and flying clods behind wheels on gravel, grass, fields and water. */
+  private dust(car: CarPhysics, lv: { x: number; y: number; z: number }, dt: number) {
+    const v = Math.abs(car.speed);
+    for (let i = 0; i < 4; i++) {
+      const w = car.wheels[i];
+      const col = SURFACES[this.surface[i]].dust;
+      if (!w.contact || !col || v < 3) { this.dustAcc[i] = 0; continue; }
+      this.dustAcc[i] += dt * this.smokeRate * (0.25 * Math.min(1, v / 25) + 0.8 * w.slip);
+      while (this.dustAcc[i] >= 1) {
+        this.dustAcc[i] -= 1;
+        const clod = Math.random() < 0.35;
+        this.particles.emit('smoke', {
+          x: w.p.x + (Math.random() - 0.5) * 0.3,
+          y: w.p.y + 0.1,
+          z: w.p.z + (Math.random() - 0.5) * 0.3,
+          vx: lv.x * (clod ? 0.7 : 0.35) + (Math.random() - 0.5) * 2,
+          vy: (clod ? 2.5 : 0.6) + Math.random() * 1.5,
+          vz: lv.z * (clod ? 0.7 : 0.35) + (Math.random() - 0.5) * 2,
+          life: clod ? 0.5 + Math.random() * 0.3 : 1.2 + Math.random() * 1.2,
+          size: clod ? 0.08 + Math.random() * 0.06 : 0.6 + Math.random() * 0.5,
+          grow: clod ? 0 : 4,
+          color: col,
+          gravity: clod ? 9.81 : -0.1,
+          drag: clod ? 0.6 : 1.6,
+          alpha: clod ? 0.9 : 0.28,
+        });
+      }
+    }
+  }
+
+  /** Only lets the particles already in the air move on (replay: the car itself is not simulated). */
+  tick(dt: number, camera: THREE.PerspectiveCamera, viewHeight: number) {
+    this.particles.update(Math.min(dt, 0.05), viewHeight, camera.fov);
   }
 
   /** Orange flame burst from the tailpipes (overrun pops). */

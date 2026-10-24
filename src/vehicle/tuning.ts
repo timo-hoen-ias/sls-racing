@@ -50,19 +50,47 @@ export const CAR = {
   /** Chassis collider centre above the body origin. */
   colliderY: 0.28,
   wheel: { radius: ENGINE.wheelRadius, x: 0.8, front: 1.27, rear: -1.2, y: 0.3, rest: 0.28, travel: 0.18, width: 0.3 },
-  suspension: { stiffness: 50, compression: 4.8, relaxation: 4.0, maxForce: 70000 },
-  grip: { front: 2.9, rear: 2.8, side: 1.0, driftRear: 1.35 },
-  /** Longitudinal grip in g: drive force beyond this spins the wheels (arcade traction control caps it). */
-  traction: 1.05,
+  /**
+   * Springs in N/m per kg of car (Rapier scales by the chassis mass): 50 ≈ 2.2 Hz ride.
+   * Dampers likewise; bump softer than rebound like a road car (ζ ≈ 0.45 / 0.65).
+   */
+  suspension: { stiffness: 50, compression: 3.2, relaxation: 4.6, maxForce: 70000 },
+  /** Anti-roll bars (N per m of left/right travel difference); stiffer front = stable understeer at the limit. */
+  arb: { front: 30000, rear: 17000 },
+  /**
+   * Tyres: friction coefficient, slip angle of peak lateral grip (rad), grip left when fully sliding,
+   * how fast grip falls past the peak, load sensitivity (heavily loaded tyres grip less per kg),
+   * and how much of the tyre force acts at road level (roll and pitch; the rest acts at the centre of mass).
+   */
+  tyre: { mu: 1.15, peakSlip: 0.13, slide: 0.8, falloff: 2.2, loadSens: 0.12, rearMu: 1.02, roll: 0.6, pitch: 0.8, minSpeed: 3 },
+  /** Limited-slip differentials as torque bias ratio (1 = open, 2–3 = LSD, ≥ 50 = locked). */
+  diff: { front: 1.4, rear: 2.6 },
   /** Drive split to the front axle (the rest goes to the rear). */
   frontDrive: 0.3,
-  /** Aerodynamic drag (N per (m/s)²) and rolling resistance coefficient. */
-  aero: { drag: 0.48, rolling: 0.013 },
+  /** Aerodynamic drag and downforce (N per (m/s)²), share of downforce on the front axle, rolling resistance coefficient. */
+  aero: { drag: 0.48, downforce: 0.9, balance: 0.42, rolling: 0.013 },
   reverseSpeed: 9,
   nitro: { torque: 1.4, traction: 1.25, push: 2200, drain: 0.28, refill: 0.05, driftRefill: 0.12 },
-  brake: { force: 170, handbrake: 35 },
+  /** Brakes in N at the contact patches (all four wheels), front share, handbrake on the rear axle. */
+  brake: { force: 17500, bias: 0.64, handbrake: 9000, hold: 2500 },
   /** Lock 0.6 rad when parking, ~0.16 at 100 km/h, ~0.08 at 200 km/h; drift keeps 0.3 with the handbrake. */
   steer: { lowSpeed: 0.6, highSpeed: 0.045, fadeSpeed: 14, rate: 3.8, rateSpeed: 35, drift: 0.3 },
-  downforce: 4.5, // N per (m/s)²
   airControl: 2200,
 } as const;
+
+/** Driving aids, each 0 (off) .. 1 (full). Arcade turns all on, sim keeps only ABS. */
+export interface Assists {
+  /** Anti-lock brakes: the foot brake never locks a wheel. */
+  abs: boolean;
+  /** Traction control: 1 cuts drive at the grip limit, 0 lets the wheels spin freely. */
+  tcs: number;
+  /** Stability control: limits yaw rate and drift angle. */
+  esp: number;
+  /** Drift assist: extra yaw while steering, keeps speed in slides. */
+  drift: number;
+}
+
+export const ASSIST_PRESETS: Record<'arcade' | 'sim', Assists> = {
+  arcade: { abs: true, tcs: 1, esp: 1, drift: 1 },
+  sim: { abs: true, tcs: 0, esp: 0, drift: 0 },
+};

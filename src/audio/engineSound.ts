@@ -19,6 +19,10 @@ export interface SoundState {
   /** 0..1 tyre slip (drift, wheelspin, locked wheels). */
   slip: number;
   airborne: boolean;
+  /** Road surface: shaking 0..1, loose-surface noise 0..1, how much the tyres squeal on it (1 = asphalt). */
+  rumble?: number;
+  crunch?: number;
+  squeal?: number;
 }
 
 /** Everything that makes one engine sound like itself. */
@@ -61,6 +65,9 @@ export class EngineSound {
   private squealGain: GainNode;
   private roadGain: GainNode;
   private roadLp: BiquadFilterNode;
+  private rumbleGain!: GainNode;
+  private crunchGain!: GainNode;
+  private crunchBp!: BiquadFilterNode;
   private windGain: GainNode;
   private windBp: BiquadFilterNode;
   private nitroGain: GainNode;
@@ -172,6 +179,11 @@ export class EngineSound {
     const road = noiseLayer('lowpass', 300, 0.7);
     this.roadGain = road.g;
     this.roadLp = road.f;
+    // Rough ground: low drumming through the body; loose ground: gravel crunch / grass swish.
+    this.rumbleGain = noiseLayer('lowpass', 90, 1.2).g;
+    const crunch = noiseLayer('bandpass', 2400, 0.8);
+    this.crunchGain = crunch.g;
+    this.crunchBp = crunch.f;
     const wind = noiseLayer('bandpass', 700, 0.5);
     this.windGain = wind.g;
     this.windBp = wind.f;
@@ -243,13 +255,18 @@ export class EngineSound {
 
     // Tyres, road, wind, nitro.
     const slip = s.airborne ? 0 : clamp(s.slip, 0, 1);
-    glide(this.squealGain.gain, 0.5 * slip * slip * clamp(s.speed / 4, 0, 1), t, slip > 0.05 ? 0.04 : 0.1);
+    glide(this.squealGain.gain, 0.5 * slip * slip * clamp(s.speed / 4, 0, 1) * (s.squeal ?? 1), t, slip > 0.05 ? 0.04 : 0.1);
     const wob = Math.sin(t * 9.3) * 40 + Math.sin(t * 23.1) * 25;
     glide(this.squeal[0].frequency, 950 + 260 * slip + wob, t, 0.05);
     glide(this.squeal[1].frequency, 1550 + 380 * slip - wob, t, 0.05);
     const v01 = clamp(s.speed / 70, 0, 1.3);
     glide(this.roadGain.gain, s.airborne ? 0 : 0.35 * Math.sqrt(v01), t, 0.15);
     glide(this.roadLp.frequency, 180 + 520 * v01, t, 0.2);
+    glide(this.rumbleGain.gain, s.airborne ? 0 : 0.9 * (s.rumble ?? 0), t, 0.08);
+    // Crunch flutters like stones hitting the arches.
+    const crunch = s.airborne ? 0 : (s.crunch ?? 0) * (0.2 + 0.25 * Math.sqrt(v01) + 0.25 * slip) * (0.75 + 0.25 * Math.sin(t * 37) * Math.sin(t * 13));
+    glide(this.crunchGain.gain, crunch, t, 0.05);
+    glide(this.crunchBp.frequency, 1600 + 1600 * v01, t, 0.2);
     glide(this.windGain.gain, 0.28 * v01 * v01, t, 0.2);
     glide(this.windBp.frequency, 500 + 900 * v01, t, 0.3);
     glide(this.nitroGain.gain, s.boosting ? 0.12 : 0, t, 0.06);
@@ -262,6 +279,14 @@ export class EngineSound {
     this.burst(t, 0.12 + 0.25 * k, 0.9 * k, 'lowpass', 1600, 0.002);
     this.burst(t, 0.05 + 0.1 * k, 0.35 * k, 'highpass', 2500, 0.001); // glass and metal rattle
     this.thump(t, 80, 35, 0.2 + 0.15 * k, 0.9 * k);
+  }
+
+  /** A wheel hitting a kerb; strength 0..1. */
+  kerb(strength: number) {
+    const t = this.ctx.currentTime;
+    const k = clamp(strength, 0, 1);
+    this.thump(t, 110, 45, 0.09, 0.45 + 0.4 * k);
+    this.burst(t, 0.05, 0.12 * k, 'bandpass', 700, 0.001);
   }
 
   private pop(t: number, k: number) {

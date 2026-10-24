@@ -22,6 +22,13 @@ import { Tacho } from './ui/tacho.ts';
 import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { registerCommand, runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
+import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
+import { RoadSurface } from './vehicle/roadSurface.ts';
+import { registerReplayCommands } from './replay/commands.ts';
+import { Recorder } from './replay/recorder.ts';
+import { ReplayPlayer } from './replay/replayPlayer.ts';
+import { Telemetry } from './ui/telemetry.ts';
+import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
@@ -76,6 +83,15 @@ async function boot() {
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
+  // Car damage: dents, dull paint, parts breaking off as debris, optional power loss.
+  const debris = new Debris(RAPIER, world);
+  view.scene.add(debris.root);
+  carView.damage.onDetach = (parts) => {
+    carView.model.updateMatrixWorld(true);
+    const lv = car.body.linvel();
+    const side = new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 2, (Math.random() - 0.5) * 4);
+    debris.spawn(parts, carView.model.matrixWorld, new THREE.Vector3(lv.x, lv.y, lv.z).multiplyScalar(0.8).add(side), new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4));
+  };
   const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
   const input = new Input();
@@ -170,6 +186,22 @@ async function boot() {
     hitCooldown = 0.6;
   };
 
+  loadAssists(car);
+  registerPhysicsCommands(car);
+  const roadSurface = new RoadSurface(graph, (x, z) => streamer.groundAt(x, z));
+  registerSurfaceCommands(roadSurface, car, input);
+  const recorder = new Recorder(30);
+  const telemetry = new Telemetry(recorder);
+  const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
+  registerReplayCommands(recorder, replay, telemetry);
+  registerDamageCommands(carView.damage, debris);
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'F6') { e.preventDefault(); if (replay.active) replay.stop(); else try { navHud.toast(replay.start().split(' · ')[0], 1.5); } catch (err) { navHud.toast((err as Error).message, 1.5); } }
+    if (e.code === 'F7') { e.preventDefault(); telemetry.visible = !telemetry.visible; }
+  });
+  const replayLengths = [0, 0, 0, 0];
+  const replayRot = [0, 0, 0, 0];
+  const motion = { ax: 0, az: 0 };
   registerRenderCommands(view);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
@@ -242,10 +274,12 @@ async function boot() {
 
     vehicleDebug.update();
     weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
-    const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
+    roadSurface.update(car, weather.wheelAqua);
+    const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open && !replay.active ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
     if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
     else frozenAt = null;
-    acc += dt * debugState.timeScale;
+    // The physics holds still during a replay; the car carries on where it was afterwards.
+    acc = replay.active ? 0 : acc + dt * debugState.timeScale;
     while (acc >= STEP) {
       prev.p.copy(curr.p);
       prev.q.copy(curr.q);
@@ -283,8 +317,15 @@ async function boot() {
     const night = 1 - view.daylight.daylight;
     const braking = drive.brake > 0 && car.speed > 1;
     carView.setNight(night);
-    carView.sync(car, ip, iq, braking, now / 1000);
-    carLights.update(night, braking, car.boosting, dt);
+    const rs = replay.active ? replay.update(dt) : null;
+    if (rs) {
+      for (let i = 0; i < 4; i++) {
+        replayLengths[i] = CAR.wheel.rest - rs[`comp${i}` as 'comp0'];
+        replayRot[i] = rs.wheelRot;
+      }
+      carView.pose(car, replay.pos, replay.quat, rs.steer, replayLengths, replayRot, rs.brake > 0 && rs.speed > 1, rs.boost > 0.5, now / 1000);
+    } else carView.sync(car, ip, iq, braking, now / 1000);
+    carLights.update(night, rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {
       const strength = Math.min(1, (hit - 3.5) / 12);
@@ -292,9 +333,17 @@ async function boot() {
       sound?.impact(strength);
       worldAudio.impact(ip, car.heading(), strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
+      // Mostly sideways/longitudinal hits dent the body; hard landings do not.
+      if (Math.abs(hitDir.y) < 0.75) {
+        const from = new THREE.Vector3(-hitDir.x, 0, -hitDir.z).applyQuaternion(iq.clone().invert());
+        carView.damage.hit(from, strength);
+      }
       hitCooldown = 0.25;
     }
     hit = 0;
+    car.power = carView.damage.power;
+    car.steerPull = carView.damage.steerPull;
+    debris.update(dt);
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;
     effects.road.puddle = weather.puddle;
@@ -303,8 +352,33 @@ async function boot() {
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
-    effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
-    cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    effects.surface = roadSurface.kinds;
+    if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
+    else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
+    // Cockpit: smoothed g-forces move the driver's head; the interior shows only from the driver's seat.
+    const ka = Math.min(1, dt * 10);
+    motion.ax += ((rs ? rs.latG * 9.81 : car.accel.x) - motion.ax) * ka;
+    motion.az += ((rs ? rs.longG * 9.81 : car.accel.z) - motion.az) * ka;
+    cam.motion.ax = motion.ax;
+    cam.motion.az = motion.az;
+    cam.motion.steer = rs ? rs.steer : car.steer;
+    if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    carView.cockpit.group.visible = cam.mode === 'cockpit' && (!rs || replay.cam === 'chase');
+    carView.cockpit.update({
+      steer: rs ? rs.steer : car.steer, rpm: rs ? rs.rpm : car.rpm, maxRpm: ENGINE.maxRpm, shiftRpm: ENGINE.shiftRpm,
+      kmh: Math.abs(rs ? rs.speed : car.speed) * 3.6, gear: rs ? rs.gear : car.gear, manual: car.drivetrain.manual, nitro: rs ? rs.nitro : car.nitro,
+    });
+    if (!rs && worldReady) {
+      const w = car.wheels;
+      recorder.push({
+        t: now / 1000, x: ip.x, y: ip.y, z: ip.z, qx: iq.x, qy: iq.y, qz: iq.z, qw: iq.w,
+        speed: car.speed, rpm: car.rpm, gear: car.gear, load: car.drivetrain.load, throttle: drive.throttle, brake: drive.brake, steer: car.steer,
+        slip0: w[0].slip, slip1: w[1].slip, slip2: w[2].slip, slip3: w[3].slip,
+        comp0: w[0].compression, comp1: w[1].compression, comp2: w[2].compression, comp3: w[3].compression,
+        latG: motion.ax / 9.81, longG: motion.az / 9.81, boost: car.boosting ? 1 : 0, nitro: car.nitro, wheelRot: car.controller.wheelRotation(0) ?? 0,
+      });
+    }
+    telemetry.update(dt, rs ? replay.t : undefined);
     view.follow(ip);
     // Navigation, street name and maps.
     const heading = car.heading();
@@ -325,14 +399,23 @@ async function boot() {
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
 
     const dtr = car.drivetrain;
-    sound?.update({
+    if (rs) {
+      sound?.update({
+        rpm: rs.rpm, load: rs.load, cut: false, blip: false, limiter: false, shifted: null,
+        speed: Math.abs(rs.speed), boosting: rs.boost > 0.5, slip: Math.max(rs.slip0, rs.slip1, rs.slip2, rs.slip3), airborne: false,
+      });
+    } else sound?.update({
       rpm: dtr.rpm, load: dtr.load, cut: dtr.cut, blip: dtr.blip, limiter: dtr.limiter, shifted: shiftedSince(dtr),
       speed: Math.abs(car.speed), boosting: car.boosting, slip: car.slip, airborne: car.airborne,
+      rumble: roadSurface.rumble, crunch: roadSurface.crunch, squeal: roadSurface.squeal,
     });
+    for (const k of roadSurface.kerbs) { sound?.kerb(k); input.rumble(0.35 + 0.4 * k, 90); }
     if (car.boosting) input.rumble(0.25, 60);
     else if (car.slip > 0.4) input.rumble(0.12 * car.slip, 60);
+    else if (roadSurface.rumble > 0.05) input.rumble(0.3 * roadSurface.rumble, 60);
 
-    tacho.update({ rpm: dtr.rpm, gear: dtr.gear, manual: dtr.manual, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
+    if (rs) tacho.update({ rpm: rs.rpm, gear: rs.gear, manual: dtr.manual, kmh: Math.abs(rs.speed) * 3.6, nitro: rs.nitro, boosting: rs.boost > 0.5, limiter: false }, dt, now / 1000);
+    else tacho.update({ rpm: dtr.rpm, gear: dtr.gear, manual: dtr.manual, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
     frames++;
     fpsT += dt;
     if (fpsT > 0.5) {

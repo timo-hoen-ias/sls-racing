@@ -69,7 +69,8 @@ function groundAt(x: number, z: number): number | undefined {
 interface Result { ok: boolean; why?: string; at?: [number, number]; dist: number; len: number }
 
 /** Handling over all routes: largest drift angle (rad) and distance from the route (m), top speed (m/s). */
-const handling = { drift: 0, off: 0, offSum: 0, offN: 0, top: 0 };
+const handling = { drift: 0, driftWay: '', off: 0, offSum: 0, offN: 0, top: 0 };
+let currentWay = '';
 
 function driveRoute(pts: [number, number][], startY: number): Result {
   const route = densify(pts.map(([e, n]) => utmToLocal(W, e, n)), 4);
@@ -149,7 +150,8 @@ function driveRoute(pts: [number, number][], startY: number): Result {
     if (car.speed > 5) {
       const lv = car.body.linvel();
       const f = car.heading();
-      handling.drift = Math.max(handling.drift, Math.abs(Math.atan2(Math.sin(Math.atan2(lv.x, -lv.z) - f), Math.cos(Math.atan2(lv.x, -lv.z) - f))));
+      const drift = Math.abs(Math.atan2(Math.sin(Math.atan2(lv.x, -lv.z) - f), Math.cos(Math.atan2(lv.x, -lv.z) - f)));
+      if (drift > handling.drift) { handling.drift = drift; handling.driftWay = `${currentWay} at ${(step * STEP).toFixed(1)} s, ${(car.speed * 3.6).toFixed(0)} km/h`; }
       handling.off = Math.max(handling.off, off);
       handling.offSum += off;
       handling.offN++;
@@ -184,6 +186,7 @@ async function main() {
   let ok = 0;
   const fails: string[] = [];
   for (const { w } of pool) {
+    currentWay = `way ${w.id}`;
     const res = driveRoute(w.pts, roadSurfaceHeights(w, height)[0]);
     if (res.ok) ok++;
     else {
@@ -192,7 +195,7 @@ async function main() {
     }
   }
   console.log(`Drive test: ${ok}/${pool.length} routes completed`);
-  console.log(`Handling (pace ${PACE}): top ${(handling.top * 3.6).toFixed(0)} km/h · max drift ${((handling.drift * 180) / Math.PI).toFixed(1)}° · off route Ø ${(handling.offSum / Math.max(1, handling.offN)).toFixed(2)} / max ${handling.off.toFixed(1)} m`);
+  console.log(`Handling (pace ${PACE}): top ${(handling.top * 3.6).toFixed(0)} km/h · max drift ${((handling.drift * 180) / Math.PI).toFixed(1)}° (${handling.driftWay}) · off route Ø ${(handling.offSum / Math.max(1, handling.offN)).toFixed(2)} / max ${handling.off.toFixed(1)} m`);
   for (const f of fails) console.log(f);
   if (ok < pool.length * 0.9) process.exitCode = 1;
 }

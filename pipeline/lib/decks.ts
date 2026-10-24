@@ -9,6 +9,18 @@ import { densify, isBridge, isDrivable } from './roads.ts';
 const WINDOW = 8;
 /** How far a measured deck may leave the straight line between the bridge ends (m). */
 const BELOW = 2, ABOVE = 4;
+/** An abutment where the deck meets a road lies at most this far (m) above the highest terrain around it. */
+const REACH = 2.5;
+/** Radius (m) around a bridge end searched for the embankment or bank the deck rests on. */
+const BANK = 15;
+
+/** Highest terrain within BANK of a point, sampled every 3 m. */
+function groundAround([e, n]: [number, number], height: (e: number, n: number) => number) {
+  let top = -Infinity;
+  for (let dx = -BANK; dx <= BANK; dx += 3)
+    for (let dy = -BANK; dy <= BANK; dy += 3) if (dx * dx + dy * dy <= BANK * BANK) top = Math.max(top, height(e + dx, n + dy));
+  return top;
+}
 
 export interface DeckReport {
   bridges: number;
@@ -78,8 +90,11 @@ export function bridgeDecks(ways: Way[], dom: LaserGrid | undefined, height: (e:
       if (!byNode.has(id)) {
         const ground = height(...w.pts[i]);
         const m = median(cum[i]);
-        // Trust the surface model unless it shows something far above the ground (a tree, a truck).
-        byNode.set(id, m !== undefined && m > ground - 1 && m < ground + 8 ? m : ground);
+        // Trust the surface model unless it shows something far above the ground (a tree, a truck). Where the
+        // deck meets a road, that road climbs an embankment in the terrain model to reach a high deck; with
+        // none around, a high surface is the forest canopy over a small bridge.
+        const top = onRoad.has(id) ? Math.max(ground, groundAround(w.pts[i], height)) + REACH : ground + 8;
+        byNode.set(id, m !== undefined && m > ground - 1 && m < Math.min(ground + 8, top) ? m : ground);
       }
       return byNode.get(id)!;
     };

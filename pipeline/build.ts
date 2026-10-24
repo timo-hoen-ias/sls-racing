@@ -36,7 +36,7 @@ import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
 import { PROP_NAMES, Prop, type PropKind } from '../src/world/propKinds.ts';
 import { BUSH_STRIDE, Bush, type TreeKind } from '../src/world/vegKinds.ts';
-import { areaDensity, areaTreeKind, treeKindOf } from './lib/vegetation.ts';
+import { areaDensity, areaTreeKind, areaTreeScale, isPark, treeKindOf } from './lib/vegetation.ts';
 import { loadLidar } from './lib/lidar.ts';
 import { categorize, loadMapillary } from './lib/mapillary.ts';
 import { placeLidarTrees, type MeasuredTree } from './lib/lidarTrees.ts';
@@ -144,6 +144,8 @@ function main() {
   // Tree trunks, fences and hedges keep clear of the carriageway edge too: narrow roads are mapped narrower
   // than the car drives them, and the car must not clip them.
   const nearLanes = new RoadMask(osm.ways, 0.5);
+  // Trees a little further: their trunk collider is up to TREE_COLLIDER_MAX wide and the mask is a 2 m grid.
+  const treeLanes = new RoadMask(osm.ways, 1.0);
   const offLanes = (lamps: number[]) => {
     const out: number[] = [];
     for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
@@ -179,12 +181,27 @@ function main() {
     if (l) { coverage.push(...l.coverage); for (const t of l.trees) measuredTrees.push(t); }
   }
   const lidar = placeLidarTrees(coverage, measuredTrees, {
-    skip: (e, n) => nearLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
+    skip: (e, n) => treeLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
     tagsAt: (e, n) => ground.tagsAt(e, n), mapped, rand,
   });
   for (const t of lidar.trees) addTree(t.e, t.n, t.scale, t.kind, t.crown);
+  // Grid of the measured trees, so park trees are only added in the gaps between them.
+  const MEASURED_CELL = 16;
+  const measuredGrid = new Map<string, [number, number, number][]>();
+  for (const t of lidar.trees) {
+    const k = `${Math.floor(t.e / MEASURED_CELL)}_${Math.floor(t.n / MEASURED_CELL)}`;
+    if (!measuredGrid.has(k)) measuredGrid.set(k, []);
+    measuredGrid.get(k)!.push([t.e, t.n, t.crown / 10]);
+  }
+  const nearMeasured = (e: number, n: number, gap: number) => {
+    const ce = Math.floor(e / MEASURED_CELL), cn = Math.floor(n / MEASURED_CELL);
+    for (let a = -1; a <= 1; a++)
+      for (let b = -1; b <= 1; b++)
+        for (const [te, tn, cr] of measuredGrid.get(`${ce + a}_${cn + b}`) ?? []) if (Math.hypot(te - e, tn - n) < cr + gap) return true;
+    return false;
+  };
   for (const [e, n, s] of lidar.bushes) addBush(e, n, s, Bush.round);
-  mapped.forEach((t, i) => { if (!lidar.merged.has(i)) addTree(t.e, t.n, 0.8 + rand(t.e, t.n) * 0.5, t.kind); });
+  mapped.forEach((t, i) => { if (!lidar.merged.has(i) && !treeLanes.has(t.e, t.n)) addTree(t.e, t.n, 0.8 + rand(t.e, t.n) * 0.5, t.kind); });
   // Street furniture and traffic lights seen on Mapillary's street-level photos, on top of OSM.
   const DETECTED: Partial<Record<string, PropKind>> = { sign: Prop.sign, stopSign: Prop.stopSign, giveWay: Prop.giveWay, bench: Prop.bench, hydrant: Prop.hydrant };
   // Bins are left out: the photos mostly show household bins put out on collection day.
@@ -272,9 +289,12 @@ function main() {
             const tn = n - rand(e, n, i * 2 + 6) * TREE_CELL;
             if (onRoad.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
             if (i < nt) {
-              // Parks and gardens inside the LiDAR survey have their measured trees already.
-              if (cls !== Ground.forest && lidar.covered(te, tn)) continue;
-              addTree(te, tn, 0.7 + rand(te, tn) * 0.7, areaTreeKind(tags, rand(te, tn, 7)));
+              // Trunks keep clear of the carriageway like the measured trees.
+              if (treeLanes.has(te, tn)) continue;
+              // Inside the LiDAR survey the measured trees stand already: parks get more only in the gaps between
+              // them, other green stays as measured.
+              if (cls !== Ground.forest && lidar.covered(te, tn) && (!isPark(tags) || nearMeasured(te, tn, 4))) continue;
+              addTree(te, tn, areaTreeScale(tags, cls === Ground.forest, rand(te, tn)), areaTreeKind(tags, rand(te, tn, 7)));
             }
             else addBush(te, tn, 0.6 + rand(te, tn, 8) * 0.8, tags?.natural === 'scrub' || cls === Ground.forest ? Bush.scrub : Bush.round);
           }

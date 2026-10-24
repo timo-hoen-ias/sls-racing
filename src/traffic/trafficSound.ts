@@ -67,6 +67,11 @@ export class TrafficSound {
     }
   }
 
+  /** Player volume from the options menu (audio.traffic), 0..2. */
+  setVolume(v: number) {
+    this.out.gain.setTargetAtTime(0.9 * v, this.ctx.currentTime, 0.05);
+  }
+
   private panner() {
     const p = this.ctx.createPanner();
     p.panningModel = 'equalpower';

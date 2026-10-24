@@ -1,7 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { DriveInput } from '../src/input/input.ts';
-import { CarPhysics, maxSteerAngle } from '../src/vehicle/carPhysics.ts';
+import { CarPhysics, maxSteerAngle, ROAD_GROUPS, rotate } from '../src/vehicle/carPhysics.ts';
+import { CAR } from '../src/vehicle/tuning.ts';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -150,13 +151,13 @@ describe('Vehicle dynamics', () => {
     expect(car.wheels[2].load).toBeGreaterThan(car.wheels[3].load * 1.2);
   });
 
-  it('corners at about 1 g', () => {
+  it('corners at about 1.4 g (arcade grip)', () => {
     const { car, drive } = setup();
     drive({}, 1);
     while (car.speed < 100 / 3.6) drive({ throttle: 1 }, 1 / 60);
     drive({ throttle: 0.5, steer: 1 }, 3);
-    expect(Math.abs(car.accel.x) / 9.81).toBeGreaterThan(0.85);
-    expect(Math.abs(car.accel.x) / 9.81).toBeLessThan(1.3);
+    expect(Math.abs(car.accel.x) / 9.81).toBeGreaterThan(1.15);
+    expect(Math.abs(car.accel.x) / 9.81).toBeLessThan(1.7);
   });
 
   it('stops from 100 km/h in a realistic distance with ABS', () => {
@@ -166,8 +167,8 @@ describe('Vehicle dynamics', () => {
     const z0 = car.body.translation().z;
     while (car.speed > 0.5) drive({ brake: 1 }, 1 / 60);
     const d = Math.abs(car.body.translation().z - z0);
-    expect(d).toBeGreaterThan(30);
-    expect(d).toBeLessThan(40);
+    expect(d).toBeGreaterThan(24);
+    expect(d).toBeLessThan(36);
   });
 
   it('spins the rear wheels on a wet road without traction control', () => {
@@ -178,5 +179,43 @@ describe('Vehicle dynamics', () => {
     let spin = 0;
     for (let i = 0; i < 60; i++) { drive({ throttle: 1 }, 1 / 60); spin = Math.max(spin, car.wheels[2].long); }
     expect(spin).toBeGreaterThan(0.3);
+  });
+  // Drift angle of the body (rad): sideways against forward speed.
+  const driftAngle = (car: CarPhysics) => {
+    const rot = car.body.rotation();
+    const v = car.body.linvel();
+    const f = rotate(rot, 0, 0, 1), l = rotate(rot, 1, 0, 0);
+    return Math.atan2(v.x * l.x + v.z * l.z, v.x * f.x + v.z * f.z);
+  };
+
+  it('keeps the front tyres at their grip peak at full lock (arcade)', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    while (car.speed < 40 / 3.6) drive({ throttle: 1 }, 1 / 60);
+    drive({ throttle: 0.3, steer: 1 }, 2);
+    expect(Math.abs(car.wheels[0].alpha)).toBeLessThan(CAR.tyre.peakSlip * 1.15);
+  });
+
+  it('does not slide out under full throttle in a corner (arcade)', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    while (car.speed < 40 / 3.6) drive({ throttle: 1 }, 1 / 60);
+    let worst = 0;
+    for (let i = 0; i < 180; i++) { drive({ throttle: 1, steer: 1 }, 1 / 60); worst = Math.max(worst, Math.abs(driftAngle(car))); }
+    expect(worst).toBeLessThan(0.12);
+  });
+  it('rides on a road surface above the terrain, but kerbs do not catch the body', () => {
+    const { world, car, drive } = setup();
+    const s = 50, y = 0.15;
+    world.createCollider(
+      RAPIER.ColliderDesc.trimesh(new Float32Array([-s, y, -s, s, y, -s, -s, y, s, s, y, s]), new Uint32Array([0, 2, 1, 1, 2, 3])).setCollisionGroups(ROAD_GROUPS),
+      world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+    );
+    drive({}, 2);
+    for (let i = 0; i < 4; i++) expect(car.controller.wheelContactPoint(i)!.y).toBeCloseTo(y, 2);
+    // A road-group wall in front of the car stops only the wheels' rays, not the chassis.
+    world.createCollider(RAPIER.ColliderDesc.cuboid(5, 0.15, 0.1).setTranslation(0, 0.3, -6).setCollisionGroups(ROAD_GROUPS), world.createRigidBody(RAPIER.RigidBodyDesc.fixed()));
+    drive({ throttle: 1 }, 2);
+    expect(car.body.translation().z).toBeLessThan(-8);
   });
 });

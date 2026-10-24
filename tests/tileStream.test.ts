@@ -79,7 +79,8 @@ describe('tile colliders', () => {
     world.step(); ref.step();
     const [ox, oz] = tileOriginLocal(W, IX, IY);
     const at = (wld: RAPIER.World, x: number, z: number) => {
-      const hit = wld.castRay(new RAPIER.Ray({ x, y: 1000, z }, { x: 0, y: -1, z: 0 }), 2000, true);
+      // Terrain only: road surfaces (their own group) lie above it.
+      const hit = wld.castRay(new RAPIER.Ray({ x, y: 1000, z }, { x: 0, y: -1, z: 0 }), 2000, true, undefined, (0xffff << 16) | 0xfffb);
       return hit ? 1000 - hit.timeOfImpact : NaN;
     };
     let s = 7;

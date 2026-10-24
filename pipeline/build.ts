@@ -11,6 +11,7 @@ import {
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
 import { RoadCarve } from './lib/carve.ts';
+import { buildProps } from './lib/props.ts';
 import { RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
@@ -24,6 +25,9 @@ import { TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
+import { PROP_NAMES, type PropKind } from '../src/world/propKinds.ts';
+import { BUSH_STRIDE, Bush, type TreeKind } from '../src/world/vegKinds.ts';
+import { areaDensity, areaTreeKind, treeKindOf } from './lib/vegetation.ts';
 
 function main() {
   const { cfg, info, project } = loadWorld();
@@ -91,13 +95,25 @@ function main() {
   const TREE_CELL = 8;
   const TREE_EVERY = Math.max(1, Math.round(TREE_CELL / TERRAIN_STEP));
   const treesByTile = new Map<string, number[]>();
-  const addTree = (e: number, n: number, s: number) => {
-    const [x, z] = utmToLocal(info, e, n);
+  const treeKindsByTile = new Map<string, number[]>();
+  const bushesByTile = new Map<string, number[]>();
+  const push = (m: Map<string, number[]>, e: number, n: number, ...v: number[]) => {
     const k = tileKey(Math.floor(e / T), Math.floor(n / T));
-    if (!treesByTile.has(k)) treesByTile.set(k, []);
-    treesByTile.get(k)!.push(x, height(e, n), z, s);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k)!.push(...v);
   };
-  for (const [e, n] of osm.trees) if (!onRoad.has(e, n)) addTree(e, n, 0.8 + rand(e, n) * 0.5);
+  const addTree = (e: number, n: number, s: number, kind: TreeKind) => {
+    const [x, z] = utmToLocal(info, e, n);
+    push(treesByTile, e, n, x, height(e, n), z, s);
+    push(treeKindsByTile, e, n, kind);
+  };
+  const addBush = (e: number, n: number, s: number, kind: number) => {
+    const [x, z] = utmToLocal(info, e, n);
+    push(bushesByTile, e, n, x, height(e, n), z, s, kind);
+  };
+  for (const [e, n, tags] of osm.trees) if (!onRoad.has(e, n)) addTree(e, n, 0.8 + rand(e, n) * 0.5, treeKindOf(tags, rand(e, n, 31)));
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary });
+  console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
@@ -117,13 +133,18 @@ function main() {
         // Brooks become water cells, except under roads (culverts), where the mesh must stay level.
         const cls = water.has(e, n) && !onRoad.has(e, n) ? Ground.water : ground.at(e, n, Ground.grass);
         g[r * TERRAIN_N + c] = cls;
-        // Scatter trees in forests and parks, away from roads, one chance per 8 m cell whatever the mesh step.
-        if (r % TREE_EVERY === 0 && c % TREE_EVERY === 0 && r < TERRAIN_N - 1 && c < TERRAIN_N - 1 && (cls === Ground.forest || (cls === Ground.grass && rand(e, n, 3) < 0.06))) {
-          const count = cls === Ground.forest ? 2 : 1;
-          for (let i = 0; i < count; i++) {
-            const te = e + rand(e, n, i * 2 + 1) * TREE_CELL;
-            const tn = n - rand(e, n, i * 2 + 2) * TREE_CELL;
-            if (!onRoad.has(te, tn) && ground.at(te, tn, Ground.grass) === cls) addTree(te, tn, 0.7 + rand(te, tn) * 0.7);
+        // Scatter trees and bushes in woods, scrub and parks, away from roads. Densities are per 8 m cell and area type, whatever the mesh step.
+        if (r % TREE_EVERY === 0 && c % TREE_EVERY === 0 && r < TERRAIN_N - 1 && c < TERRAIN_N - 1 && (cls === Ground.forest || cls === Ground.grass)) {
+          const tags = ground.tagsAt(e + TREE_CELL / 2, n - TREE_CELL / 2);
+          const d = areaDensity(tags, cls === Ground.forest);
+          const count = (v: number, s: number) => Math.floor(v) + (rand(e, n, s) < v % 1 ? 1 : 0);
+          const nt = count(d.trees, 3), nb = count(d.bushes, 4);
+          for (let i = 0; i < nt + nb; i++) {
+            const te = e + rand(e, n, i * 2 + 5) * TREE_CELL;
+            const tn = n - rand(e, n, i * 2 + 6) * TREE_CELL;
+            if (onRoad.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
+            if (i < nt) addTree(te, tn, 0.7 + rand(te, tn) * 0.7, areaTreeKind(tags, rand(te, tn, 7)));
+            else addBush(te, tn, 0.6 + rand(te, tn, 8) * 0.8, tags?.natural === 'scrub' || cls === Ground.forest ? Bush.scrub : Bush.round);
           }
         }
       }
@@ -139,6 +160,12 @@ function main() {
     if (ww) tile.waterways = encode(new Float32Array(ww));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
+    const treeKinds = treeKindsByTile.get(k);
+    if (treeKinds) tile.treeKinds = encode(new Uint8Array(treeKinds));
+    const bushes = bushesByTile.get(k);
+    if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
+    const tileProps = props.tiles.get(k);
+    if (tileProps) tile.props = encode(new Float32Array(tileProps));
     // Gzipped here because static hosting does not compress application/octet-stream; the client inflates it.
     const bin = gzipSync(encodeTile(tile), { level: 9 });
     bytes += bin.byteLength;
@@ -187,6 +214,9 @@ function main() {
   }
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
+  const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
+  const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
+  console.log(`Vegetation: ${nTrees} trees, ${nBushes} bushes`);
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 

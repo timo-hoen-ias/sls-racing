@@ -45,6 +45,8 @@ export class Tacho {
 
   private maxRpm: number;
   private redRpm: number;
+  private unitEl: HTMLElement;
+  private mph = false;
 
   constructor(root: HTMLElement, maxRpm: number, redRpm: number) {
     this.root = root;
@@ -91,9 +93,18 @@ export class Tacho {
     this.nitroArc = root.querySelector('.tacho-nitro')!;
     this.shiftLight = root.querySelector('.tacho-shift')!;
     this.mode = root.querySelector('.tacho-mode')!;
+    this.unitEl = root.querySelector('.tacho-speed small')!;
     this.nitroLen = (SWEEP / 360) * 2 * Math.PI * 91;
     this.nitroArc.style.strokeDasharray = `${this.nitroLen} ${this.nitroLen}`;
     this.maxRpm = scaleMax;
+  }
+
+  /** Speed unit shown (hud.units). */
+  get units(): 'kmh' | 'mph' { return this.mph ? 'mph' : 'kmh'; }
+  set units(u: 'kmh' | 'mph') {
+    this.mph = u === 'mph';
+    this.unitEl.textContent = this.mph ? 'mph' : 'km/h';
+    this.last.kmh = -1;
   }
 
   update(r: TachoReading, dt: number, time: number) {
@@ -107,7 +118,7 @@ export class Tacho {
     this.needle.setAttribute('transform', `rotate(${f1(Math.max(0, a) * SWEEP)} ${CX} ${CY})`);
 
     const L = this.last;
-    const kmh = Math.round(r.kmh);
+    const kmh = Math.round(this.mph ? r.kmh / 1.609344 : r.kmh);
     if (kmh !== L.kmh) this.speed.textContent = String((L.kmh = kmh));
     const gear = r.gear < 0 ? 'R' : r.kmh < 1 && r.rpm < 1000 ? 'N' : String(r.gear);
     if (gear !== L.gear) this.gear.textContent = L.gear = gear;

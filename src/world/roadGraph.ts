@@ -7,6 +7,12 @@ export interface Edge {
   name: string;
   rank: number;
   oneway: boolean;
+  /** Carriageway width (m). */
+  width: number;
+  /** Lanes (total on two-way roads); 0 when the graph predates it. */
+  lanes: number;
+  /** Centre of the rightmost lane, metres right of the centreline (a → b on one-way roads). */
+  rightLane: number;
   /** Polyline x, y, z. */
   p: Float32Array;
   /** Cumulative length at each polyline point. */
@@ -39,6 +45,8 @@ export interface Route {
 }
 
 const CELL = 50;
+/** Carriageway width per rank for graphs built before edges carried their width. */
+const RANK_WIDTH = [3, 4, 5, 6, 5.5, 7, 7.5, 8.5, 10, 11];
 
 /** Road network for street names, the minimap and GPS routing. */
 export class RoadGraph {
@@ -55,7 +63,9 @@ export class RoadGraph {
       const p = Float32Array.from(e.p);
       const cum = new Float32Array(p.length / 3);
       for (let i = 1; i < cum.length; i++) cum[i] = cum[i - 1] + Math.hypot(p[i * 3] - p[i * 3 - 3], p[i * 3 + 2] - p[i * 3 - 1]);
-      const edge: Edge = { id, a: e.a, b: e.b, name: e.n >= 0 ? data.names[e.n] : '', rank: e.c, oneway: !!e.o, p, cum, length: cum[cum.length - 1] };
+      const width = e.w ?? RANK_WIDTH[e.c] ?? 6;
+      const rightLane = e.r ?? (e.o && e.c < 8 ? 0 : width / 4);
+      const edge: Edge = { id, a: e.a, b: e.b, name: e.n >= 0 ? data.names[e.n] : '', rank: e.c, oneway: !!e.o, width, lanes: e.l ?? 0, rightLane, p, cum, length: cum[cum.length - 1] };
       this.edges.push(edge);
       this.adj[e.a].push([id, e.b]);
       this.adj[e.b].push([id, e.a]);
@@ -90,8 +100,8 @@ export class RoadGraph {
       }
   }
 
-  /** Closest point on the network, or undefined when nothing is within maxDist. */
-  snap(x: number, z: number, maxDist = 60): Snap | undefined {
+  /** Closest point on the network (on edges that pass accept), or undefined when nothing is within maxDist. */
+  snap(x: number, z: number, maxDist = 60, accept?: (e: Edge) => boolean): Snap | undefined {
     let best: Snap | undefined;
     const r = Math.ceil(maxDist / CELL);
     const cx0 = Math.floor(x / CELL), cz0 = Math.floor(z / CELL);
@@ -101,6 +111,7 @@ export class RoadGraph {
         if (!list) continue;
         for (let i = 0; i < list.length; i += 2) {
           const e = this.edges[list[i]];
+          if (accept && !accept(e)) continue;
           const s = list[i + 1];
           const p = e.p;
           const ax = p[s * 3], ay = p[s * 3 + 1], az = p[s * 3 + 2];

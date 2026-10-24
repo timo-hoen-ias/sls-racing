@@ -25,10 +25,11 @@ export const KINDS: Record<VehicleKind, KindSpec> = {
   truck: { length: 10.5, width: 2.5, height: 3.6, accel: 0.8, decel: 2.2, speed: 0.75 },
 };
 
+/** German car park: lots of grey, black, white and silver, a few colours (parked cars use the same). */
+export const CAR_PALETTE = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0xf0f0ee, 0x4a4e54, 0x5d6168, 0x23365e, 0x6e1a1a, 0x30492f, 0xa8a090, 0x8a5a2b, 0x2a6f9b];
+
 /** Speed limit per road rank (m/s): 30 km/h in residential streets, 50 in town, 90 and 120 on trunk roads and motorways. */
 export const SPEED_LIMIT = [4, 5, 4, 8.3, 11, 13.9, 13.9, 13.9, 25, 33];
-/** Approximate carriageway width per rank, matching the pipeline's road classes. */
-const ROAD_WIDTH = [3, 4, 5, 6, 5.5, 7, 7.5, 8.5, 10, 11];
 /** Tracks, service roads, living streets and pedestrian zones carry no traffic. */
 export const MIN_RANK = 3;
 
@@ -108,10 +109,8 @@ const sameLane = (a: Lane | undefined, b: Lane | undefined) => !!a && !!b && a.e
 
 /** Lateral offset of the driving lane from the centre line, to the right. */
 export function laneOffset(e: Edge) {
-  const w = ROAD_WIDTH[e.rank] ?? 6;
-  // One-way roads: in the middle, except motorway carriageways where traffic keeps to the right lane.
-  if (e.oneway) return e.rank >= 8 ? w / 4 : 0;
-  return w / 4;
+  // Traffic keeps to the rightmost lane (from the pipeline's cross-section, see src/world/roadSpec.ts).
+  return e.rightLane;
 }
 
 export class TrafficSim {
@@ -255,8 +254,7 @@ export class TrafficSim {
   private pickColor(kind: VehicleKind): number {
     if (kind === 'bus') return this.rng() < 0.7 ? 0xd9d9d4 : 0xe8c21c;
     if (kind === 'truck') return [0xe8e8e8, 0x2b4f8c, 0xb22a22, 0x2d6b3a][Math.floor(this.rng() * 4)];
-    // German car park: lots of grey, black, white and silver, a few colours.
-    const palette = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0xf0f0ee, 0x4a4e54, 0x5d6168, 0x23365e, 0x6e1a1a, 0x30492f, 0xa8a090, 0x8a5a2b, 0x2a6f9b];
+    const palette = CAR_PALETTE;
     if (kind === 'van') return this.rng() < 0.6 ? 0xf0f0ee : palette[Math.floor(this.rng() * palette.length)];
     return palette[Math.floor(this.rng() * palette.length)];
   }
@@ -464,7 +462,7 @@ export class TrafficSim {
   private stopOffset(a: Agent) {
     const n = node({ edge: a.edge, dir: a.dir });
     let w = 0;
-    for (const id of this.adj[n]) if (this.graph.edges[id] !== a.edge) w = Math.max(w, ROAD_WIDTH[this.graph.edges[id].rank] ?? 6);
+    for (const id of this.adj[n]) if (this.graph.edges[id] !== a.edge) w = Math.max(w, this.graph.edges[id].width);
     return w / 2 + 1.5 + a.spec.length / 2;
   }
 

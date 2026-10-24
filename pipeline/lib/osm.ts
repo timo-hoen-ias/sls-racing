@@ -35,19 +35,24 @@ export interface OsmData {
   ways: Way[];
   /** Areas from closed ways and multipolygon relations. */
   polygons: Polygon[];
-  trees: [number, number][];
+  /** Mapped trees: position and tags. */
+  trees: [number, number, Record<string, string>][];
+  /** Other tagged point features (street furniture, signals, bus stops), projected. */
+  points: { id: number; tags: Record<string, string>; e: number; n: number }[];
   boundary?: [number, number][][];
 }
 
 export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [number, number]): OsmData {
   const nodes = new Map<number, [number, number]>();
   const wayById = new Map<number, { nodes: number[]; tags: Record<string, string> }>();
-  const trees: [number, number][] = [];
+  const trees: OsmData['trees'] = [];
+  const points: OsmData['points'] = [];
   for (const el of json.elements) {
     if (el.type === 'node') {
       const p = project(el.lon, el.lat);
       nodes.set(el.id, p);
-      if (el.tags?.natural === 'tree') trees.push(p);
+      if (el.tags?.natural === 'tree') trees.push([p[0], p[1], el.tags]);
+      else if (el.tags) points.push({ id: el.id, tags: el.tags, e: p[0], n: p[1] });
     } else if (el.type === 'way') wayById.set(el.id, { nodes: el.nodes, tags: el.tags ?? {} });
   }
   const toPts = (ids: number[]) => ids.map((id) => nodes.get(id)).filter((p): p is [number, number] => !!p);
@@ -78,7 +83,7 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
     const inners = rings('inner');
     for (const outer of outers) polygons.push({ id: el.id, tags, outer, holes: inners });
   }
-  return { ways, polygons, trees, boundary };
+  return { ways, polygons, trees, points, boundary };
 }
 
 function isArea(tags: Record<string, string>) {

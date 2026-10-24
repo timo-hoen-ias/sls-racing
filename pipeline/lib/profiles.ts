@@ -9,17 +9,23 @@ import { densify, isBridge, isDrivable, roadWidth } from './roads.ts';
 export const PROFILE_STEP = 2;
 /** Half window of the median filter, and of the smoothing after it (samples). */
 const MEDIAN = 3, SMOOTH = 3;
+/** Dips narrower than about twice this (samples) are filled: culverts and stream beds the road crosses on fill. */
+const CLOSE = 4;
 /** Node heights come from the terrain this far along each road from the node (m). */
 const NODE_REACH = 6;
 /** Steepest ramp used to bring a profile to its node height (rise per metre). */
 const RAMP_GRADE = 0.05;
 /** Past the junction plateau the road blends back into its own profile over this length (m). */
 const JUNCTION_BLEND = 10;
+/** Grade of a road end is measured over this length, and matched to the road it continues into over this reach (m). */
+const GRADE_SPAN = 4, GRADE_REACH = 16;
 
 const median = (vs: number[]) => {
   const s = vs.slice().sort((a, b) => a - b);
   return s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
+
+const win = (vs: number[], k: number, r: number) => vs.slice(Math.max(0, k - r), k + r + 1);
 
 export interface ProfileReport { roads: number; nodes: number; maxCorrection: number }
 
@@ -42,7 +48,10 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
       if (i === 1) ys.push(height(...w.pts[0]));
       for (const p of seg.slice(1)) ys.push(height(...p));
     }
-    raw.set(w, { ys, nodeAt });
+    // Closing (max, then min over a window) fills narrow dips: in the bare-earth model a road crossing a
+    // culvert or stream on a fill has a trench where the fill was cut out. Hills and long underpasses stay.
+    const dilated = ys.map((_, k) => Math.max(...win(ys, k, CLOSE)));
+    raw.set(w, { ys: dilated.map((_, k) => Math.min(...win(dilated, k, CLOSE))), nodeAt });
   }
   // Even spacing per segment differs slightly from PROFILE_STEP; keep the distance of every sample.
   const dists = new Map<Way, number[]>();
@@ -91,7 +100,7 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     const { ys, nodeAt } = raw.get(w)!;
     const d = dists.get(w)!;
     // Median, then a moving average: removes kerbs and ditch edges, keeps hills.
-    const med = ys.map((_, k) => median(ys.slice(Math.max(0, k - MEDIAN), k + MEDIAN + 1)));
+    const med = ys.map((_, k) => median(win(ys, k, MEDIAN)));
     const smooth = med.map((_, k) => {
       const s = med.slice(Math.max(0, k - SMOOTH), k + SMOOTH + 1);
       return s.reduce((a, b) => a + b, 0) / s.length;
@@ -127,6 +136,48 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
         if (wt > 0) prof[k] += (y - prof[k]) * wt * wt * (3 - 2 * wt);
       }
     w.profile = { dist: Float32Array.from(d), y: Float32Array.from(prof) };
+  }
+
+  // Where one road simply continues as another (two road ends at a node, nothing else), give both the same
+  // grade at the node: filtered apart, they would meet at a kink, and the collision overlap at the joint
+  // (roads.ts end caps) would stick up out of the steeper one.
+  const ends = new Map<number, { w: Way; atEnd: boolean }[]>();
+  for (const w of roads) {
+    if (!w.profile || w.profile.y.length < 3) continue;
+    for (const atEnd of [false, true]) {
+      const id = w.ids[atEnd ? w.ids.length - 1 : 0];
+      if (degree.get(id) !== 2 || anchors.has(id)) continue;
+      if (!ends.has(id)) ends.set(id, []);
+      ends.get(id)!.push({ w, atEnd });
+    }
+  }
+  // Outward grade of a road at one of its ends, over GRADE_SPAN metres.
+  const outward = ({ w, atEnd }: { w: Way; atEnd: boolean }) => {
+    const { dist, y } = w.profile!;
+    const n = y.length, len = dist[n - 1];
+    const at = (x: number) => {
+      let k = 0;
+      while (k < n - 2 && dist[k + 1] < x) k++;
+      return y[k] + (y[k + 1] - y[k]) * Math.min(1, Math.max(0, (x - dist[k]) / (dist[k + 1] - dist[k] || 1)));
+    };
+    const span = Math.min(GRADE_SPAN, len);
+    return atEnd ? (y[n - 1] - at(len - span)) / span : (y[0] - at(span)) / span;
+  };
+  for (const pair of ends.values()) {
+    if (pair.length !== 2 || pair[0].w === pair[1].w) continue;
+    const [g0, g1] = pair.map(outward);
+    // Travelling from the first road into the second, the grade is g0 before the node and -g1 after.
+    const s = (g0 - g1) / 2;
+    pair.forEach((e, i) => {
+      const fix = (i ? -s : s) - (i ? g1 : g0);
+      const { dist, y } = e.w.profile!;
+      const len = dist[dist.length - 1];
+      const reach = Math.min(GRADE_REACH, len / 2);
+      for (let k = 0; k < y.length; k++) {
+        const x = e.atEnd ? len - dist[k] : dist[k];
+        if (x < reach) y[k] += fix * -x * (1 - x / reach) ** 2;
+      }
+    });
   }
   return { roads: roads.length, nodes: nodeH.size, maxCorrection };
 }

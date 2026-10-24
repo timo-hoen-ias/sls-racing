@@ -74,19 +74,20 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
   });
   registerCommand({
     name: 'car.model',
-    help: 'Automodell: Blender-GLB oder prozedurales Coupé',
-    args: '[glb|procedural]',
-    complete: () => ['glb', 'procedural'],
+    help: 'Automodell: Blender-Coupé (glb), Hot Hatch (hothatch), GT (gt; Radstand passt erst mit eigenem Tuning) oder prozedurales Coupé',
+    args: '[glb|hothatch|gt|procedural]',
+    complete: () => ['glb', 'hothatch', 'gt', 'procedural'],
     run: ([m]) => {
       const v = c.view;
       if (m === undefined) return `${v.kind} · ${triangleCount(v.model)} Dreiecke (volle Detailstufe)`;
-      if (m !== 'glb' && m !== 'procedural') throw new Error('glb oder procedural');
+      if (m !== 'glb' && m !== 'hothatch' && m !== 'gt' && m !== 'procedural') throw new Error('glb, hothatch, gt oder procedural');
       const color = '#' + v.paintColor.getHexString();
       if (m === 'procedural') {
         v.setModel(buildSportsCar(color), 'procedural');
         return 'prozedurales Coupé';
       }
-      loadSportsCar(color).then(
+      const url = m === 'glb' ? undefined : `${import.meta.env.BASE_URL}models/cars/${m}.glb`;
+      loadSportsCar(color, url).then(
         (model) => { v.setModel(model, 'glb'); console.info('[car] GLB geladen'); },
         (e) => console.warn('[car] GLB nicht geladen', e),
       );

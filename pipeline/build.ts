@@ -11,6 +11,7 @@ import {
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
 import { buildProps } from './lib/props.ts';
+import { signalJunctions } from './lib/signals.ts';
 import { RoadMask } from './lib/clearance.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
@@ -209,6 +210,9 @@ function main() {
     };
     idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, out: paths.out }) };
   }
+  const signalPts = osm.points.filter((p) => p.tags.highway === 'traffic_signals' && p.tags.crossing !== 'traffic_signals').map((p) => utmToLocal(info, p.e, p.n));
+  graph.s = signalJunctions(graph, signalPts);
+  console.log(`Traffic lights: ${signalPts.length} signal nodes → ${graph.s.length} junctions in ${new Set(graph.s.map((s) => s[1])).size} groups`);
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);

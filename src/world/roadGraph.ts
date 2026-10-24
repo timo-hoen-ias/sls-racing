@@ -54,10 +54,13 @@ export class RoadGraph {
   readonly nodes: Float32Array;
   private adj: [edge: number, other: number][][];
   private grid = new Map<number, number[]>(); // cell → [edge, segment, edge, segment, …]
+  /** Junctions with traffic lights: [node, group]. */
+  readonly signals: [number, number][];
   bounds = { minX: Infinity, minZ: Infinity, maxX: -Infinity, maxZ: -Infinity };
 
   constructor(data: RoadGraphData) {
     this.nodes = Float32Array.from(data.nodes);
+    this.signals = data.s ?? [];
     this.adj = Array.from({ length: data.nodes.length / 3 }, () => []);
     data.edges.forEach((e, id) => {
       const p = Float32Array.from(e.p);

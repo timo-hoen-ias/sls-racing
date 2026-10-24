@@ -90,4 +90,27 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
       return list.map(({ a, d }) => `#${a.id} ${a.kind} ${d.toFixed(0)} m · ${(a.v * 3.6).toFixed(0)} km/h · ${a.edge.name || '(ohne Namen)'} · ${a.state}${a.wait > 0 ? ` (wartet ${a.wait.toFixed(1)} s)` : ""}${a.reason ? ` · ${a.reason}` : ""}`).join('\n') || '(keine)';
     },
   });
+  const sig = sim.signals;
+  registerToggle('traffic.signals', 'Ampeln an Kreuzungen (Phasen für den KI-Verkehr und Ampelköpfe)', () => sig.enabled, (v) => (sig.enabled = v));
+  registerValue('traffic.signals.cycle', 'Umlaufzeit der Ampeln in Sekunden (beide Richtungen)', () => sig.cycle, (v) => (sig.cycle = v), [16, 180]);
+  registerCommand({
+    name: 'traffic.signals.force', help: 'Alle Ampeln fest auf eine Farbe stellen oder normal schalten', args: 'red|yellow|green|auto',
+    complete: () => ['red', 'yellow', 'green', 'auto'],
+    run([v = 'auto']) {
+      if (v === 'auto') sig.forced = undefined;
+      else if (v === 'red' || v === 'yellow' || v === 'green') sig.forced = v;
+      else throw new Error('red, yellow, green oder auto');
+      return `Ampeln: ${sig.forced ?? 'normal'}`;
+    },
+  });
+  registerCommand({
+    name: 'traffic.signals.near', help: 'Die nächsten Ampelkreuzungen mit Abstand und Phase', args: '[anzahl]',
+    run([n = '5']) {
+      const p = player();
+      const N = t.graph.nodes;
+      const list = [...sig.nodes.values()].map((s) => ({ s, d: Math.hypot(N[s.node * 3] - p.x, N[s.node * 3 + 2] - p.z) })).sort((a, b) => a.d - b.d).slice(0, parseNum(n, 'Anzahl', 1, 50));
+      const waiting = (node: number) => sim.agents.filter((a) => a.reason === 'Rot' && (a.dir > 0 ? a.edge.b : a.edge.a) === node).length;
+      return `${sig.nodes.size} Ampelknoten · ${t.lights.count} Ampelköpfe gezeichnet\n` + list.map(({ s, d }) => `Knoten ${s.node} (Gruppe ${s.group}) ${d.toFixed(0)} m · Hauptrichtung ${sig.phase(s, true)}, quer ${sig.phase(s, false)} · ${waiting(s.node)} warten bei Rot`).join('\n');
+    },
+  });
 }

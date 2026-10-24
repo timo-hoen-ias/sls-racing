@@ -183,7 +183,8 @@ async function boot() {
   let safeTimer = 0;
   let worldReady = false;
   // The car waits here until the ground under it exists (start and teleports). Without y, it drops onto the ground.
-  let hold: { x: number; y?: number; z: number; heading: number; frames: number } | null = { ...spawn, frames: 0 };
+  // With road set, the car goes onto the nearest free road spot (as on reset) once the colliders there exist.
+  let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean } | null = { ...spawn, frames: 0 };
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
     groundRay.origin = { x, y: 2000, z };
@@ -218,14 +219,12 @@ async function boot() {
 
   // Reset puts the car on the nearest road: right-hand lane, along the road in the direction it was facing
   // (or the one-way direction), on a spot free of traffic, parked cars and street furniture.
-  const roadSpot = () => {
-    const p = car.body.translation();
+  const roadSpot = (p: { x: number; z: number } = car.body.translation(), h = car.heading()) => {
     // Real streets first (not service ways or tracks), any way as a fallback.
     const street = (e: { rank: number }) => e.rank >= 2;
     let s = graph.snap(p.x, p.z, 400, street) ?? graph.snap(p.x, p.z, 400);
     if (!s) return undefined;
     const box = new RAPIER.Cuboid(CAR.halfExtents.x + 0.3, CAR.halfExtents.y, CAR.halfExtents.z + 0.5);
-    const h = car.heading();
     if (!s.edge.oneway && s.dx * Math.sin(h) - s.dz * Math.cos(h) < 0) s = { ...s, dx: -s.dx, dz: -s.dz };
     const { dx, dz } = s;
     const base = s;
@@ -307,11 +306,12 @@ async function boot() {
   let frozenAt: { p: { x: number; y: number; z: number }; q: { x: number; y: number; z: number; w: number } } | null = null;
   const debug = new DebugConsole();
   debug.onToggle = () => input.releaseAll();
+  bigMap.onTeleport = () => debug.exec('tp ziel');
   registerGameCommands({
     R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar,
-    teleport: (x, z, heading = car.heading()) => {
+    teleport: (x, z, heading = car.heading(), road = false) => {
       if (!streamer.hasTileAt(x, z)) throw new Error(`${x.toFixed(0)} / ${z.toFixed(0)} liegt außerhalb der Karte`);
-      hold = { x, z, heading, frames: 0 };
+      hold = { x, z, heading, frames: 0, road };
       worldReady = false;
     },
   }, debugState);
@@ -372,6 +372,11 @@ async function boot() {
       streamer.update(h.x, h.z, true);
       // Give fresh colliders a couple of physics steps before casting against them.
       if (streamer.isLoadedAround(h.x, h.z)) h.frames++;
+      if (h.frames > 2 && h.road) {
+        const r = roadSpot(h, h.heading);
+        if (r) Object.assign(h, { x: r.x, z: r.z, heading: r.heading, y: r.y + 1.2 });
+        h.road = false;
+      }
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
       car.reset({ x: h.x, y: h.y ?? car.body.translation().y, z: h.z }, h.heading);
       if (h.frames > 2 && h.y !== undefined) {

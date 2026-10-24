@@ -59,7 +59,7 @@ Wasser: Flüsse, Bäche und Gräben fließen entlang ihrer Ufer (bzw. der Waterw
 
 ## Debug-Konsole
 
-`^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`.
+`^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp ziel` (zum auf der Karte markierten Ziel; in der Karte auch Enter oder „Hinbeamen“), `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`.
 
 Performance: `perf.hud` (oder `?perf` in der URL) zeigt FPS, einen Frame-Graph (grün < 17 ms, gelb, rot > 33 ms), CPU-Zeit für Streaming, Physik und Rendern, GPU-Zeit (falls der Browser `EXT_disjoint_timer_query_webgl2` kann), Draw-Calls, Dreiecke, Kollider und Kachel-Lade-/Aufbauzeiten. `perf.log 10` nimmt 10 s auf und gibt Ø, p95, p99 und die Zahl der Ruckler aus, `stream.info` zeigt den Zustand des Kachel-Streamings.
 

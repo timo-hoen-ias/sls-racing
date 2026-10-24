@@ -18,6 +18,8 @@ export class BigMap {
   private moved = 0;
   private pinch = 0;
   onClose?: () => void;
+  /** Debug: beam the car to the marked destination (button and Enter in the map). */
+  onTeleport?: () => void;
 
   constructor(root: HTMLElement, graph: RoadGraph, nav: Navigation) {
     this.root = root;
@@ -60,6 +62,10 @@ export class BigMap {
     c.addEventListener('wheel', (e) => { e.preventDefault(); this.zoom(Math.exp(-e.deltaY * 0.0015)); this.draw(); }, { passive: false });
     root.querySelector('#map-close')!.addEventListener('click', () => this.toggle(false));
     root.querySelector('#map-clear')!.addEventListener('click', () => { this.nav.clear(); this.draw(); });
+    root.querySelector('#map-tp')!.addEventListener('click', () => this.teleport());
+    addEventListener('keydown', (e) => {
+      if (this.open && e.code === 'Enter' && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); this.teleport(); }
+    });
     root.querySelector('#map-center')!.addEventListener('click', () => { this.cx = this.car.x; this.cz = this.car.z; this.draw(); });
     addEventListener('resize', () => this.open && this.draw());
   }
@@ -72,6 +78,15 @@ export class BigMap {
       this.cz = this.car.z;
       this.draw();
     } else this.onClose?.();
+  }
+
+  private teleport() {
+    if (!this.nav.destination) {
+      this.root.querySelector('#map-hint')!.textContent = 'Erst auf eine Straße tippen, dann hinbeamen.';
+      return;
+    }
+    this.onTeleport?.();
+    this.toggle(false);
   }
 
   setCar(x: number, z: number, heading: number) {

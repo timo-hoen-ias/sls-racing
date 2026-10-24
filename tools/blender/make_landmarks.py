@@ -359,7 +359,6 @@ def facade(f, pts, floors, mat='glass', w=1.2, h=1.9, spacing=3.2, frame=None, a
                     obox(f, frame, a + d * s + n * 0.05, d, w + 0.3, 0.1, h0 - 0.2, h0 + h + 0.2)
                 obox(f, mat, c + n * (0.04 if frame else 0), d, w, depth, h0, h0 + h)
                 if arch:
-                    f.spire(mat, *(c + n * (0.04 if frame else 0)), h0 + h, h0 + h + w * 0.5, w * 0.5, seg=4) if False else None
                     obox(f, mat, c + n * (0.04 if frame else 0), d, w * 0.7, depth, h0 + h, h0 + h + w * 0.35)
 
 
@@ -480,7 +479,7 @@ def kasematten(entry, root, lod, gate=False):
                 s = (L - (k - 1) * 4.4) / 2 + i * 4.4
                 c = a + d * s + n * 0.03
                 obox(f, 'glass', c, d, 2.6, 0.1, 0.0, 2.6)
-                f.spire('glass', c.x, c.y, 2.6, 3.4, 1.3, seg=6) if False else obox(f, 'glass', c, d, 1.8, 0.1, 2.6, 3.2)
+                obox(f, 'glass', c, d, 1.8, 0.1, 2.6, 3.2)
                 obox(f, 'stone.light', c + n * 0.03, d, 3.0, 0.08, 3.2, 3.5)
     # Grassy rampart on top, rising in a long mound.
     roof(f, 'roof.grass', offset(fp, -0.4), H, [(1.6, 1.6), (1.8, 0.8)])
@@ -699,6 +698,72 @@ def theater(entry, root, lod):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
+def schleusenbruecke(entry, root, lod, deck=5.0):
+    """Schleusenbrücke: Vauban's lock-bridge piers (sandstone, with the vertical grooves of the old sluice gates)
+    carrying today's concrete foot and cycle deck with steel railings and lamp posts. Not a road bridge, so the
+    deck is part of the model; deck top `deck` m above the origin (an estimate until the terrain is checked)."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    # Bridge axis: the longest edge.
+    a0, d, n, L = max(edges(fp, 1.0), key=lambda e: e[3])
+    U = d
+    V = Vector((-d.y, d.x))
+    us = [Vector(p).dot(U) for p in fp]
+    vs = [Vector(p).dot(V) for p in fp]
+    u0, u1, v0, v1 = min(us), max(us), min(vs), max(vs)
+    f.prism('plaster', fp, deck - 0.7, deck)                                              # deck slab
+    if f.detail:
+        f.prism('stone.light', offset(fp, 0.08), deck - 0.75, deck - 0.6)                 # slab edge
+    def section(u):
+        """v range of the footprint across the axis at u."""
+        hits = []
+        for p, q in zip(fp, fp[1:] + fp[:1]):
+            pu, qu = Vector(p).dot(U), Vector(q).dot(U)
+            if (pu - u) * (qu - u) <= 0 and pu != qu:
+                t = (u - pu) / (qu - pu)
+                hits.append(Vector(p).dot(V) + t * (Vector(q).dot(V) - Vector(p).dot(V)))
+        return (min(hits), max(hits)) if len(hits) >= 2 else (v0, v1)
+
+    # Piers every ~9 m, each as wide as the deck above it.
+    k = max(2, int((u1 - u0 - 6) // 9))
+    piers = []
+    for i in range(k):
+        u = u0 + 3 + (u1 - u0 - 6) * (i + 0.5) / k
+        a_, b_ = section(u)
+        piers.append((u, a_ + 0.6, b_ - 0.6))
+    for u, pv0, pv1 in piers:
+        width = pv1 - pv0
+        c = U * u + V * ((pv0 + pv1) / 2)
+        obox(f, 'stone', c, V, width, 2.6, -4.0, deck - 0.7)
+        obox(f, 'stone.light', c, V, width + 0.3, 2.9, deck - 1.2, deck - 0.7)              # pier cap
+        if f.detail:
+            for s_ in (-1, 1):                                                             # sluice grooves
+                obox(f, 'stone.dark', c + U * (s_ * 1.31), V, 0.25, 0.04, -3.0, deck - 1.3)
+                obox(f, 'stone.dark', c + V * (s_ * width * 0.2) + U * (s_ * 1.31), V, 0.12, 0.04, -3.0, deck - 1.3)
+    # Railings and lamp posts along the long sides.
+    for a, dd, nn, LL in edges(fp, 6.0):
+        if abs(dd.dot(U)) < 0.9:
+            continue
+        top = a + nn * -0.15
+        obox(f, 'stone.dark', top + dd * (LL / 2), dd, LL, 0.06, deck + 1.0, deck + 1.1)          # handrail
+        if f.detail:
+            obox(f, 'stone.dark', top + dd * (LL / 2), dd, LL, 0.03, deck + 0.15, deck + 0.2)
+            for j in range(int(LL / 0.25)):
+                obox(f, 'stone.dark', top + dd * (0.12 + j * 0.25), dd, 0.02, 0.02, deck + 0.2, deck + 1.0)
+            for j in range(int(LL // 18) + 1):
+                pc = top + dd * (4 + j * 18) - nn * 0.1
+                obox(f, 'stone.dark', pc, dd, 0.12, 0.12, deck, deck + 6.0)                     # lamp post
+                obox(f, 'plaster.white', pc - nn * 0.5, dd, 0.3, 0.6, deck + 5.8, deck + 6.0)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, deck - 0.7, deck)
+    for u, pv0, pv1 in piers:
+        obox(c, 'stone', U * u + V * ((pv0 + pv1) / 2), V, pv1 - pv0, 2.6, -4.0, deck - 0.7)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
 BUILDERS = {
     'ludwigskirche': ludwigskirche, 'rathaus': rathaus, 'kommandantur': kommandantur,
     'st-marien': st_marien, 'kasematten-sw': lambda e, r, l: kasematten(e, r, l, gate=True), 'kasematten-no': kasematten,
@@ -706,6 +771,7 @@ BUILDERS = {
     'kaserne-4': kaserne, 'kaserne-6': kaserne, 'katerturm': katerturm, 'haus-ludwig': villa, 'theater-am-ring': theater,
     'festung-ravelin-5': lambda e, r, l: vauban_insel(e, r, l, top=0.9, base=-1.5),
     'festung-bastion-6': lambda e, r, l: vauban_insel(e, r, l, top=0.6, base=-3.5),
+    'schleusenbruecke': schleusenbruecke,
 }
 
 

@@ -22,6 +22,7 @@ const LANDMARKS: { id: string; ways: number[] }[] = [
   { id: 'theater-am-ring', ways: [71934476] },
   { id: 'festung-ravelin-5', ways: [297024093] },
   { id: 'festung-bastion-6', ways: [372882703] },
+  { id: 'schleusenbruecke', ways: [681793548] },
 ];
 
 const UTM = '+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs';

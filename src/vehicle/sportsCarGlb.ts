@@ -11,6 +11,9 @@ export const SPORTS_CAR_URL = `${import.meta.env.BASE_URL}models/sportscar.glb`;
 /** Camera distance (m) from which the body and wheels switch to the next level of detail. */
 export const CAR_LOD_DISTANCES = [0, 30, 80];
 
+/** GLB materials whose meshes cast shadows. */
+const SHADOW_CASTERS = new Set(['paint', 'black', 'carbon', 'tyre']);
+
 export type CarModelKind = 'glb' | 'procedural';
 
 /** Loads and prepares the GLB. Rejects if the file is missing or broken (callers fall back to the procedural car). */
@@ -53,11 +56,14 @@ export function sportsCarFromScene(scene: THREE.Object3D, color = '#c0141c'): Sp
   car.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
+    const name = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material).name;
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(fix) : fix(mesh.material);
     // glTF splits multi-material meshes into a group of primitives: extras sit on the group.
     const parent = mesh.parent;
     if (parent && !(parent as THREE.Mesh).isMesh && parent.userData.dent) mesh.userData.dent = true;
-    mesh.castShadow = !/glass|head|brake/.test((mesh.material as THREE.Material).name ?? '');
+    // Only the parts that shape the silhouette cast shadows; trim, lights, rims and brakes would cost a
+    // shadow-map draw each for nothing visible.
+    mesh.castShadow = SHADOW_CASTERS.has(name);
   });
 
   const body = new THREE.Group();

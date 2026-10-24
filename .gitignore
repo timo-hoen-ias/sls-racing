@@ -5,3 +5,4 @@ public/tiles/
 *.log
 .DS_Store
 .wrangler/
+*.raw.glb

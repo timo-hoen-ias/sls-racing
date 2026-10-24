@@ -40,7 +40,22 @@ export class CarDamage {
     this.model = model;
     this.paint = paint;
     this.paintBase = { roughness: paint.roughness, clearcoat: paint.clearcoat, color: paint.color.clone() };
-    model.traverse((o) => {
+    this.collect();
+  }
+
+  /** Switches to another body (car.model); call on an undamaged car. */
+  attach(model: THREE.Group, paint: THREE.MeshPhysicalMaterial) {
+    this.model = model;
+    this.paint = paint;
+    this.paintBase = { roughness: paint.roughness, clearcoat: paint.clearcoat, color: paint.color.clone() };
+    this.panels = [];
+    this.parts.clear();
+    this.detached.clear();
+    this.collect();
+  }
+
+  private collect() {
+    this.model.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh && m.userData.dent) this.panels.push({ mesh: m, original: m.geometry.clone() });
       if (o.userData.part) {

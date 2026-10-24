@@ -6,7 +6,7 @@ import { Ground, TERRAIN_N, TERRAIN_STEP, type WorldInfo, tileOriginLocal } from
 import type { RoadGraph } from './roadGraph.ts';
 import { registerTileLayer } from './tileHooks.ts';
 import { SPECIES_BY_KIND, type VegetationSet, loadVegetation } from './vegGlb.ts';
-import { BUSH_STRIDE, Bush, TREE_NAMES, Tree, type TreeKind } from './vegKinds.ts';
+import { BUSH_STRIDE, Bush, TREE_HEIGHT, TREE_NAMES, Tree, type TreeKind } from './vegKinds.ts';
 import { buildBushGeometries, buildGrassGeometry, buildTreeGeometries, grassTexture } from './vegModels.ts';
 
 // Vegetation (W6) as a tile layer: trees by species with two levels of detail, bushes, grass clumps around the
@@ -97,6 +97,8 @@ interface VegModel {
   /** Height factor and crown width factor on top of the tile's scale. */
   h: number;
   w: number;
+  /** Crown radius (m) of the geometry, for trees with a measured crown. */
+  crown: number;
 }
 
 interface VegGroup {
@@ -123,6 +125,8 @@ interface VegTile {
   shadows: boolean;
   trees?: Float32Array;
   kinds?: Uint8Array;
+  /** Measured crown radius in dm (LiDAR trees), 0 otherwise. */
+  crowns?: Uint8Array;
   bushes?: Float32Array;
   groups: VegGroup[];
   heights: Float32Array;
@@ -141,7 +145,9 @@ const BUSH_DETAIL = 30;
 interface Split { g: VegGroup; bands: number[]; count: number; d: number; tile: string }
 
 /** Height of the Blender species (all 8 m) per kind, relative to a tree of scale 1. */
-const KIND_HEIGHT: Record<TreeKind, number> = { 0: 1.05, 1: 1.35, 2: 1.7, 3: 1.1, 4: 0.6 };
+const KIND_HEIGHT = Object.fromEntries(Object.entries(TREE_HEIGHT).map(([k, h]) => [k, h / 8])) as Record<TreeKind, number>;
+/** Crown radius (m) of the procedural models (vegModels.ts) at scale 1. */
+const PROC_CROWN: Record<TreeKind, number> = { 0: 3.0, 1: 2.5, 2: 1.5, 3: 1.5, 4: 2.4 };
 
 export class Vegetation {
   /** Grass clumps around the camera (the trees and bushes live in the tile groups). */
@@ -165,6 +171,8 @@ export class Vegetation {
   models: 'glb' | 'procedural' = 'procedural';
   grassOn: boolean;
   grassRadius = 32;
+  /** Draw the trees measured by the LiDAR survey (veg.lidar). */
+  lidar = true;
   readonly groundUniforms = { uVegFields: { value: 1 } };
   private tiles = new Map<string, VegTile>();
   private treeModels = {} as Record<TreeKind, VegModel[]>;
@@ -212,6 +220,7 @@ export class Vegetation {
           heights: t.f32('terrain')!.slice(), ground: t.u8('ground')!.slice(), ox, oz,
           trees: trees ? t.f32('trees')?.slice() : undefined,
           kinds: trees && t.has('treeKinds') ? t.u8('treeKinds')?.slice() : undefined,
+          crowns: trees && t.has('treeCrowns') ? t.u8('treeCrowns')?.slice() : undefined,
           bushes: trees && t.has('bushes') ? t.f32('bushes')?.slice() : undefined,
         };
         this.buildTile(tile);
@@ -236,14 +245,14 @@ export class Vegetation {
     for (const kind of Object.values(Tree)) {
       const list = pick(TREE_NAMES[kind]).map((sp): VegModel => {
         const lods = [sp.lod0, sp.lod1, ...(sp.billboard && this.billboardMat ? [sp.billboard] : [])];
-        return { lods, mats: lods.map((_, i) => (i === 2 ? this.billboardMat! : this.treeMat)), h: KIND_HEIGHT[kind], w: KIND_HEIGHT[kind] ** 0.7 };
+        return { lods, mats: lods.map((_, i) => (i === 2 ? this.billboardMat! : this.treeMat)), h: KIND_HEIGHT[kind], w: KIND_HEIGHT[kind] ** 0.7, crown: sp.crown };
       });
       if (list.length) trees[kind] = list;
     }
     Object.assign(this.treeModels, trees);
     const bush = (name: string, k: number) => {
       const sp = pick(name)[0];
-      if (sp) this.bushModels[k] = [{ lods: [sp.lod0, sp.lod1], mats: [this.bushMat, this.bushMat], h: 1, w: 1 }];
+      if (sp) this.bushModels[k] = [{ lods: [sp.lod0, sp.lod1], mats: [this.bushMat, this.bushMat], h: 1, w: 1, crown: sp.crown }];
     };
     bush('busch', Bush.round);
     bush('gebuesch', Bush.scrub);
@@ -254,8 +263,8 @@ export class Vegetation {
   /** Back to the procedural models of vegModels.ts. */
   setProcedural() {
     const g = buildTreeGeometries(), b = buildBushGeometries();
-    for (const kind of Object.values(Tree)) this.treeModels[kind] = [{ lods: g[kind], mats: [this.treeMat, this.treeMat], h: 1, w: 1 }];
-    for (const k of Object.values(Bush)) this.bushModels[k] = [{ lods: [b[k]], mats: [this.bushMat], h: 1, w: 1 }];
+    for (const kind of Object.values(Tree)) this.treeModels[kind] = [{ lods: g[kind], mats: [this.treeMat, this.treeMat], h: 1, w: 1, crown: PROC_CROWN[kind] }];
+    for (const k of Object.values(Bush)) this.bushModels[k] = [{ lods: [b[k]], mats: [this.bushMat], h: 1, w: 1, crown: 1 }];
     this.models = 'procedural';
     for (const t of this.tiles.values()) this.buildTile(t);
   }
@@ -264,7 +273,7 @@ export class Vegetation {
   private buildTile(t: VegTile) {
     for (const g of t.groups) for (const im of g.meshes) { t.group.remove(im); im.dispose(); }
     t.groups = [];
-    const add = (kind: TreeKind | -1, models: VegModel[], list: number[], at: (i: number) => [number, number, number, number], tint: number) => {
+    const add = (kind: TreeKind | -1, models: VegModel[], list: number[], at: (i: number) => Rec, tint: number) => {
       // Spread the records over the model variants by position.
       const byModel = models.map(() => [] as number[]);
       for (const i of list) {
@@ -285,11 +294,12 @@ export class Vegetation {
     if (tr?.length) {
       const byKind = new Map<TreeKind, number[]>();
       for (let i = 0; i < tr.length / 4; i++) {
+        if (!this.lidar && t.crowns?.[i]) continue;
         const k = (t.kinds?.[i] ?? Tree.broadleaf) as TreeKind;
         if (!byKind.has(k)) byKind.set(k, []);
         byKind.get(k)!.push(i);
       }
-      for (const [kind, list] of byKind) add(kind, this.treeModels[kind], list, (i) => [tr[i * 4], tr[i * 4 + 1] - 0.15, tr[i * 4 + 2], tr[i * 4 + 3]], kind === Tree.conifer ? 0.03 : 0.07);
+      for (const [kind, list] of byKind) add(kind, this.treeModels[kind], list, (i) => [tr[i * 4], tr[i * 4 + 1] - 0.15, tr[i * 4 + 2], tr[i * 4 + 3], (t.crowns?.[i] ?? 0) / 10], kind === Tree.conifer ? 0.03 : 0.07);
     }
     const bu = t.bushes;
     if (bu?.length) {
@@ -313,14 +323,16 @@ export class Vegetation {
   }
 
   /** Instance data in thinning order; every tier mesh starts with all of it so its bounding sphere covers the tile. */
-  private fill(meshes: THREE.InstancedMesh[], order: number[], at: (i: number) => [number, number, number, number], tint: number, model: VegModel) {
+  private fill(meshes: THREE.InstancedMesh[], order: number[], at: (i: number) => Rec, tint: number, model: VegModel) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
     const mats = new Float32Array(order.length * 16), cols = new Float32Array(order.length * 3), xz = new Float32Array(order.length * 2);
     order.forEach((i, n) => {
-      const [x, y, z, sc] = at(i);
+      const [x, y, z, sc, crown] = at(i);
       const h = fract(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453);
       q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, h * Math.PI * 2);
-      s.set(sc * model.w, sc * model.h * (0.9 + 0.2 * fract(h * 7.1)), sc * model.w);
+      // Measured trees keep their height and crown; the others vary a little.
+      const w = crown ? crown / model.crown : sc * model.w;
+      s.set(w, sc * model.h * (crown ? 1 : 0.9 + 0.2 * fract(h * 7.1)), w);
       m.compose(p.set(x, y, z), q, s).toArray(mats, n * 16);
       // Each tree a little lighter or darker, warmer or cooler.
       c.setRGB(1 + (fract(h * 3.7) - 0.5) * tint * 2, 1 + (fract(h * 5.3) - 0.5) * tint * 2, 1 - tint).toArray(cols, n * 3);
@@ -478,8 +490,9 @@ export class Vegetation {
   /** Counts of trees by kind and bushes in loaded tiles. */
   counts() {
     const trees = new Map<string, number>();
-    let bushes = 0, near = 0;
+    let bushes = 0, near = 0, lidar = 0;
     for (const t of this.tiles.values()) {
+      if (this.lidar && t.crowns) for (const c of t.crowns) if (c) lidar++;
       for (const g of t.groups) {
         if (g.kind === -1) { bushes += g.n; continue; }
         const name = TREE_NAMES[g.kind];
@@ -487,7 +500,7 @@ export class Vegetation {
         near += g.meshes[0].visible ? g.meshes[0].count : 0;
       }
     }
-    return { trees, bushes, near, grass: this.grass.count };
+    return { trees, bushes, near, lidar, grass: this.grass.count };
   }
 
   registerCommands() {
@@ -521,6 +534,7 @@ export class Vegetation {
         return `Baummodelle: ${m ?? this.models}`;
       },
     });
+    registerToggle('veg.lidar', 'Bäume aus der LiDAR-Befliegung (echte Position, Höhe und Krone) zeigen', () => this.lidar, (v) => { this.lidar = v; for (const t of this.tiles.values()) this.buildTile(t); });
     registerToggle('veg.grass', 'Grasbüschel um die Kamera', () => this.grassOn, (v) => { this.grassOn = v; this.grassAt.x = Infinity; });
     registerValue('veg.grass.radius', 'Radius der Grasbüschel in Metern', () => this.grassRadius, (v) => { this.grassRadius = v; this.grassAt.x = Infinity; }, [5, 120]);
     registerValue('veg.fields', 'Ackerfurchen und Grasflecken im Boden 0..1', () => this.groundUniforms.uVegFields.value, (v) => (this.groundUniforms.uVegFields.value = v), [0, 1]);
@@ -528,7 +542,7 @@ export class Vegetation {
       name: 'veg.info', help: 'Bäume nach Art, Büsche und Grasbüschel in den geladenen Kacheln',
       run: () => {
         const c = this.counts();
-        return `${[...c.trees].map(([k, n]) => `${k} ${n}`).join(', ') || 'keine Bäume'} · ${c.near} detailliert · ${c.bushes} Büsche · ${c.grass} Grasbüschel · Wind ${this.windNow.toFixed(2)}\n`
+        return `${[...c.trees].map(([k, n]) => `${k} ${n}`).join(', ') || 'keine Bäume'} · davon ${c.lidar} aus LiDAR · ${c.near} detailliert · ${c.bushes} Büsche · ${c.grass} Grasbüschel · Wind ${this.windNow.toFixed(2)}\n`
           + `LOD: detailliert bis ${this.lodDistance} m, einfach bis ${this.billboardDistance} m, dann Billboard · Büsche bis ${this.bushDistance} m · ${this.splitCount} Instanzen im letzten Bild umsortiert`;
       },
     });
@@ -536,6 +550,9 @@ export class Vegetation {
 }
 
 const fract = (v: number) => v - Math.floor(v);
+
+/** One instance: x, y, z, scale and the measured crown radius (m, 0 = model crown). */
+type Rec = [number, number, number, number, number?];
 
 /** Detail tier for a distance: the first band it is under, or -1 beyond the last. */
 export function tierOf(d: number, bands: number[]) {

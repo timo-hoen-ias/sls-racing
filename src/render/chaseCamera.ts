@@ -13,6 +13,12 @@ export class ChaseCamera {
   orbit: number | null = null;
   /** Cockpit head movement from g-forces, 0..1. */
   headbob = 1;
+  /** Options menu: added to the base field of view in degrees (cam.fov). */
+  fovOffset = 0;
+  /** Options menu: how much speed and nitro widen the view, 0..2 (cam.speedfov). */
+  speedFov = 1;
+  /** Options menu: camera shake at high speed and under nitro, 0..2 (cam.shake). */
+  shake = 1;
   /** Body-frame acceleration (m/s², x = left, z = forward) and steering, set each frame for the cockpit view. */
   motion = { ax: 0, az: 0, steer: 0 };
   private head = new THREE.Vector3();
@@ -84,11 +90,11 @@ export class ChaseCamera {
     this.look.lerp(target, 1 - Math.exp(-dt * 12));
     this.camera.position.copy(this.pos);
     if (boosting || kmh > 150) {
-      const s = (boosting ? 0.05 : 0) + Math.max(0, kmh - 150) * 0.0004;
+      const s = ((boosting ? 0.05 : 0) + Math.max(0, kmh - 150) * 0.0004) * this.shake;
       this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * s, (Math.random() - 0.5) * s, 0));
     }
     this.camera.lookAt(this.look);
-    const fov = 62 + Math.min(kmh, 220) * 0.07 + (boosting ? 8 : 0);
+    const fov = 62 + this.fovOffset + (Math.min(kmh, 220) * 0.07 + (boosting ? 8 : 0)) * this.speedFov;
     this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
     this.camera.updateProjectionMatrix();
   }
@@ -110,7 +116,7 @@ export class ChaseCamera {
     const look = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI + (lookBack ? Math.PI : 0) + m.steer * 0.35 * k);
     const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(-this.head.z * 0.6, 0, this.head.x * 1.2));
     this.camera.quaternion.copy(carQuat).multiply(look).multiply(tilt);
-    const fov = 68 + Math.min(Math.abs(speed) * 3.6, 250) * 0.02;
+    const fov = 68 + this.fovOffset + Math.min(Math.abs(speed) * 3.6, 250) * 0.02 * this.speedFov;
     this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
     this.camera.updateProjectionMatrix();
     this.initialised = false;

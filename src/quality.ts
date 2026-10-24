@@ -20,8 +20,13 @@ export interface Quality {
 
 export const isTouchDevice = () => matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 1;
 
+/** Preset chosen in the options menu (quality.preset); ?q= in the URL still wins. */
+export const QUALITY_KEY = 'sls.quality';
+
 export function pickQuality(): Quality {
-  const q = new URLSearchParams(location.search).get('q');
+  let saved: string | null = null;
+  try { saved = localStorage.getItem(QUALITY_KEY); } catch { /* storage blocked */ }
+  const q = new URLSearchParams(location.search).get('q') ?? saved;
   const mobile = isTouchDevice() && Math.min(screen.width, screen.height) < 900;
   const name = q === 'low' ? 'niedrig' : q === 'high' ? 'hoch' : q === 'mid' ? 'mittel' : mobile ? 'niedrig' : 'hoch';
   const dpr = devicePixelRatio || 1;

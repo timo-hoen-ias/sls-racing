@@ -50,6 +50,12 @@ import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
 import { FacadeControl } from './render/facades.ts';
 import { WeatherSystem } from './weather/weatherSystem.ts';
+import { Mixer } from './audio/mixer.ts';
+import { helpLine } from './input/bindings.ts';
+import { registerSettingsCommands } from './settings/commands.ts';
+import { registerGameSettings } from './settings/gameSettings.ts';
+import { OptionsMenu } from './settings/menu.ts';
+import { SettingsStore } from './settings/store.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
 
@@ -257,6 +263,16 @@ async function boot() {
   registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
   registerStreamCommands(streamer, quality, () => (hold ?? ip));
   const viewDist = createViewDistance(view, quality, far);
+  // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
+  const mixer = new Mixer();
+  registerGameSettings({ view, quality, cam, car, setManual, weather, input, tacho, water });
+  const settings = new SettingsStore();
+  const updateHelp = () => { $('help').textContent = helpLine(input.bindings); };
+  updateHelp();
+  const menu = new OptionsMenu(settings, input, { onBindings: updateHelp });
+  menu.onToggle = () => input.releaseAll();
+  registerSettingsCommands(settings, menu, input, updateHelp);
+  settings.start();
   if (new URLSearchParams(location.search).has('perf')) perf.setVisible(true);
   // ?cmd=day;nitro.infinite runs commands at startup.
   const bootCmd = new URLSearchParams(location.search).get('cmd');
@@ -269,6 +285,9 @@ async function boot() {
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
+      // The open menu reads the gamepad itself and eats the keyboard.
+      if (menu.open) continue;
+      if (e === 'menu' && !debug.open) menu.toggle(true);
       if (e === 'reset') resetCar();
       if (e === 'camera') cam.next();
       if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
@@ -281,6 +300,8 @@ async function boot() {
       }
       if (e === 'time') view.daylight.nextPreset();
     }
+    menu.poll(dt);
+    const paused = menu.open;
 
     // Hold the car until the ground under it exists.
     perf.begin('stream');
@@ -308,13 +329,14 @@ async function boot() {
     perf.end('stream');
 
     vehicleDebug.update();
-    weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
+    weather.update(paused ? 0 : dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
     roadSurface.update(car, weather.wheelAqua);
-    const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open && !replay.active ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
+    const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open && !replay.active && !paused ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
     if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
     else frozenAt = null;
     // The physics holds still during a replay; the car carries on where it was afterwards.
-    acc = replay.active ? 0 : acc + dt * debugState.timeScale;
+    // The options menu pauses the game.
+    if (!paused) acc = replay.active ? 0 : acc + dt * debugState.timeScale;
     perf.begin('physik');
     while (acc >= STEP) {
       prev.p.copy(curr.p);
@@ -385,7 +407,7 @@ async function boot() {
     effects.road.snow = weather.weather.snowCover;
     effects.road.puddle = weather.puddle;
     const lvel = car.body.linvel();
-    const simDt = debugState.frozen ? 0 : dt * debugState.timeScale;
+    const simDt = debugState.frozen || paused ? 0 : dt * debugState.timeScale;
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
@@ -444,6 +466,7 @@ async function boot() {
     perf.gpuEnd();
     perf.end('render');
 
+    mixer.update({ engine: sound, traffic: traffic.sound, ambience: worldAudio.ambience, weather: weather.sound });
     const dtr = car.drivetrain;
     if (rs) {
       sound?.update({

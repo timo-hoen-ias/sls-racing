@@ -58,6 +58,8 @@ export interface TileData {
   sidewalks?: PackedMesh;
   /** Float32 x, y, z, heading per street lamp. */
   lamps?: string;
+  /** Street furniture and parked cars, Float32 records of PROP_STRIDE values (see propKinds.ts). */
+  props?: string;
 }
 
 /** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */

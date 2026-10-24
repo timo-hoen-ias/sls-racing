@@ -233,7 +233,20 @@ export function wanted(tags: Tags): boolean {
     /^(water|wood|scrub|grassland)$/.test(tags.natural ?? '') ||
     tags.waterway === 'riverbank' ||
     /^(park|pitch|garden|playground)$/.test(tags.leisure ?? '') ||
-    tags.amenity === 'parking'
+    tags.amenity === 'parking' ||
+    /^(fence|wall|hedge|guard_rail)$/.test(tags.barrier ?? '')
+  );
+}
+
+/** Point features: trees and street furniture; mirrors the node lines of the Overpass query in fetch.ts. */
+export function wantedNode(tags: Tags | undefined): boolean {
+  if (!tags) return false;
+  return !!(
+    tags.natural === 'tree' ||
+    /^(traffic_signals|stop|give_way|bus_stop|street_lamp)$/.test(tags.highway ?? '') ||
+    /^(bollard|block)$/.test(tags.barrier ?? '') ||
+    /^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling)$/.test(tags.amenity ?? '') ||
+    tags.emergency === 'fire_hydrant' || tags.advertising === 'column' || tags.traffic_sign
   );
 }
 
@@ -291,13 +304,13 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
     const { south, west, north, east } = { south: bbox.south - dLat, west: bbox.west - dLon, north: bbox.north + dLat, east: bbox.east + dLon };
     log(`  area ${south.toFixed(4)},${west.toFixed(4)} – ${north.toFixed(4)},${east.toFixed(4)}`);
 
-    // 3. Nodes inside the box (trees are kept as features of their own).
+    // 3. Nodes inside the box (trees and street furniture are kept as features of their own).
     const inside = new Map<number, [number, number]>();
     pbf.scan(KIND_NODES, {
       node(id, lat, lon, tags) {
         if (lat < south || lat > north || lon < west || lon > east) return;
         inside.set(id, [lat, lon]);
-        if (tags?.natural === 'tree') els.push({ type: 'node', id, lat, lon, tags });
+        if (wantedNode(tags)) els.push({ type: 'node', id, lat, lon, tags });
       },
     });
 

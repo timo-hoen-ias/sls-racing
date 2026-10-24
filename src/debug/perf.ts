@@ -205,8 +205,9 @@ export class PerfMonitor {
 
 /** perf.* and stream.* commands. */
 export function registerPerfCommands(perf: PerfMonitor, ctx: {
-  streamer: { statsLine(): string; stats: { fetchMs: Samples; buildMs: Samples; bytes: number; fetched: number; failed: number; built: number; dropped: number } };
+  streamer: { statsLine(): string; stats: { fetchMs: Samples; bytes: number; fetched: number; failed: number; built: number; physics: number; dropped: number } };
   colliders: () => number;
+  showColliders: (v: boolean) => void;
   print: (text: string) => void;
 }) {
   registerToggle('perf.hud', 'Performance-Anzeige: FPS, Frame-Graph, CPU-/GPU-Zeiten, Draw-Calls, Kacheln', () => perf.visible, (v) => perf.setVisible(v), { aliases: ['perf'] });
@@ -228,9 +229,17 @@ export function registerPerfCommands(perf: PerfMonitor, ctx: {
     run: () => {
       const s = ctx.streamer.stats;
       return `${ctx.streamer.statsLine()}\n`
-        + `Aufbau p95 ${quantile(s.buildMs.values(), 0.95).toFixed(1)} ms · Laden max ${s.fetchMs.max().toFixed(0)} ms · ${s.fetched} geladen (${(s.bytes / 1e6).toFixed(1)} MB), ${s.built} gebaut, ${s.dropped} entladen, ${s.failed} Fehler\n`
+        + `Laden p95 ${quantile(s.fetchMs.values(), 0.95).toFixed(0)} / max ${s.fetchMs.max().toFixed(0)} ms · ${s.fetched} geladen (${(s.bytes / 1e6).toFixed(1)} MB), ${s.built} gebaut, ${s.physics}× Kollider, ${s.dropped} entladen, ${s.failed} Fehler\n`
         + `${ctx.colliders()} Kollider in der Physik`;
     },
   });
-  registerCommand({ name: 'phys.colliders', help: 'Anzahl der Kollider in der Physikwelt', run: () => `${ctx.colliders()} Kollider` });
+  registerCommand({
+    name: 'phys.colliders', help: 'Anzahl der Kollider; "show" zeichnet alle Kollider als Drahtgitter, "hide" blendet sie aus', args: '[show|hide]',
+    complete: () => ['show', 'hide'],
+    run([v]) {
+      if (v === 'show' || v === 'hide') ctx.showColliders(v === 'show');
+      else if (v !== undefined) throw new Error(`"${v}" ist weder show noch hide`);
+      return `${ctx.colliders()} Kollider` + (v ? ` · Anzeige ${v === 'show' ? 'an' : 'aus'}` : '');
+    },
+  });
 }

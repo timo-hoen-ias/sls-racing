@@ -27,6 +27,8 @@ import { registerRenderCommands } from './render/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { registerStreamCommands } from './world/streamCommands.ts';
+import { PhysicsDebugView } from './debug/physicsDebug.ts';
 import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
 import { WeatherSystem } from './weather/weatherSystem.ts';
@@ -173,7 +175,10 @@ async function boot() {
   const perf = new PerfMonitor($('perf'), view.renderer);
   perf.addSource('Kacheln', () => streamer.statsLine());
   perf.addSource('Physik', () => `${world.colliders.len()} Kollider · ${quality.physicsHz} Hz`);
-  registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), print: (t) => debug.print(t, 'info') });
+  const physDebug = new PhysicsDebugView(world);
+  view.scene.add(physDebug.lines);
+  registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
+  registerStreamCommands(streamer, quality, () => (hold ?? ip));
   if (new URLSearchParams(location.search).has('perf')) perf.setVisible(true);
   // ?cmd=day;nitro.infinite runs commands at startup.
   const bootCmd = new URLSearchParams(location.search).get('cmd');
@@ -203,7 +208,7 @@ async function boot() {
     perf.begin('stream');
     if (hold) {
       const h = hold;
-      streamer.update(h.x, h.z);
+      streamer.update(h.x, h.z, true);
       // Give fresh colliders a couple of physics steps before casting against them.
       if (streamer.isLoadedAround(h.x, h.z)) h.frames++;
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
@@ -296,6 +301,7 @@ async function boot() {
     bigMap.setCar(ip.x, ip.z, heading);
     if (bigMap.open && (mapTimer -= dt) <= 0) { mapTimer = 0.5; bigMap.draw(); }
     routeLine.update(dt);
+    physDebug.update(dt);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);

@@ -110,7 +110,7 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
       const N = t.graph.nodes;
       const list = [...sig.nodes.values()].map((s) => ({ s, d: Math.hypot(N[s.node * 3] - p.x, N[s.node * 3 + 2] - p.z) })).sort((a, b) => a.d - b.d).slice(0, parseNum(n, 'Anzahl', 1, 50));
       const waiting = (node: number) => sim.agents.filter((a) => a.reason === 'Rot' && (a.dir > 0 ? a.edge.b : a.edge.a) === node).length;
-      return `${sig.nodes.size} Ampelknoten · ${t.lights.count} Ampelköpfe gezeichnet\n` + list.map(({ s, d }) => `Knoten ${s.node} (Gruppe ${s.group}) ${d.toFixed(0)} m · Hauptrichtung ${sig.phase(s, true)}, quer ${sig.phase(s, false)} · ${waiting(s.node)} warten bei Rot`).join('\n');
+      return `${sig.nodes.size} Ampelknoten · ${t.lights.count} Ampelköpfe gezeichnet\n` + list.map(({ s, d }) => `Knoten ${s.node} (Gruppe ${s.group}) ${d.toFixed(0)} m · Hauptrichtung ${sig.forced ?? sig.phase(s, true)}, quer ${sig.forced ?? sig.phase(s, false)} · ${waiting(s.node)} warten bei Rot`).join('\n');
     },
   });
 }

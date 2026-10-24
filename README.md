@@ -80,4 +80,4 @@ Die Welt liegt in einem globalen 256-m-Raster (ETRS89 / UTM 32N). Eine neue Stad
 
 ## Hosting
 
-Geplant: Spiel auf Cloudflare Pages, Kacheln in Cloudflare R2. Die Kachel-URL wird beim Build über `VITE_TILES_URL` gesetzt (Standard: `/tiles`).
+Das Spiel läuft als Cloudflare Worker mit statischen Assets (`wrangler.jsonc`). Der Deploy-Build lädt die echten Saarlouis-Daten und baut die Kacheln, die dann neben dem Spiel unter `/tiles` liegen. Wenn die Welt später über die Asset-Grenzen wächst (20 000 Dateien im Free-Plan), wandern die Kacheln nach Cloudflare R2; die Kachel-URL wird dann beim Build über `VITE_TILES_URL` gesetzt.

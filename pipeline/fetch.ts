@@ -1,7 +1,8 @@
 // Downloads raw map data for a region into data/raw/<region>/.
 //   node pipeline/fetch.ts saarlouis
-import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
-import { loadRegion, paths } from './lib/region.ts';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync, statSync } from 'node:fs';
+import { extractRegion } from './lib/pbf.ts';
+import { loadRegion, paths, type RegionConfig } from './lib/region.ts';
 import { fetchTerrarium, tilesForBbox } from './lib/terrain.ts';
 
 const OVERPASS = process.env.OVERPASS_URL
@@ -51,6 +52,48 @@ async function overpass(query: string) {
   throw new Error(`Overpass failed: ${last}`);
 }
 
+/** Downloads the first reachable PBF extract (cached for a day) and returns its path. */
+async function downloadExtract(urls: string[]): Promise<string> {
+  const dir = paths.raw('extracts');
+  mkdirSync(dir, { recursive: true });
+  let last = '';
+  for (const url of urls) {
+    const file = dir + new URL(url).pathname.split('/').pop();
+    if (existsSync(file) && Date.now() - statSync(file).mtimeMs < 86_400_000) return file;
+    console.log(`Extract: ${url} …`);
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': HEADERS['User-Agent'] } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      writeFileSync(`${file}.part`, Buffer.from(await res.arrayBuffer()));
+      renameSync(`${file}.part`, file);
+      console.log(`  ${(statSync(file).size / 1e6).toFixed(1)} MB → ${file}`);
+      return file;
+    } catch (e) {
+      last = `${new URL(url).host}: ${(e as Error).message}`;
+      console.log(`  ${last}`);
+    }
+  }
+  throw new Error(`No extract reachable: ${last}`);
+}
+
+async function fetchOverpass(region: RegionConfig) {
+  let area = '';
+  let filter: string;
+  let boundaryQuery = '';
+  if (region.boundary.type === 'postal_code') {
+    area = `area["boundary"="postal_code"]["postal_code"="${region.boundary.value}"]->.a;`;
+    filter = '(area.a)';
+    boundaryQuery = `[out:json];relation["boundary"="postal_code"]["postal_code"="${region.boundary.value}"];(._;>;);out body;`;
+  } else if (region.boundary.type === 'bbox') {
+    const b = region.boundary;
+    filter = `(${b.south},${b.west},${b.north},${b.east})`;
+  } else throw new Error('Overpass needs a postal_code or bbox boundary');
+  console.log(`Overpass: ${region.name} …`);
+  const json = await overpass(overpassQuery(area, filter));
+  if (boundaryQuery) json.elements.push(...(await overpass(boundaryQuery)).elements);
+  return json;
+}
+
 async function main() {
   const id = process.argv[2] ?? 'saarlouis';
   const region = loadRegion(id);
@@ -63,20 +106,20 @@ async function main() {
 
   const osmFile = `${dir}osm.json`;
   if (!existsSync(osmFile) || process.argv.includes('--force')) {
-    let area = '';
-    let filter: string;
-    let boundaryQuery = '';
-    if (region.boundary.type === 'postal_code') {
-      area = `area["boundary"="postal_code"]["postal_code"="${region.boundary.value}"]->.a;`;
-      filter = '(area.a)';
-      boundaryQuery = `[out:json];relation["boundary"="postal_code"]["postal_code"="${region.boundary.value}"];(._;>;);out body;`;
-    } else {
+    // Prefer a PBF extract: one static download instead of a heavy query on shared Overpass servers.
+    const useOverpass = process.argv.includes('--overpass') || !region.osm?.extracts.length;
+    let json;
+    if (useOverpass) json = await fetchOverpass(region);
+    else {
+      const pbf = await downloadExtract(region.osm!.extracts);
+      console.log(`Cut ${region.name} from ${pbf} …`);
       const b = region.boundary;
-      filter = `(${b.south},${b.west},${b.north},${b.east})`;
+      json = extractRegion(pbf, {
+        postalCode: b.type === 'postal_code' ? b.value : undefined,
+        bbox: b.type === 'bbox' ? b : undefined,
+        marginMeters: region.marginMeters,
+      });
     }
-    console.log(`Overpass: ${region.name} …`);
-    const json = await overpass(overpassQuery(area, filter));
-    if (boundaryQuery) json.elements.push(...(await overpass(boundaryQuery)).elements);
     writeFileSync(osmFile, JSON.stringify(json));
     console.log(`  ${json.elements.length} OSM elements → ${osmFile}`);
   }

@@ -8,6 +8,8 @@ export interface RegionConfig {
   name: string;
   boundary: { type: 'postal_code'; value: string } | { type: 'bbox'; south: number; west: number; north: number; east: number } | { type: 'fixture' };
   marginMeters: number;
+  /** PBF extracts that contain the region, tried in order. Without them fetch.ts falls back to Overpass. */
+  osm?: { extracts: string[] };
   terrain: { source: 'terrarium'; zoom: number } | { source: 'flat' };
   spawn: { lat: number; lon: number };
 }

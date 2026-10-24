@@ -50,6 +50,33 @@ export interface RoadSection {
   inner: number;
   /** Where the width came from, for the debug console. */
   source: 'width' | 'lanes' | 'default';
+  /** Carriageway centre to the right of the OSM line, metres (from `placement`, see placementShift). */
+  shift: number;
+  /** The rightmost lane is an auxiliary lane of a motorway junction (acceleration or deceleration lane). */
+  aux: boolean;
+  /** Offset of the divider between the through lanes and the auxiliary lane (block marking), if any. */
+  block?: number;
+}
+
+/**
+ * Where the OSM line lies across a one-way carriageway. Without a `placement` tag our roads are centred on
+ * the line. OSM maps the lanes of a motorway junction with `placement=right_of:1` (the line stays on the
+ * through lanes while a lane is added on the right), so placements are measured against the through lanes:
+ * the given lane edge lands where it would lie on the same road without the extra lanes.
+ *   aux: the rightmost lane is an added lane; without a placement the line then stays on the through lanes.
+ */
+function placementShift(placement: string | undefined, lanes: number, lane: number, width: number, inner: number, outer: number, aux: boolean): number {
+  const m = /^(left_of|middle_of|right_of):(\d+)$/.exec(placement ?? '');
+  // Line position in carriageway coordinates (from the centre, right positive), in lanes from the left lane edge.
+  let at: number;
+  if (m) at = +m[2] - (m[1] === 'left_of' ? 1 : m[1] === 'middle_of' ? 0.5 : 0);
+  else if (aux) at = (lanes - 1) / 2;
+  else return 0;
+  if (!(at >= 0 && at <= lanes)) return 0;
+  const line = -width / 2 + inner + at * lane;
+  // Where the same lane edge lies on a centred road of this class: the lane block sits (outer - inner) / 2
+  // left of the centre there.
+  return (inner - outer) / 2 - line;
 }
 
 export const hasSection = (highway: string | undefined) => !!highway && highway in SECTIONS;
@@ -74,8 +101,15 @@ export function roadSection(tags: Record<string, string>): RoadSection | undefin
     if (!oneway && Math.abs(o) < 0.01) continue;
     dividers.push(o);
   }
-  const rightLane = oneway ? left + (lanes - 0.5) * lane : lanes >= 2 ? (Math.floor(lanes / 2) - 0.5) * lane + (lanes % 2 ? lane / 2 : 0) : width / 4;
-  return { width, lanes, lane, oneway, dividers, rightLane, outer: s.outer * k, inner: s.inner * k, source: explicit ? 'width' : tagged > 0 && tagged < 10 ? 'lanes' : 'default' };
+  const aux = oneway && lanes >= 2 && tags['sls:aux'] === 'yes';
+  const shift = oneway ? placementShift(tags.placement, lanes, lane, width, s.inner * k, s.outer * k, aux) : 0;
+  // Traffic keeps to the rightmost through lane; the auxiliary lane is only for leaving or joining.
+  const through = aux ? lanes - 1 : lanes;
+  const rightLane = (oneway ? left + (through - 0.5) * lane : lanes >= 2 ? (Math.floor(lanes / 2) - 0.5) * lane + (lanes % 2 ? lane / 2 : 0) : width / 4) + shift;
+  return {
+    width, lanes, lane, oneway, dividers: dividers.map((d) => d + shift), rightLane, outer: s.outer * k, inner: s.inner * k,
+    source: explicit ? 'width' : tagged > 0 && tagged < 10 ? 'lanes' : 'default', shift, aux, ...(aux ? { block: left + (lanes - 1) * lane + shift } : {}),
+  };
 }
 
 /** Kerb and pavement dimensions (RASt 06: Hochbord 10–12 cm, abgesenkt 3 cm at crossings and driveways). */

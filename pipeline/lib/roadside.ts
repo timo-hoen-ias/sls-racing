@@ -13,7 +13,7 @@ import { roadSection } from '../../src/world/roadSpec.ts';
 import { GuardRails, type ProfileSample, railAlongRoad } from './guardRails.ts';
 import { isExpressway } from './kerbs.ts';
 import type { Way } from './osm.ts';
-import { ROAD_CLASSES, ROAD_LIFT, isBridge, isDrivable, roadProfile } from './roads.ts';
+import { ROAD_CLASSES, ROAD_LIFT, carriagewayEdges, isBridge, isDrivable, roadProfile } from './roads.ts';
 
 export const ROADSIDE = {
   /** Delineator spacing on straights (m). */
@@ -79,10 +79,10 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     }
   }
   /**
-   * Another road's carriageway near (e, n) at about this height. Samples on this road's own centreline (the road
-   * continuing beyond the bridge end) do not count.
+   * Another road's carriageway near (e, n) at about this height, within reach of its edge. Samples on this road's
+   * own centreline (the road continuing beyond the bridge end) do not count.
    */
-  const roadAtLevel = (self: Way, e: number, n: number, y: number) => {
+  const roadAtLevel = (self: Way, e: number, n: number, y: number, reach = 2.5) => {
     const near = (ce: number, cn: number) => {
       const out = [];
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) out.push(...(sgrid.get(`${ce + a}_${cn + b}`) ?? []));
@@ -106,7 +106,7 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
       return false;
     };
     for (const q of list)
-      if (q.w !== self && Math.abs(q.y - y) < 2.5 && Math.hypot(q.e - e, q.n - n) < q.hw + 2.5 && !straightOn(q)) return true;
+      if (q.w !== self && Math.abs(q.y - y) < 2.5 && Math.hypot(q.e - e, q.n - n) < q.hw + reach && !straightOn(q)) return true;
     return false;
   };
   const degree = junctionNodes(roads);
@@ -163,7 +163,11 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     const atEnd = bridgeEnds.has(way.ids[way.ids.length - 1]) && !bridge;
 
     // --- Guard rails ---
-    const railOffset = half + (bridge ? 0.3 : GUARD_RAIL.clearance);
+    // Measured from the paved edge on each side, which lies off the OSM line on motorway junction lanes (ramps.ts).
+    const railOffset = (p: { dist: number }, side: 1 | -1) => {
+      const edges = carriagewayEdges(way, section, p.dist);
+      return (side > 0 ? edges.right : edges.left) + (bridge ? 0.3 : GUARD_RAIL.clearance);
+    };
     const railSides = new Map<number, boolean[]>();
     let embankment = false;
     for (const side of [1, -1] as const) {
@@ -190,20 +194,23 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
       // Never across a junction mouth or another road's lanes (bridges only stop at junctions: the road below
       // is in the lane mask too).
       const ok = ring.map((p) => {
-        const e = p.e + p.dy * railOffset * side, n = p.n - p.dx * railOffset * side;
-        const pe = p.e + p.dy * (railOffset + PROBE) * side, pn = p.n - p.dx * (railOffset + PROBE) * side;
-        return !nearJunction(e, n, 8) && (bridge ? !roadAtLevel(way, e, n, p.y) : !o.onLanes(pe, pn));
+        const ro = railOffset(p, side);
+        const e = p.e + p.dy * ro * side, n = p.n - p.dx * ro * side;
+        const pe = p.e + p.dy * (ro + PROBE) * side, pn = p.n - p.dx * (ro + PROBE) * side;
+        // The lane mask misses a ramp running close beside a motorway (gore, shifted ramps): check the samples too.
+        return !nearJunction(e, n, 8) && (bridge ? !roadAtLevel(way, e, n, p.y) : !o.onLanes(pe, pn) && !roadAtLevel(way, e, n, p.y, 0.3));
       });
       // On bridges keep one more sample (4 m) clear of a road joining at deck level: cars cut that corner.
       const final = want.map((w, i) => w && ok[i] && (!bridge || ((ok[i - 1] ?? true) && (ok[i + 1] ?? true))));
       railSides.set(side, final);
       const byIndex = new Map(ring.map((p, i) => [p, i]));
-      for (const run of railAlongRoad(ring, side, () => railOffset, (p) => final[byIndex.get(p)!])) {
+      for (const run of railAlongRoad(ring, side, (p) => railOffset(p, side), (p) => final[byIndex.get(p)!])) {
         // Runs that meet a bridge rail (or are one) join without a terminal there.
         const first = side > 0 ? run[0] : run[run.length - 1];
         const last = side > 0 ? run[run.length - 1] : run[0];
-        const s0 = ring.find((p) => Math.abs(p.e + p.dy * railOffset * side - first.e) < 0.01 && Math.abs(p.n - p.dx * railOffset * side - first.n) < 0.01);
-        const s1 = ring.find((p) => Math.abs(p.e + p.dy * railOffset * side - last.e) < 0.01 && Math.abs(p.n - p.dx * railOffset * side - last.n) < 0.01);
+        const at = (p: (typeof ring)[number]) => [p.e + p.dy * railOffset(p, side) * side, p.n - p.dx * railOffset(p, side) * side];
+        const s0 = ring.find((p) => Math.abs(at(p)[0] - first.e) < 0.01 && Math.abs(at(p)[1] - first.n) < 0.01);
+        const s1 = ring.find((p) => Math.abs(at(p)[0] - last.e) < 0.01 && Math.abs(at(p)[1] - last.n) < 0.01);
         const joinsStart = (bridge || atStart) && s0 === ring[0];
         const joinsEnd = (bridge || atEnd) && s1 === ring[ring.length - 1];
         // Point order: road on the left, so for side -1 the run is reversed.
@@ -220,7 +227,6 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     if (urban || bridge) continue;
     if (section.width < 4.5) continue;
     const radius = ring.map((_, i) => bendRadius(ring, i));
-    const postOffset = half + ROADSIDE.postOffset;
     let next = 0;
     for (let i = 0; i < ring.length; i++) {
       const p = ring[i];
@@ -232,8 +238,11 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
         if (railSides.get(side)![i]) continue;
         // One-way carriageways (motorways): the left side is the median, which has its rail.
         if (section.oneway && motorway && side < 0) continue;
+        const edges = carriagewayEdges(way, section, p.dist);
+        const postOffset = (side > 0 ? edges.right : edges.left) + ROADSIDE.postOffset;
         const e = p.e + p.dy * postOffset * side, n = p.n - p.dx * postOffset * side;
         if (nearJunction(e, n, 6) || o.onLanes(p.e + p.dy * (postOffset + PROBE) * side, p.n - p.dx * (postOffset + PROBE) * side)) continue;
+        if (roadAtLevel(way, e, n, p.y, 0.3)) continue;
         // Faces the traffic on its own side: right posts look back along the road, left ones forward.
         add(Prop.delineator, e, n, p.y - 0.05, side > 0 ? headingOf(-p.dx, -p.dy) : headingOf(p.dx, p.dy));
         counts.posts++;

@@ -2,7 +2,7 @@
 // driving surface: OSM lines that run a metre off the road onto an embankment slope, kerbs, ditches, the
 // slope at a bridge end. Real roads are smooth, so each road gets a profile sampled from the terrain,
 // filtered, and pinned to one height per node so that roads meeting at a node (and bridges) meet exactly.
-import type { Way } from './osm.ts';
+import { SYNTHETIC_NODE, type Way } from './osm.ts';
 import { ROAD_CLASSES, densify, isBridge, isDrivable, roadWidth } from './roads.ts';
 
 /** Spacing of profile samples (m). */
@@ -74,7 +74,8 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     const { ys, nodeAt } = raw.get(w)!;
     const d = dists.get(w)!;
     w.ids.forEach((id, i) => {
-      if (anchors.has(id)) return;
+      // Points the pipeline added only shape the line; the profile runs smoothly through them.
+      if (anchors.has(id) || id < SYNTHETIC_NODE) return;
       if (!near.has(id)) near.set(id, []);
       const list = near.get(id)!;
       for (let k = 0; k < ys.length; k++) if (Math.abs(d[k] - nodeAt[i]) <= NODE_REACH) list.push(ys[k]);
@@ -111,6 +112,7 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     // Ramp the profile onto each node height: full correction at the node, fading out along the road.
     const prof = smooth.slice();
     for (let i = 0; i < w.ids.length; i++) {
+      if (!nodeH.has(w.ids[i])) continue;
       const target = nodeH.get(w.ids[i])!;
       const k0 = d.findIndex((v) => v >= nodeAt[i] - 1e-6);
       const delta = target - smooth[k0];

@@ -66,6 +66,49 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
   const rails = new GuardRails(o.world);
   const counts: RoadsideCounts = { posts: 0, chevrons: 0, railKm: 0, mapped: 0, bridges: 0, embankments: 0, motorway: 0 };
   const roads = ways.filter((w) => isDrivable(w.tags));
+  const profiles = new Map(roads.map((w) => [w, roadProfile(w, o.height, o.world) as ProfileSample[]]));
+  // Road samples with their height: bridge rails must not stand on a road alongside at deck level (the 2D lane
+  // mask cannot tell that road from the one passing underneath).
+  const sgrid = new Map<string, { e: number; n: number; y: number; hw: number; w: Way }[]>();
+  for (const [w, ring] of profiles) {
+    const hw = (roadSection(w.tags)?.width ?? 6) / 2;
+    for (const p of ring) {
+      const k = `${Math.floor(p.e / 16)}_${Math.floor(p.n / 16)}`;
+      if (!sgrid.has(k)) sgrid.set(k, []);
+      sgrid.get(k)!.push({ e: p.e, n: p.n, y: p.y, hw, w });
+    }
+  }
+  /**
+   * Another road's carriageway near (e, n) at about this height. Samples on this road's own centreline (the road
+   * continuing beyond the bridge end) do not count.
+   */
+  const roadAtLevel = (self: Way, e: number, n: number, y: number) => {
+    const near = (ce: number, cn: number) => {
+      const out = [];
+      for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) out.push(...(sgrid.get(`${ce + a}_${cn + b}`) ?? []));
+      return out;
+    };
+    const list = near(Math.floor(e / 16), Math.floor(n / 16));
+    const P = self.pts, m = P.length - 1;
+    const ends = [self.ids[0], self.ids[m]];
+    // Continues end to end from this road and straight on (not a cross street through an end node, nor a road
+    // bending in): the sample lies on the extension of this road's centreline.
+    const selfHw = (roadSection(self.tags)?.width ?? 6) / 2;
+    const straightOn = (q: { e: number; n: number; w: Way; hw: number }) => {
+      // A wider road beyond the bridge end would run into the rail.
+      if (q.hw > selfHw + 0.25) return false;
+      if (!ends.includes(q.w.ids[0]) && !ends.includes(q.w.ids[q.w.ids.length - 1])) return false;
+      for (const [a, b] of [[P[0], P[1]], [P[m], P[m - 1]]]) {
+        const de = a[0] - b[0], dn = a[1] - b[1], l = Math.hypot(de, dn) || 1;
+        const qe = q.e - a[0], qn = q.n - a[1];
+        if (qe * de + qn * dn >= -1 && Math.abs(qe * dn - qn * de) / l < 1) return true;
+      }
+      return false;
+    };
+    for (const q of list)
+      if (q.w !== self && Math.abs(q.y - y) < 2.5 && Math.hypot(q.e - e, q.n - n) < q.hw + 2.5 && !straightOn(q)) return true;
+    return false;
+  };
   const degree = junctionNodes(roads);
   // Junction positions with the widest road there, to keep rails and posts out of the mouths of side roads.
   const widest = new Map<number, number>();
@@ -109,7 +152,7 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     const urban = way.urban ?? cls.street;
     const section = roadSection(way.tags)!;
     const half = section.width / 2;
-    const ring = roadProfile(way, o.height, o.world) as ProfileSample[];
+    const ring = profiles.get(way)!;
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
     const link = /_link$/.test(hw);
@@ -149,9 +192,10 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
       const ok = ring.map((p) => {
         const e = p.e + p.dy * railOffset * side, n = p.n - p.dx * railOffset * side;
         const pe = p.e + p.dy * (railOffset + PROBE) * side, pn = p.n - p.dx * (railOffset + PROBE) * side;
-        return !nearJunction(e, n, 8) && (bridge || !o.onLanes(pe, pn));
+        return !nearJunction(e, n, 8) && (bridge ? !roadAtLevel(way, e, n, p.y) : !o.onLanes(pe, pn));
       });
-      const final = want.map((w, i) => w && ok[i]);
+      // On bridges keep one more sample (4 m) clear of a road joining at deck level: cars cut that corner.
+      const final = want.map((w, i) => w && ok[i] && (!bridge || ((ok[i - 1] ?? true) && (ok[i + 1] ?? true))));
       railSides.set(side, final);
       const byIndex = new Map(ring.map((p, i) => [p, i]));
       for (const run of railAlongRoad(ring, side, () => railOffset, (p) => final[byIndex.get(p)!])) {

@@ -54,7 +54,8 @@ import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
-import { registerWorldCommands } from './world/worldCommands.ts';
+import { registerLandmarkCommands, registerWorldCommands } from './world/worldCommands.ts';
+import { Landmarks } from './world/landmarks.ts';
 import { FarField } from './world/farField.ts';
 import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
@@ -116,6 +117,8 @@ async function boot() {
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
   view.scene.add(props.root);
+  const landmarks = await Landmarks.fetch(RAPIER, world, TILES_URL, import.meta.env.BASE_URL, quality.shadows > 0);
+  view.scene.add(landmarks.root);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -366,6 +369,7 @@ async function boot() {
     print: (t) => debug.print(t, 'info'),
     tiles: (fn) => streamer.forEachContent(fn),
   });
+  registerLandmarkCommands(landmarks, () => (hold ?? ip));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();
   registerGameSettings({ view, quality, cam, car, setManual, weather, input, tacho, water });
@@ -570,6 +574,7 @@ async function boot() {
     routeLine.update(dt);
     physDebug.update(dt);
     far.update(ip.x, ip.z, dt);
+    landmarks.update(ip.x, ip.z);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);

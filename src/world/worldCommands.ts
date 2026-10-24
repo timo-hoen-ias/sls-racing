@@ -1,7 +1,9 @@
 // world.* and terrain.* debug commands: road gaps found by the pipeline's gap check, terrain under the car.
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { addTeleportPlace } from '../debug/gameCommands.ts';
 import { registerCommand, registerToggle } from '../debug/registry.ts';
+import type { Landmarks } from './landmarks.ts';
 import type { Materials } from '../render/materials.ts';
 import { TERRAIN_STEP, type TileContent, type WorldIndex } from './format.ts';
 
@@ -168,5 +170,24 @@ export function registerWorldCommands(g: WorldCommandContext) {
     name: 'terrain.info',
     help: 'Herkunft und Auflösung des Geländes',
     run: () => [`Gelände-Netz: ${TERRAIN_STEP} m`, ...g.index.attribution].join('\n'),
+  });
+}
+
+/** landmark.* commands, and a "tp <landmark>" target in front of each (south of it, facing north). */
+export function registerLandmarkCommands(l: Landmarks, pos: () => { x: number; z: number }) {
+  for (const { info } of l.list) addTeleportPlace(info.id, info.x, info.z + info.radius + 12, 0);
+  registerCommand({
+    name: 'landmark.list',
+    help: 'Wahrzeichen und Brückenmodelle mit Entfernung; mit "alle" auch die Brücken, sonst nur Gebäude',
+    args: '[alle]',
+    run([all]) {
+      const p = pos();
+      const rows = l.list
+        .filter((m) => all === 'alle' || !m.info.bridge)
+        .map((m) => [m, Math.hypot(m.info.x - p.x, m.info.z - p.z)] as const)
+        .sort((a, b) => a[1] - b[1])
+        .map(([m, d]) => `${m.info.id}${m.info.name ? ` (${m.info.name})` : ''}: ${d.toFixed(0)} m${m.root ? ', geladen' : ''}${m.body ? ', Kollision' : ''}${m.failed ? ', FEHLER' : ''}`);
+      return [`${l.list.length} Modelle, ${l.loadedCount} geladen · tp <id> fährt hin`, ...rows].join('\n');
+    },
   });
 }

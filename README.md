@@ -36,11 +36,14 @@ Ohne lokalen Netzzugang baut der GitHub-Workflow **World build** die Kacheln und
 | Zurücksetzen | R | Y | |
 | Kamera | C | View | |
 | Karte / Ziel setzen | Tab oder K | Menu | Minimap antippen |
+| Tageszeit weiterschalten | T | Steuerkreuz hoch | |
 | Ton an/aus | M | | |
 
 In der großen Karte setzt ein Klick oder Tipp auf eine Straße das Ziel. Das Navi berechnet die Route, zeigt sie auf Minimap und Straße an und plant neu, wenn du abweichst.
 
-Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`. Mittel und hoch nutzen Post-Processing (MSAA, Bloom, auf hoch zusätzlich Ambient Occlusion).
+Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`. Mittel und hoch nutzen die HDR-Effektkette: MSAA, volumetrische Wolken mit Wolkenschatten und God Rays, Höhennebel, Motion- und Radial-Blur (Nitro verstärkt ihn), Lens Flare und Bloom; hoch zusätzlich Ambient Occlusion (GTAO) und SMAA.
+
+Tageszeit: Die Uhr läuft standardmäßig (1 Spielstunde pro echter Minute), Sonne, Himmel, Nebel, Sterne, Scheinwerfer und Straßenlaternen folgen ihr. URL: `?time=21.5` setzt die Startzeit, `?cycle=0` hält die Uhr an, `?nofx=ao,clouds,fog,blur,flare,bloom,smaa` schaltet einzelne Effekte ab. Debug-Konsole: `time 21:30`, `tag`, `nacht`, `abend`, `morgen`, `time.cycle on|off|<h/min>`, `sky.overcast 0..1`, `fx.list`, `fx.fog|blur|radial|nitroblur|godrays|flare|bloom <faktor>`, `fx.clouds 0..1|off`, `fx.ao|smaa|motionblur|atmosphere on|off`.
 
 ## Aufbau
 

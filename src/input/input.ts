@@ -10,7 +10,7 @@ export interface DriveInput {
   lookBack: boolean;
 }
 
-export type InputEvent = 'reset' | 'camera' | 'mute' | 'map' | 'shiftUp' | 'shiftDown' | 'gearbox';
+export type InputEvent = 'reset' | 'camera' | 'mute' | 'map' | 'shiftUp' | 'shiftDown' | 'gearbox' | 'time';
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const deadzone = (v: number, d = 0.12) => (Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d));
@@ -39,6 +39,7 @@ export class Input {
       if (e.code === 'KeyE') this.pending.push('shiftUp');
       if (e.code === 'KeyQ') this.pending.push('shiftDown');
       if (e.code === 'KeyG') this.pending.push('gearbox');
+      if (e.code === 'KeyT') this.pending.push('time');
       if (e.code === 'Tab' || e.code === 'KeyK' || (e.code === 'Escape' && this.mapOpen)) this.pending.push('map');
       if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab') e.preventDefault();
     });
@@ -108,9 +109,9 @@ export class Input {
       nitro ||= pressed(0) || pressed(5); // A / RB
       handbrake ||= pressed(1) || pressed(2); // B / X
       lookBack ||= pressed(4); // LB
-      // Edge-triggered buttons: Y = reset, Back/View = camera, Start/Menu = map.
+      // Edge-triggered buttons: Y = reset, Back/View = camera, Start/Menu = map, D-pad up = time of day.
       // R3 (right stick click) toggles the gearbox mode.
-      ([[3, 'reset'], [8, 'camera'], [9, 'map'], [11, 'gearbox']] as const).forEach(([i, ev]) => {
+      ([[3, 'reset'], [8, 'camera'], [9, 'map'], [11, 'gearbox'], [12, 'time']] as const).forEach(([i, ev]) => {
         const p = pressed(i);
         if (p && !this.padButtons[i]) this.pending.push(ev);
         this.padButtons[i] = p;

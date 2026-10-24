@@ -7,3 +7,6 @@
 ## Assets
 Noch keine externen Assets. Der Sportwagen (generisches Coupé, keine reale Marke), Texturen und Motorsound sind prozedural erzeugt.
 CC-lizenzierte Modelle und Sounds werden hier mit Autor, Quelle und Lizenz eingetragen.
+
+## Code
+Wolken/God Rays, Motion Blur und Lens Flare (src/render/post/) sind aus dem eigenen Projekt going-vertical übernommen und angepasst.

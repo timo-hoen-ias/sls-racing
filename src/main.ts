@@ -32,6 +32,8 @@ import { ReplayPlayer } from './replay/replayPlayer.ts';
 import { Telemetry } from './ui/telemetry.ts';
 import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
+import { Water } from './render/water.ts';
+import { registerWaterCommands } from './render/waterCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
@@ -77,9 +79,12 @@ async function boot() {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
   const mats = createMaterials();
+  const water = new Water(view.renderer, view.scene, view.camera, view.daylight, quality);
+  mats.water = water.material;
   patchWorldMaterials(mats);
   const facades = new FacadeControl(mats.building);
   const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
+  water.meshes = streamer.waterMeshes;
   view.scene.add(streamer.root);
   const far = new FarField(TILES_URL, index, streamer, FAR_DIST[quality.name]);
   view.scene.add(far.root);
@@ -218,6 +223,7 @@ async function boot() {
   const replayRot = [0, 0, 0, 0];
   const motion = { ax: 0, az: 0 };
   registerRenderCommands(view);
+  registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
@@ -433,6 +439,7 @@ async function boot() {
     perf.begin('render');
     perf.gpuBegin();
     view.renderer.info.reset();
+    water.update(dt);
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
     perf.gpuEnd();
     perf.end('render');

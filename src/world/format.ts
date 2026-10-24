@@ -68,6 +68,8 @@ export interface TileData {
   sidewalks?: PackedMesh;
   /** Float32 x, y, z, heading per street lamp. */
   lamps?: string;
+  /** Float32 waterway polylines, each [count, width, x0, y0, z0, …], points run downstream. */
+  waterways?: string;
 }
 
 /** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */

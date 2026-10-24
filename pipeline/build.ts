@@ -16,7 +16,7 @@ import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps } from './lib/props.ts';
 import { signalJunctions } from './lib/signals.ts';
-import { RoadMask } from './lib/clearance.ts';
+import { RoadLines, RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
@@ -88,9 +88,17 @@ function main() {
     const r = b.ground[0] ?? [];
     return !r.length || !used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`);
   };
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) });
-  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM`);
+  // Buildings a road runs through (canopies, garages, passages the survey models solid) would block it.
+  const lines = new RoadLines(osm.ways);
+  let blocking = 0;
+  const blocks = (rings: [number, number][][]) => {
+    const hit = rings.some((r) => lines.through(r) !== undefined);
+    if (hit) blocking++;
+    return hit;
+  };
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]) });
+  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM, ${blocking} left out on roads`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
   const T = info.tileSize;

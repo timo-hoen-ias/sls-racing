@@ -1,9 +1,10 @@
 // Physics for one tile, shared by the game (streamer.ts) and the drive test (pipeline/drivetest.ts).
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { TERRAIN_N, type TileContent, type WorldInfo, tileOriginLocal } from './format.ts';
+import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
 import { terrainHeights } from './tileBuild.ts';
 
-export type ColliderKind = 'terrain' | 'building' | 'bridge' | 'tree' | 'lamp';
+export type ColliderKind = 'terrain' | 'building' | 'bridge' | 'road' | 'tree' | 'lamp';
 
 /** Largest trimesh piece; bigger building meshes are split so no single collider build takes long. */
 export const MAX_TRIS_PER_COLLIDER = 3000;
@@ -14,7 +15,7 @@ export const MAX_TRIS_PER_COLLIDER = 3000;
  */
 export function addTileColliders(
   R: typeof RAPIER_NS, world: RAPIER_NS.World, t: TileContent, w: WorldInfo,
-  onCollider?: (c: RAPIER_NS.Collider, kind: ColliderKind) => void,
+  onCollider?: (c: RAPIER_NS.Collider, kind: ColliderKind, index: number) => void,
 ): RAPIER_NS.RigidBody {
   const { body, steps } = tileColliderSteps(R, world, t, w, onCollider);
   for (const step of steps) step();
@@ -27,13 +28,13 @@ export function addTileColliders(
  */
 export function tileColliderSteps(
   R: typeof RAPIER_NS, world: RAPIER_NS.World, t: TileContent, w: WorldInfo,
-  onCollider?: (c: RAPIER_NS.Collider, kind: ColliderKind) => void,
+  onCollider?: (c: RAPIER_NS.Collider, kind: ColliderKind, index: number) => void,
 ): { body: RAPIER_NS.RigidBody; steps: (() => void)[] } {
   const body = world.createRigidBody(R.RigidBodyDesc.fixed());
   const steps: (() => void)[] = [];
-  const add = (desc: RAPIER_NS.ColliderDesc, kind: ColliderKind) => {
+  const add = (desc: RAPIER_NS.ColliderDesc, kind: ColliderKind, index = 0) => {
     const c = world.createCollider(desc, body);
-    onCollider?.(c, kind);
+    onCollider?.(c, kind, index);
   };
   const [ox, oz] = tileOriginLocal(w, t.ix, t.iy);
   const size = w.tileSize;
@@ -52,6 +53,14 @@ export function tileColliderSteps(
     const idx = t.u32(`${field}.idx`) ?? Uint32Array.from({ length: pos.length / 3 }, (_, n) => n);
     for (const [v, i] of splitMesh(pos, idx, MAX_TRIS_PER_COLLIDER)) steps.push(() => add(R.ColliderDesc.trimesh(v, i).setFriction(friction), kind));
   }
+  // Roads and pavements lie a little above the terrain (ROAD_LIFT); without their own surface the tyres sink in.
+  // Only the wheels ride on them (ROAD_GROUPS), so kerbs never catch the chassis.
+  for (const field of ['roads', 'sidewalks']) {
+    const pos = t.f32(`${field}.pos`);
+    if (!pos) continue;
+    const idx = t.u32(`${field}.idx`) ?? Uint32Array.from({ length: pos.length / 3 }, (_, n) => n);
+    for (const [v, i] of splitMesh(pos, idx, MAX_TRIS_PER_COLLIDER)) steps.push(() => add(R.ColliderDesc.trimesh(v, i).setFriction(0.9).setCollisionGroups(ROAD_GROUPS), 'road'));
+  }
   steps.push(() => {
     const tr = t.f32('trees');
     if (tr) for (let i = 0; i + 3 < tr.length; i += 4) {
@@ -59,7 +68,7 @@ export function tileColliderSteps(
       add(R.ColliderDesc.cylinder(1.6 * sc, 0.3 * sc).setTranslation(tr[i], tr[i + 1] + 1.4 * sc, tr[i + 2]), 'tree');
     }
     const l = t.f32('lamps');
-    if (l) for (let i = 0; i + 3 < l.length; i += 4) add(R.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i], l[i + 1] + 3.5, l[i + 2]), 'lamp');
+    if (l) for (let i = 0; i + 3 < l.length; i += 4) add(R.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i], l[i + 1] + 3.5, l[i + 2]), 'lamp', i / 4);
   });
   return { body, steps };
 }

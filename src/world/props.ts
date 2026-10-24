@@ -5,7 +5,8 @@ import { CAR_PALETTE } from '../traffic/trafficSim.ts';
 import { VEHICLE_LOD_DISTANCE, type VehicleSet, proceduralVehicleSet } from '../traffic/vehicleGlb.ts';
 import { patchPaintedMetal } from '../render/pbr/surfaces.ts';
 import { patchMaterial } from '../weather/weatherMaterials.ts';
-import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind } from './propKinds.ts';
+import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, signTypeOf } from './propKinds.ts';
+import { PROP_LOD_DISTANCE, type PropSet } from './propGlb.ts';
 import { LINEAR, addPropColliders } from './propColliders.ts';
 import { buildPropGeometries } from './propModels.ts';
 import { type WorldInfo, utmToLocal } from './format.ts';
@@ -37,7 +38,7 @@ const BREAKABLE = new Set<PropKind>([Prop.busStop, Prop.sign, Prop.stopSign, Pro
 
 interface TileProps { key: string; cx: number; cz: number; data: Float32Array }
 
-/** A prop kind, 'busShelter', or a parked car model "<car|van><variant>.<lod>". */
+/** A prop kind, 'busShelter', a parked car model "<car|van><variant>.<lod>", or a Blender model "glb:<name>.<lod>". */
 type ModelKey = PropKind | string;
 
 export class PropLayer {
@@ -57,6 +58,14 @@ export class PropLayer {
   private world?: RAPIER_NS.World;
   /** Instances drawn per model in the last rebuild. */
   readonly drawn = new Map<ModelKey, number>();
+  /** Instances drawn per kind in the last rebuild. */
+  readonly drawnKinds = new Map<PropKind, number>();
+  /** Which models are in use (props.models). */
+  models: 'glb' | 'procedural' = 'procedural';
+  /** The Blender set once loaded. */
+  glb?: PropSet;
+  /** Model name per kind (PROP_NAMES, or a sign face) available from the Blender set. */
+  private glbNames = new Set<string>();
   private m = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private up = new THREE.Vector3(0, 1, 0);
@@ -72,6 +81,7 @@ export class PropLayer {
     // Chipped paint and grime as detail on the vertex colours (render/pbr), then the weather on top.
     patchPaintedMetal(mat, 'props');
     patchMaterial(mat, { wet: 0.5, snow: 0.8 });
+    this.propMat = mat;
     const paint = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.35, metalness: 0.45, envMapIntensity: 1.2 });
     patchMaterial(paint, { wet: 0.3, snow: 0.9, upFrom: 0.7 });
     const detail = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 });
@@ -82,6 +92,7 @@ export class PropLayer {
   }
   private info: WorldInfo;
   private shadows: boolean;
+  private propMat: THREE.Material;
   private carMats: { paint: THREE.Material; detail: THREE.Material };
   private carVariants = { car: 1, van: 1 };
   private shownAt = new THREE.Vector3(Infinity, 0, 0);
@@ -104,13 +115,55 @@ export class PropLayer {
     for (const im of this.meshes.get(kind) ?? []) im.geometry = geo;
   }
 
-  /** Parked cars use the traffic models (variants, and the simpler LOD beyond VEHICLE_LOD_DISTANCE). */
-  setVehicles(set: VehicleSet) {
+  /** Street furniture and signs from props.glb (two LODs, switched at PROP_LOD_DISTANCE). */
+  setPropSet(set: PropSet) {
+    this.glb = set;
+    this.dropModels(/^glb:/);
+    const mat = this.propMat;
+    const add = (name: string, parts: (lod: 0 | 1) => [THREE.BufferGeometry, THREE.Material][]) => {
+      for (const lod of [0, 1] as const) this.addModel(`glb:${name}.${lod}`, parts(lod));
+      this.glbNames.add(name);
+    };
+    const lodOf = (name: string, lod: 0 | 1) => (lod ? set.props[name].lod1 : set.props[name].lod0);
+    this.glbNames.clear();
+    for (const kind of Object.values(Prop)) {
+      const name = PROP_NAMES[kind];
+      // Parked cars use the traffic models, hedges the vegetation, signs a mast and a face.
+      if (kind === Prop.parkedCar || kind === Prop.hedge || signTypeOf(kind, 1) || !set.props[name]) continue;
+      add(name, (lod) => [[lodOf(name, lod), mat]]);
+    }
+    if (set.props.bushaltestelle && set.props['bushaltestelle-dach']) add('busShelter', (lod) => [[lodOf('bushaltestelle', lod), mat], [lodOf('bushaltestelle-dach', lod), mat]]);
+    const face = set.signMaterial ?? mat;
+    if (set.props.schild_mast) for (const [type, g] of Object.entries(set.signs)) add(`schild-${type}`, (lod) => [[lodOf('schild_mast', lod), mat], [g, face]]);
+    this.models = 'glb';
+    this.dirty = true;
+  }
+
+  /** Back to the procedural props of propModels.ts. */
+  setProcedural() {
+    this.models = 'procedural';
+    this.dirty = true;
+  }
+
+  private dropModels(re: RegExp) {
     for (const [key, list] of this.meshes) {
-      if (typeof key !== 'string' || !/^(car|van)/.test(key)) continue;
+      if (typeof key !== 'string' || !re.test(key)) continue;
       for (const im of list) { this.root.remove(im); im.dispose(); }
       this.meshes.delete(key);
     }
+  }
+
+  /** Blender model name for a record, if there is one. */
+  private glbName(kind: PropKind, size: number) {
+    if (this.models !== 'glb') return undefined;
+    const sign = signTypeOf(kind, size);
+    const name = sign ? `schild-${sign}` : kind === Prop.busStop && size ? 'busShelter' : PROP_NAMES[kind];
+    return this.glbNames.has(name) ? name : undefined;
+  }
+
+  /** Parked cars use the traffic models (variants, and the simpler LOD beyond VEHICLE_LOD_DISTANCE). */
+  setVehicles(set: VehicleSet) {
+    this.dropModels(/^(car|van)/);
     const { paint, detail } = this.carMats;
     for (const kind of ['car', 'van'] as const) {
       const variants = set[kind];
@@ -162,18 +215,21 @@ export class PropLayer {
   private rebuild(tiles: TileProps[], cam: THREE.Vector3) {
     const lists = new Map<ModelKey, { t: TileProps; i: number }[]>();
     this.drawn.clear();
+    this.drawnKinds.clear();
     for (const t of tiles)
       for (let i = 0; i * PROP_STRIDE < t.data.length; i++) {
         const kind = t.data[i * PROP_STRIDE] as PropKind;
         if (this.hiddenKinds.has(kind) || this.removedProps.has(`${t.key}:${i}`)) continue;
         const size = t.data[i * PROP_STRIDE + 5];
         let model: ModelKey = kind === Prop.busStop && size ? 'busShelter' : kind;
+        const o = i * PROP_STRIDE;
+        const dist = Math.hypot(t.data[o + 1] - cam.x, t.data[o + 3] - cam.z);
+        const glb = this.glbName(kind, size);
         if (kind === Prop.parkedCar) {
           const v = size % 2 ? 'van' : 'car';
-          const o = i * PROP_STRIDE;
-          const lod = Math.hypot(t.data[o + 1] - cam.x, t.data[o + 3] - cam.z) > VEHICLE_LOD_DISTANCE ? 1 : 0;
-          model = `${v}${(Math.floor(size / 2) + i) % this.carVariants[v]}.${lod}`;
-        }
+          model = `${v}${(Math.floor(size / 2) + i) % this.carVariants[v]}.${dist > VEHICLE_LOD_DISTANCE ? 1 : 0}`;
+        } else if (glb) model = `glb:${glb}.${dist > PROP_LOD_DISTANCE ? 1 : 0}`;
+        this.drawnKinds.set(kind, (this.drawnKinds.get(kind) ?? 0) + 1);
         if (!lists.has(model)) lists.set(model, []);
         lists.get(model)!.push({ t, i });
       }
@@ -203,7 +259,7 @@ export class PropLayer {
         this.s.set(1, 1, LINEAR.has(kind) ? Math.max(0.2, t.data[o + 5]) : 1);
         this.m.compose(this.p.set(t.data[o + 1], t.data[o + 2], t.data[o + 3]), this.q, this.s);
         for (const im of meshes) im.setMatrixAt(n, this.m);
-        if (typeof model === 'string' && model !== 'busShelter') meshes[0].setColorAt(n, this.c.setHex(CAR_PALETTE[Math.floor(t.data[o + 5] / 2) % CAR_PALETTE.length]));
+        if (typeof model === 'string' && /^(car|van)/.test(model)) meshes[0].setColorAt(n, this.c.setHex(CAR_PALETTE[Math.floor(t.data[o + 5] / 2) % CAR_PALETTE.length]));
       }
       for (const im of meshes) {
         im.instanceMatrix.needsUpdate = true;
@@ -300,7 +356,7 @@ export class PropLayer {
       name: 'props.count', help: 'Requisiten nach Typ: geladen und gerade gezeichnet',
       run: () => {
         const loaded = this.counts();
-        const drawn = (k: PropKind) => k === Prop.parkedCar ? [...this.drawn].reduce((a, [m, n]) => a + (typeof m === 'string' && m !== 'busShelter' ? n : 0), 0) : k === Prop.busStop ? (this.drawn.get(k) ?? 0) + (this.drawn.get('busShelter') ?? 0) : this.drawn.get(k) ?? 0;
+        const drawn = (k: PropKind) => this.drawnKinds.get(k) ?? 0;
         const rows = [...loaded.entries()].sort((a, b) => a[0] - b[0]).map(([k, n]) => `${PROP_NAMES[k]} ${drawn(k)}/${n}`);
         return `${rows.join(', ') || 'keine Requisiten geladen'} · ${this.colliderCount} Kollider · ${this.removedCount} entfernt`;
       },
@@ -311,6 +367,18 @@ export class PropLayer {
         const p = player();
         const list = this.near(p.x, p.z, parseNum(r, 'Radius', 1, 500)).slice(0, 12);
         return list.length ? list.map((e) => `${e.name} ${e.d.toFixed(1)} m${LINEAR.has(e.kind) ? ` (${e.size.toFixed(1)} m lang)` : ''}`).join('\n') : 'keine Requisiten in der Nähe';
+      },
+    });
+    registerCommand({
+      name: 'props.models', help: 'Straßenmöbel und Schilder: glb (Blender) oder procedural', args: '[glb|procedural]',
+      complete: () => ['glb', 'procedural'],
+      run: ([m]) => {
+        if (m === 'procedural') this.setProcedural();
+        else if (m === 'glb') {
+          if (!this.glb) throw new Error('props.glb ist nicht geladen');
+          this.setPropSet(this.glb);
+        } else if (m !== undefined) throw new Error('glb oder procedural');
+        return `Modelle: ${this.models} · ${this.glbNames.size} Blender-Modelle`;
       },
     });
     registerCommand({ name: 'props.reset', help: 'Umgefahrene Requisiten wieder aufstellen', run: () => { const n = this.removedCount; this.reset(); return `${n} Requisiten wieder aufgestellt`; } });

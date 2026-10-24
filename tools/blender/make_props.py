@@ -154,9 +154,6 @@ def briefkasten(lod):
 def fahrradstaender(lod):
     b = B()
     if lod == 0:
-        rings = b.lathe_x  # unused, keep the API surface obvious
-        for z in (-0.04, 0.04):
-            pass
         # Anlehnbügel: inverted U of galvanised tube along z.
         pts = []
         for i in range(9):

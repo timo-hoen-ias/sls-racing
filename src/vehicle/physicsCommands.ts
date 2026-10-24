@@ -1,5 +1,6 @@
 import { parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import type { CarPhysics } from './carPhysics.ts';
+import { type RoadSurface, SURFACES, type SurfaceKind } from './roadSurface.ts';
 import { ASSIST_PRESETS, type Assists, CAR } from './tuning.ts';
 import { lateralCurve } from './tyres.ts';
 
@@ -109,4 +110,38 @@ export function registerPhysicsCommands(car: CarPhysics) {
       return `${k} = ${s[k]}`;
     },
   });
+}
+
+/** F1: what the tyres are rolling on. */
+export function registerSurfaceCommands(rs: RoadSurface, car: CarPhysics, pad: { rumbleScale: number }) {
+  let overlay: HTMLDivElement | null = null;
+  let timer = 0;
+  const text = () => `${rs.describe()}${rs.force ? ' (erzwungen)' : ''}\nGrip ${car.wheelGrip.map((g) => g.toFixed(2)).join(' ')} · Rütteln ${rs.rumble.toFixed(2)}`;
+  registerToggle('surface.show', 'Untergrund je Rad einblenden', () => !!overlay, (on) => {
+    if (on && !overlay) {
+      overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;left:12px;bottom:12px;z-index:50;font:12px/1.4 ui-monospace,monospace;color:#fff;background:#000a;padding:6px 8px;border-radius:4px;white-space:pre;pointer-events:none';
+      document.body.append(overlay);
+      timer = window.setInterval(() => { if (overlay) overlay.textContent = text(); }, 150);
+    } else if (!on && overlay) {
+      overlay.remove();
+      overlay = null;
+      clearInterval(timer);
+    }
+  });
+  registerCommand({ name: 'surface.info', help: 'Untergrund je Rad, Grip und Rütteln', run: text });
+  registerCommand({
+    name: 'surface.force',
+    help: 'Untergrund für alle Räder erzwingen (off = wieder erkennen)',
+    args: `<${Object.keys(SURFACES).join('|')}|off>`,
+    complete: () => [...Object.keys(SURFACES), 'off'],
+    run([k]) {
+      if (k === 'off') { rs.force = null; return 'Untergrund wird wieder erkannt'; }
+      if (!k || !(k in SURFACES)) throw new Error(`einer von: ${Object.keys(SURFACES).join(', ')}, off`);
+      rs.force = k as SurfaceKind;
+      const s = SURFACES[rs.force];
+      return `${s.label}: Grip ${s.grip}, Rollwiderstand ${s.rolling}, Rütteln ${s.rumble}`;
+    },
+  });
+  registerValue('pad.rumble', 'Gamepad-Vibration 0..1', () => pad.rumbleScale, (v) => { pad.rumbleScale = v; }, [0, 1]);
 }

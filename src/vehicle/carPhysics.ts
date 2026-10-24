@@ -69,6 +69,10 @@ export class CarPhysics {
   surface = { grip: 1, side: 1, traction: 1, brake: 1, steer: 1, accel: 1 };
   /** Extra grip factor per wheel (puddles, grass, cobbles …), 1 = the road under the whole car. */
   wheelGrip = [1, 1, 1, 1];
+  /** Extra rolling resistance per wheel as a share of its load (grass, gravel …). */
+  wheelRolling = [0, 0, 0, 0];
+  /** Surface roughness per wheel 0..1: shakes the car at speed (cobbles, fields). */
+  wheelRumble = [0, 0, 0, 0];
   /** Driving aids; see ASSIST_PRESETS. */
   assists: Assists = { ...ASSIST_PRESETS.arcade };
   /** Body-frame acceleration of the last step (m/s², x = left, z = forward) for telemetry and the cockpit camera. */
@@ -77,6 +81,7 @@ export class CarPhysics {
   private R: R;
   private tyreOut: TyreOutput = { fx: 0, fy: 0, alpha: 0, spin: 0, lock: 0, usage: 0 };
   private lastVel = { x: 0, y: 0, z: 0 };
+  private bumps = [0, 0, 0, 0];
 
   constructor(R: R, world: RAPIER_NS.World, pos: V3, heading: number) {
     this.R = R;
@@ -125,6 +130,11 @@ export class CarPhysics {
       vc.setWheelMaxSuspensionForce(i, s.maxForce);
       vc.setWheelMaxSuspensionTravel(i, CAR.wheel.travel);
     }
+  }
+
+  /** A kerb or pothole under wheel i: kicks that corner up next step; strength ~1 for a kerb at town speed. */
+  bump(i: number, strength: number) {
+    this.bumps[i] = Math.max(this.bumps[i], strength);
   }
 
   /** Call before world.step(). */
@@ -310,6 +320,16 @@ export class CarPhysics {
     let spinRear = 0;
     let max = 0;
     const absV = Math.abs(this.speed);
+    // Rough surfaces and kerbs: vertical kicks at the wheels, filtered by the springs into shaking.
+    for (let i = 0; i < 4; i++) {
+      const rough = this.wheels[i].contact ? this.wheelRumble[i] * clamp(absV / 15, 0, 1) * (Math.random() * 2 - 1) * REF_LOAD * 0.7 * dt : 0;
+      const kick = this.bumps[i] * mass * 0.25 * 0.9;
+      this.bumps[i] = 0;
+      if (!rough && !kick) continue;
+      const hp = vc.wheelHardPoint(i)!;
+      const f = rough + kick;
+      body.applyImpulseAtPoint({ x: up.x * f, y: up.y * f, z: up.z * f }, hp, true);
+    }
     for (let i = 0; i < 4; i++) {
       const w = this.wheels[i];
       if (!w.contact) { w.lateral = 0; w.long = 0; w.slip = 0; w.load = 0; w.fx = 0; w.fy = 0; w.usage = 0; w.alpha = 0; continue; }
@@ -339,6 +359,8 @@ export class CarPhysics {
       let abs = as.abs;
       if (hold) wheelBrake = CAR.brake.hold / 4;
       if (rearAxle && input.handbrake) { wheelBrake += CAR.brake.handbrake / 2; abs = false; }
+      // Soft ground drags the tyres like a light brake.
+      wheelBrake += this.wheelRolling[i] * loads[i];
       const o = tyreForce({ vx: vLong, vy: vLat, load: loads[i], capX: capX[i], capY: capY[i], drive: drives[i], brake: wheelBrake, abs, mass: mass / 4, dt }, spec, this.tyreOut);
 
       // Apply at the patch, partly lifted towards the centre of mass (less roll and pitch than a real car).
@@ -379,6 +401,7 @@ export class CarPhysics {
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.steer = 0;
     this.lastVel = { x: 0, y: 0, z: 0 };
+    this.bumps.fill(0);
   }
 
   /** Heading in the world frame, 0 = north, clockwise positive. */

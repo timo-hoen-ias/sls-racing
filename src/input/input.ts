@@ -146,7 +146,12 @@ export class Input {
     return e;
   }
 
+  /** Gamepad vibration strength 0..1 (debug: pad.rumble). */
+  rumbleScale = 1;
+
   rumble(strength: number, ms: number) {
+    strength = Math.min(1, strength * this.rumbleScale);
+    if (strength <= 0) return;
     for (const pad of navigator.getGamepads?.() ?? []) {
       (pad as any)?.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: strength, weakMagnitude: strength * 0.6 }).catch?.(() => {});
     }

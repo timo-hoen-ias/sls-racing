@@ -20,7 +20,8 @@ import { Tacho } from './ui/tacho.ts';
 import { ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { registerCommand, runCommand } from './debug/registry.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
-import { loadAssists, registerPhysicsCommands } from './vehicle/physicsCommands.ts';
+import { loadAssists, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
+import { RoadSurface } from './vehicle/roadSurface.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
@@ -139,6 +140,8 @@ async function boot() {
 
   loadAssists(car);
   registerPhysicsCommands(car);
+  const roadSurface = new RoadSurface(graph, (x, z) => streamer.groundAt(x, z));
+  registerSurfaceCommands(roadSurface, car, input);
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
@@ -205,6 +208,7 @@ async function boot() {
 
     vehicleDebug.update();
     weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
+    roadSurface.update(car, weather.wheelAqua);
     const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
     if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
     else frozenAt = null;
@@ -255,6 +259,7 @@ async function boot() {
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;
     effects.road.puddle = weather.puddle;
+    effects.surface = roadSurface.kinds;
     effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
     cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     view.follow(ip);
@@ -276,9 +281,12 @@ async function boot() {
     sound?.update({
       rpm: dtr.rpm, load: dtr.load, cut: dtr.cut, blip: dtr.blip, limiter: dtr.limiter, shifted: shiftedSince(dtr),
       speed: Math.abs(car.speed), boosting: car.boosting, slip: car.slip, airborne: car.airborne,
+      rumble: roadSurface.rumble, crunch: roadSurface.crunch, squeal: roadSurface.squeal,
     });
+    for (const k of roadSurface.kerbs) { sound?.kerb(k); input.rumble(0.35 + 0.4 * k, 90); }
     if (car.boosting) input.rumble(0.25, 60);
     else if (car.slip > 0.4) input.rumble(0.12 * car.slip, 60);
+    else if (roadSurface.rumble > 0.05) input.rumble(0.3 * roadSurface.rumble, 60);
 
     tacho.update({ rpm: dtr.rpm, gear: dtr.gear, manual: dtr.manual, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
     frames++;

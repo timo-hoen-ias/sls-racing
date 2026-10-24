@@ -25,6 +25,8 @@ interface LoadedTile {
   /** Distance from the car when last checked, for unloading. */
   ix: number;
   iy: number;
+  /** Ground class per terrain sample (for the tyre surface). */
+  ground: Uint8Array;
 }
 
 /** Loads world tiles around a point and drops the ones far away. */
@@ -71,6 +73,18 @@ export class WorldStreamer {
 
   get loadedCount() { return this.loaded.size; }
   get pendingCount() { return this.loading.size + this.ready.length; }
+
+  /** Ground class (see Ground) at the nearest terrain sample, or undefined where no tile is loaded. */
+  groundAt(x: number, z: number): number | undefined {
+    const w = this.index.world;
+    const [ix, iy] = tileOfLocal(w, x, z);
+    const t = this.loaded.get(tileKey(ix, iy));
+    if (!t) return undefined;
+    const [ox, oz] = tileOriginLocal(w, ix, iy);
+    const c = Math.min(TERRAIN_N - 1, Math.max(0, Math.round((x - ox) / TERRAIN_STEP)));
+    const r = Math.min(TERRAIN_N - 1, Math.max(0, Math.round((z - oz) / TERRAIN_STEP)));
+    return t.ground[r * TERRAIN_N + c];
+  }
 
   /** True when the tile under (x, z) is part of the world. */
   hasTileAt(x: number, z: number) {
@@ -273,7 +287,7 @@ export class WorldStreamer {
     }
 
     this.root.add(group);
-    this.loaded.set(key, { key, group, body, ix: t.ix, iy: t.iy });
+    this.loaded.set(key, { key, group, body, ix: t.ix, iy: t.iy, ground: g });
   }
 
   private removeTile(t: LoadedTile) {

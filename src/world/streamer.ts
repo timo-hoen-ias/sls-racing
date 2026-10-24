@@ -26,6 +26,8 @@ interface LoadedTile {
   /** Distance from the car when last checked, for unloading. */
   ix: number;
   iy: number;
+  /** World positions of the lamp heads (x, y, z), for the night lights. */
+  lamps?: Float32Array;
 }
 
 /** Loads world tiles around a point and drops the ones far away. */
@@ -73,6 +75,14 @@ export class WorldStreamer {
   }
 
   get loadedCount() { return this.loaded.size; }
+
+  /** Calls fn with every street lamp head of the loaded tiles. */
+  forEachLamp(fn: (x: number, y: number, z: number) => void) {
+    for (const t of this.loaded.values()) {
+      const l = t.lamps;
+      if (l) for (let i = 0; i < l.length; i += 3) fn(l[i], l[i + 1], l[i + 2]);
+    }
+  }
   get pendingCount() { return this.loading.size + this.ready.length; }
   get queuedCount() { return this.queue.length; }
 
@@ -272,6 +282,7 @@ export class WorldStreamer {
       group.add(trunks, crowns);
     }
 
+    let lampHeads: Float32Array | undefined;
     if (t.lamps) {
       const l = decodeF32(t.lamps);
       const n = l.length / 4;
@@ -280,9 +291,12 @@ export class WorldStreamer {
       const m = new THREE.Matrix4();
       const q = new THREE.Quaternion();
       const one = new THREE.Vector3(1, 1, 1);
+      const head = new THREE.Vector3();
+      lampHeads = new Float32Array(n * 3);
       for (let i = 0; i < n; i++) {
         q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.PI - l[i * 4 + 3]);
         m.compose(new THREE.Vector3(l[i * 4], l[i * 4 + 1], l[i * 4 + 2]), q, one);
+        head.set(0, 6.7, 1.55).applyMatrix4(m).toArray(lampHeads, i * 3);
         poles.setMatrixAt(i, m);
         heads.setMatrixAt(i, m);
         this.world.createCollider(this.R.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i * 4], l[i * 4 + 1] + 3.5, l[i * 4 + 2]), body);
@@ -292,7 +306,7 @@ export class WorldStreamer {
     }
 
     this.root.add(group);
-    this.loaded.set(key, { key, group, body, ix: t.ix, iy: t.iy });
+    this.loaded.set(key, { key, group, body, ix: t.ix, iy: t.iy, lamps: lampHeads });
   }
 
   private removeTile(t: LoadedTile) {

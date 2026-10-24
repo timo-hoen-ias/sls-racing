@@ -15,6 +15,8 @@ export class CarView {
   private wheels: { pivot: THREE.Group; spin: THREE.Group }[] = [];
   private flames: THREE.Mesh[] = [];
   private brakeLights: THREE.MeshStandardMaterial;
+  private headLights: THREE.MeshStandardMaterial;
+  private night = 0;
   private paint: THREE.MeshPhysicalMaterial;
 
   constructor(color?: string) {
@@ -23,6 +25,7 @@ export class CarView {
     model.body.position.y = -RIDE_HEIGHT;
     this.root.add(model.body);
     this.brakeLights = model.materials.brake;
+    this.headLights = model.materials.head;
     this.paint = model.materials.paint;
     const toBody = (v: THREE.Vector3) => v.clone().setY(v.y - RIDE_HEIGHT);
     this.exhausts = model.exhausts.map(toBody);
@@ -70,6 +73,11 @@ export class CarView {
     this.paint.color.set(color);
   }
 
+  /** 0 by day .. 1 at night: brightens the light lenses so they bloom. */
+  setNight(night: number) {
+    this.night = night;
+  }
+
   /** Copies the physics state onto the model. pos/quat may be interpolated. */
   sync(car: CarPhysics, pos: THREE.Vector3, quat: THREE.Quaternion, braking: boolean, time: number) {
     this.root.position.copy(pos);
@@ -83,7 +91,8 @@ export class CarView {
       w.pivot.rotation.y = vc.wheelSteering(i) ?? 0;
       w.spin.rotation.x = vc.wheelRotation(i) ?? 0;
     }
-    this.brakeLights.emissiveIntensity = braking ? 3.5 : 0.7;
+    this.headLights.emissiveIntensity = THREE.MathUtils.lerp(2.4, 40, this.night);
+    this.brakeLights.emissiveIntensity = (braking ? 3.5 : 0.7) * THREE.MathUtils.lerp(1, 6, this.night);
     for (const f of this.flames) {
       f.visible = car.boosting;
       if (car.boosting) f.scale.set(1, 1, 0.8 + Math.sin(time * 60 + f.position.x * 10) * 0.25 + Math.random() * 0.2);

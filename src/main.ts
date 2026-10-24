@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { EngineSound } from './audio/engineSound.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
+import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
 import { createMaterials } from './render/materials.ts';
 import { createScene } from './render/scene.ts';
@@ -13,17 +14,19 @@ import { RouteLine } from './render/routeLine.ts';
 import { BigMap } from './ui/bigMap.ts';
 import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
+import { Tacho } from './ui/tacho.ts';
+import { ENGINE } from './vehicle/tuning.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
-const STEP = 1 / 60;
 
 const $ = (id: string) => document.getElementById(id)!;
 
 async function boot() {
   const quality = pickQuality();
+  const STEP = 1 / quality.physicsHz;
   const [index] = await Promise.all([
     fetch(`${TILES_URL}/index.json`).then((r) => {
       if (!r.ok) throw new Error(`Weltindex nicht gefunden (${r.status}). Erst "npm run world:build" oder "npm run world:fixture" ausführen.`);
@@ -47,6 +50,9 @@ async function boot() {
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
   const carView = new CarView();
   view.scene.add(carView.root);
+  const effects = new CarEffects(quality);
+  view.scene.add(effects.root);
+  const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
   const input = new Input();
   if (isTouchDevice()) input.enableTouch();
@@ -67,7 +73,8 @@ async function boot() {
   const startBtn = $('start') as HTMLButtonElement;
   startBtn.addEventListener('click', async () => {
     startBtn.hidden = true;
-    sound ??= new EngineSound();
+    sound ??= await EngineSound.create(quality.reverb);
+    sound.onBackfire = () => effects.backfire(ip, iq, car.body.linvel());
     await sound.resume().catch(() => {});
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
   });
@@ -89,6 +96,18 @@ async function boot() {
   prev.p.copy(curr.p);
   prev.q.copy(curr.q);
 
+  // Hits: a velocity jump within one physics step that driving alone cannot cause.
+  const prevVel = { x: 0, y: 0, z: 0 };
+  let hit = 0;
+  let hitDir = { x: 0, y: 0, z: 0 };
+  let hitCooldown = 0;
+
+  const resetCar = () => {
+    car.reset({ x: safe.x, y: safe.y + 1.2, z: safe.z }, safe.heading);
+    prevVel.x = prevVel.y = prevVel.z = 0;
+    hitCooldown = 0.6;
+  };
+
   let acc = 0;
   let last = performance.now();
   let fpsT = 0, frames = 0, fps = 0;
@@ -100,7 +119,7 @@ async function boot() {
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
-      if (e === 'reset') car.reset({ x: safe.x, y: safe.y + 1.2, z: safe.z }, safe.heading);
+      if (e === 'reset') resetCar();
       if (e === 'camera') cam.next();
       if (e === 'mute') sound?.toggleMute();
       if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
@@ -124,6 +143,11 @@ async function boot() {
       car.update(drive, STEP);
       world.step();
       capture(curr);
+      const lv = car.body.linvel();
+      const dvx = lv.x - prevVel.x, dvy = lv.y - prevVel.y, dvz = lv.z - prevVel.z;
+      const dv = Math.hypot(dvx, dvy, dvz);
+      if (dv > 3.5 && dv > hit) { hit = dv; hitDir = { x: dvx / dv, y: dvy / dv, z: dvz / dv }; }
+      prevVel.x = lv.x; prevVel.y = lv.y; prevVel.z = lv.z;
       acc -= STEP;
     }
     const alpha = acc / STEP;
@@ -137,9 +161,19 @@ async function boot() {
       safe = { x: ip.x, y: ip.y, z: ip.z, heading: car.heading() };
       safeTimer = 0;
     }
-    if (worldReady && (ip.y < spawn.y - 150 || !streamer.hasTileAt(ip.x, ip.z))) car.reset({ x: safe.x, y: safe.y + 1.2, z: safe.z }, safe.heading);
+    if (worldReady && (ip.y < spawn.y - 150 || !streamer.hasTileAt(ip.x, ip.z))) resetCar();
 
     carView.sync(car, ip, iq, drive.brake > 0 && car.speed > 1, now / 1000);
+    hitCooldown -= dt;
+    if (hit > 0 && worldReady && hitCooldown <= 0) {
+      const strength = Math.min(1, (hit - 3.5) / 12);
+      effects.impact({ x: ip.x - hitDir.x * 2, y: ip.y - Math.max(0, hitDir.y) * 0.3, z: ip.z - hitDir.z * 2 }, strength);
+      sound?.impact(strength);
+      input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
+      hitCooldown = 0.25;
+    }
+    hit = 0;
+    effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
     cam.update(ip, iq, car.speed, car.boosting, dt);
     view.follow(ip);
     // Navigation, street name and maps.
@@ -156,13 +190,15 @@ async function boot() {
 
     view.render();
 
-    const slip = car.drifting ? 1 : drive.brake > 0.5 && Math.abs(car.speed) > 12 ? 0.6 : 0;
-    sound?.update({ rpm: car.rpm, throttle: drive.throttle, speed: Math.abs(car.speed), boosting: car.boosting, slip });
+    const dtr = car.drivetrain;
+    sound?.update({
+      rpm: dtr.rpm, load: dtr.load, cut: dtr.cut, blip: dtr.blip, limiter: dtr.limiter, shifted: shiftedSince(dtr),
+      speed: Math.abs(car.speed), boosting: car.boosting, slip: car.slip, airborne: car.airborne,
+    });
     if (car.boosting) input.rumble(0.25, 60);
+    else if (car.slip > 0.4) input.rumble(0.12 * car.slip, 60);
 
-    $('speed').textContent = String(Math.round(Math.abs(car.speed) * 3.6));
-    $('gear').textContent = car.gear === -1 ? 'R' : String(car.gear);
-    ($('nitro-fill') as HTMLElement).style.transform = `scaleX(${car.nitro.toFixed(3)})`;
+    tacho.update({ rpm: dtr.rpm, gear: dtr.gear, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
     frames++;
     fpsT += dt;
     if (fpsT > 0.5) {
@@ -173,13 +209,22 @@ async function boot() {
       $('info').textContent = `${fps} fps · Qualität ${quality.name} · ${input.lastDevice}\nUTM 32N ${e.toFixed(0)} / ${n.toFixed(0)} · Kacheln ${streamer.loadedCount}`;
     }
     (window as any).__sls = {
-      fps, speed: car.speed, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
+      fps, speed: car.speed, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
     };
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+}
+
+/** Gear changes happen in fixed physics steps; report each one once per rendered frame. */
+let lastGear = 1;
+function shiftedSince(d: { gear: number }): 'up' | 'down' | null {
+  const g = d.gear;
+  const r = g === lastGear ? null : g > lastGear || lastGear === -1 ? 'up' : 'down';
+  lastGear = g;
+  return r;
 }
 
 boot().catch((e) => {

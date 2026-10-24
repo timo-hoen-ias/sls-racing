@@ -77,3 +77,39 @@ describe('CarPhysics', () => {
     expect(car.speed).toBeLessThan(-2);
   });
 });
+
+describe('CarPhysics tyres', () => {
+  it('reports contact points and no slip when cruising straight', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    drive({ throttle: 0.4 }, 3);
+    expect(car.wheels.every((w) => w.contact)).toBe(true);
+    expect(car.wheels[0].p.y).toBeLessThan(0.2);
+    expect(car.wheels[0].n.y).toBeGreaterThan(0.9);
+    expect(car.slip).toBeLessThan(0.15);
+  });
+
+  it('slides the rear tyres in a handbrake turn', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    drive({ throttle: 1 }, 3);
+    let maxRear = 0;
+    for (let i = 0; i < 40; i++) {
+      drive({ throttle: 0.5, steer: 1, handbrake: true }, 1 / 60);
+      maxRear = Math.max(maxRear, car.wheels[2].slip, car.wheels[3].slip);
+    }
+    expect(maxRear).toBeGreaterThan(0.5);
+  });
+
+  it('accelerates realistically and is drag-limited at the top', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    let t100 = 0;
+    for (let i = 1; i <= 60 * 8 && !t100; i++) {
+      drive({ throttle: 1 }, 1 / 60);
+      if (car.speed * 3.6 >= 100) t100 = i / 60;
+    }
+    expect(t100).toBeGreaterThan(3);
+    expect(t100).toBeLessThan(6);
+  });
+});

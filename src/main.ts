@@ -40,6 +40,8 @@ import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
+import { FarField } from './world/farField.ts';
+import { FAR_DIST, createViewDistance } from './world/farCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
 import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
@@ -78,6 +80,8 @@ async function boot() {
   const facades = new FacadeControl(mats.building);
   const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
   view.scene.add(streamer.root);
+  const far = new FarField(TILES_URL, index, streamer, FAR_DIST[quality.name]);
+  view.scene.add(far.root);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -243,6 +247,7 @@ async function boot() {
   view.scene.add(physDebug.lines);
   registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
   registerStreamCommands(streamer, quality, () => (hold ?? ip));
+  const viewDist = createViewDistance(view, quality, far);
   if (new URLSearchParams(location.search).has('perf')) perf.setVisible(true);
   // ?cmd=day;nitro.infinite runs commands at startup.
   const bootCmd = new URLSearchParams(location.search).get('cmd');
@@ -386,6 +391,7 @@ async function boot() {
     cam.motion.az = motion.az;
     cam.motion.steer = rs ? rs.steer : car.steer;
     if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    viewDist.afterCamera();
     carView.cockpit.group.visible = cam.mode === 'cockpit' && (!rs || replay.cam === 'chase');
     carView.cockpit.update({
       steer: rs ? rs.steer : car.steer, rpm: rs ? rs.rpm : car.rpm, maxRpm: ENGINE.maxRpm, shiftRpm: ENGINE.shiftRpm,
@@ -415,6 +421,7 @@ async function boot() {
     if (bigMap.open && (mapTimer -= dt) <= 0) { mapTimer = 0.5; bigMap.draw(); }
     routeLine.update(dt);
     physDebug.update(dt);
+    far.update(ip.x, ip.z, dt);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);

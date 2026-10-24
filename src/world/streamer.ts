@@ -136,6 +136,12 @@ export class WorldStreamer {
   }
 
   get loadedCount() { return this.loaded.size; }
+  /** Bumped whenever a tile appears or disappears (the far view hides itself under visible tiles). */
+  visibleVersion = 0;
+
+  forEachVisible(fn: (ix: number, iy: number) => void) {
+    for (const t of this.loaded.values()) fn(t.ix, t.iy);
+  }
 
   /** Calls fn with every street lamp head of the loaded tiles. */
   forEachLamp(fn: (x: number, y: number, z: number) => void) {
@@ -406,6 +412,7 @@ export class WorldStreamer {
 
     this.root.add(group);
     this.loaded.set(key, { key, ix: t.ix, iy: t.iy, content: t, group, lamps: lampHeads });
+    this.visibleVersion++;
     this.stats.visualMs.push(performance.now() - t0);
     this.stats.built++;
   }
@@ -447,6 +454,7 @@ export class WorldStreamer {
     });
     this.removePhysics(t);
     this.loaded.delete(t.key);
+    this.visibleVersion++;
     this.stats.dropped++;
     for (const layer of tileLayers()) layer.removed?.(t.key);
   }

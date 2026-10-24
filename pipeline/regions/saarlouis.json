@@ -10,5 +10,6 @@
     ]
   },
   "terrain": { "source": "terrarium", "zoom": 14 },
+  "far": { "marginMeters": 7000, "zoom": 12 },
   "spawn": { "lat": 49.31335, "lon": 6.75165 }
 }

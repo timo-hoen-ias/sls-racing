@@ -52,7 +52,9 @@ Tageszeit: Die Uhr läuft standardmäßig (1 Spielstunde pro echter Minute), Son
 
 Performance: `perf.hud` (oder `?perf` in der URL) zeigt FPS, einen Frame-Graph (grün < 17 ms, gelb, rot > 33 ms), CPU-Zeit für Streaming, Physik und Rendern, GPU-Zeit (falls der Browser `EXT_disjoint_timer_query_webgl2` kann), Draw-Calls, Dreiecke, Kollider und Kachel-Lade-/Aufbauzeiten. `perf.log 10` nimmt 10 s auf und gibt Ø, p95, p99 und die Zahl der Ruckler aus, `stream.info` zeigt den Zustand des Kachel-Streamings.
 
-Kachel-Streaming: Die Pipeline schreibt Kacheln als gzip-komprimierten Binärcontainer `t/<ix>_<iy>.bin` (Format in `src/world/format.ts`, `encodeTile`/`TileContent`). Download, Entpacken und Vertex-Aufbau laufen in Web Workern (`src/world/tileWorker.ts`), der Hauptthread verpackt nur noch fertige Arrays in Meshes und baut Kollider, in kleinen Schritten mit Zeitbudget pro Frame. Kollider gibt es nur nahe am Auto (Gelände als Heightfield). Befehle: `stream.worker on|off`, `stream.radius`, `stream.physradius`, `stream.budget`, `stream.inflight`, `stream.around`, `stream.reload`, `phys.colliders show|hide`. Neue Inhalte auf Kacheln (Requisiten, Vegetation …) hängen sich über `registerTileLayer` in `src/world/tileHooks.ts` ein, ohne `streamer.ts` zu ändern. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.
+Kachel-Streaming: Die Pipeline schreibt Kacheln als gzip-komprimierten Binärcontainer `t/<ix>_<iy>.bin` (Format in `src/world/format.ts`, `encodeTile`/`TileContent`). Download, Entpacken und Vertex-Aufbau laufen in Web Workern (`src/world/tileWorker.ts`), der Hauptthread verpackt nur noch fertige Arrays in Meshes und baut Kollider, in kleinen Schritten mit Zeitbudget pro Frame. Kollider gibt es nur nahe am Auto (Gelände als Heightfield). Befehle: `stream.worker on|off`, `stream.radius`, `stream.physradius`, `stream.budget`, `stream.inflight`, `stream.around`, `stream.reload`, `phys.colliders show|hide`. Neue Inhalte auf Kacheln (Requisiten, Vegetation …) hängen sich über `registerTileLayer` in `src/world/tileHooks.ts` ein, ohne `streamer.ts` zu ändern.
+
+Fernsicht: Hinter den Detailkacheln liegen grobe Fernkacheln `far/<fx>_<fy>.bin` (2048 m, Gelände im 32-m-Raster, Bodenart und Gebäude als einfache Blöcke), gebaut aus einem eigenen OSM-Ausschnitt 7 km um die Region (`"far"` in `pipeline/regions/<region>.json`). Wo eine Detailkachel sichtbar ist, blendet sich die Fernsicht per Maske aus. Befehle: `lod.far on|off`, `lod.dist <m>`, `fog.dist <m>` (0 = automatisch), `lod.info`, `lod.reload`, `lod.view <m>` hebt die Kamera zum Prüfen an. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.
 
 **Regel:** Jedes neue Feature und jede Anpassung bringt passende Debug-Befehle mit. Registrieren geht aus jedem Modul:
 
@@ -81,6 +83,19 @@ Straßenmöbel und parkende Autos kommen aus OpenStreetMap (`pipeline/lib/props.
 Der Hall folgt der Umgebung: Raycasts links, rechts und nach oben messen Hauswände und Brücken, daraus werden offene Straße, Häuserschlucht und Unterführung überblendet, dazu ein Echo von der nächsten Wand je Seite. Die Geräuschkulisse mischt Stadtgemurmel (bebaut), Vögel und Blätter (grün), Autobahnrauschen und die Saar von dort, wo sie wirklich sind; Aufprallgeräusche klingen nach Material (Gebäude, Baum, Mast, Fahrzeug).
 
 Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb.zone [auto|stadt|gruen|autobahn|wasser]`, `amb.mix`, `amb.layer <schicht> on|off`, `amb.volume`, `amb.impact <material>`, `amb on|off`.
+
+## 3D-Modelle (Blender)
+
+Der Sportwagen wird per Blender-Python-Skript gebaut, nicht von Hand modelliert: `tools/blender/make_sportscar.py` erzeugt Karosserie, Kabine, Räder und Anbauteile, schneidet die Radhäuser per Boolean aus und legt Scheinwerfer, Fenster, Lufteinlässe und Fugen direkt als Flächen der Karosserie an. Export als GLB mit drei Detailstufen (LOD 0/1/2 für Karosserie, 2 für Räder), danach Meshopt-Kompression (`tools/compress-model.ts`, Positionen bleiben float, damit das Schadensmodell Beulen eindrücken kann).
+
+```bash
+npm run models:build   # braucht Blender 4.2+ im PATH, schreibt public/models/sportscar.glb und traffic.glb
+blender --background --factory-startup --python tools/blender/preview.py -- public/models/sportscar.glb vorschau.png
+```
+
+Der Verkehr (und später die parkenden Autos) kommt aus `tools/blender/make_traffic.py`: drei Pkw-Varianten (Kleinwagen, Limousine, Kombi), Transporter, Linienbus und Lkw, alle ohne reale Marke. Jede Variante liefert die fünf instanzierten Teile aus `vehicleModels.ts` (Lack, Details mit Vertexfarben, Lichter, Bremslicht, Warnblinker) in zwei Detailstufen; `src/traffic/vehicleGlb.ts` lädt sie, ab 60 m Kameraabstand zeichnet die Verkehrsansicht die einfachere Stufe. Debug: `traffic.models [glb|procedural]`, `traffic.lod [auto|0|1]` (zeigt auch, wie viele Fahrzeuge nah/fern sind und die Dreiecke). Gemeinsame Bausteine der Skripte liegen in `tools/blender/carlib.py`.
+
+Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 
 ## Aufbau
 

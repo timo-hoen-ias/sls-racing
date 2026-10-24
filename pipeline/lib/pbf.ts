@@ -258,6 +258,10 @@ export interface Cut {
   postalCode?: string;
   bbox?: { south: number; west: number; north: number; east: number };
   marginMeters: number;
+  /** Which ways to keep (default: wanted). Multipolygon relations always follow wantedRelation. */
+  keep?: (tags: Tags) => boolean;
+  /** Keep point features: trees and street furniture (default true). */
+  trees?: boolean;
 }
 
 /**
@@ -310,7 +314,7 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
       node(id, lat, lon, tags) {
         if (lat < south || lat > north || lon < west || lon > east) return;
         inside.set(id, [lat, lon]);
-        if (wantedNode(tags)) els.push({ type: 'node', id, lat, lon, tags });
+        if (cut.trees !== false && wantedNode(tags)) els.push({ type: 'node', id, lat, lon, tags });
       },
     });
 
@@ -320,7 +324,7 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
     const ways = new Map<number, { refs: number[]; tags: Tags; hit: boolean }>();
     pbf.scan(KIND_WAYS, {
       way(id, refs, tags) {
-        const isWanted = wanted(tags);
+        const isWanted = (cut.keep ?? wanted)(tags);
         if (!isWanted && !memberOf.has(id)) return;
         const hit = refs.some((r) => inside.has(r));
         if (hit || memberOf.has(id)) ways.set(id, { refs, tags, hit: isWanted && hit });

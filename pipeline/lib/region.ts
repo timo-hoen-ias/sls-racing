@@ -12,6 +12,8 @@ export interface RegionConfig {
   osm?: { extracts: string[] };
   terrain: { source: 'terrarium'; zoom: number } | { source: 'flat' };
   spawn: { lat: number; lon: number };
+  /** Far view (P3): coarse terrain and building blocks this far around the region, terrain at this Terrarium zoom. */
+  far?: { marginMeters: number; zoom: number };
 }
 
 export interface WorldConfig {

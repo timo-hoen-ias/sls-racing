@@ -56,7 +56,7 @@ export class Traffic {
     const fl = Math.hypot(fwd.x, fwd.z) || 1;
     this.sim.update(dt, player, { x: cp.x, z: cp.z, fx: fwd.x / fl, fz: fwd.z / fl });
     this.view.root.visible = this.visible;
-    this.view.update(this.visible ? this.sim.agents : [], this.time);
+    this.view.update(this.visible ? this.sim.agents : [], this.time, cp);
     if (player) this.updateSolids(player);
     if (this.sound) {
       this.sound.setListener(cp.x, cp.y, cp.z, fwd.x, fwd.y, fwd.z, dt);

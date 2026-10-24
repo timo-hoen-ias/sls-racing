@@ -2,7 +2,7 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { parseBool, parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import { CAR_PALETTE } from '../traffic/trafficSim.ts';
-import { buildVehicleParts } from '../traffic/vehicleModels.ts';
+import { VEHICLE_LOD_DISTANCE, type VehicleSet, proceduralVehicleSet } from '../traffic/vehicleGlb.ts';
 import { patchMaterial } from '../weather/weatherMaterials.ts';
 import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind } from './propKinds.ts';
 import { LINEAR, addPropColliders } from './propColliders.ts';
@@ -36,7 +36,8 @@ const BREAKABLE = new Set<PropKind>([Prop.busStop, Prop.sign, Prop.stopSign, Pro
 
 interface TileProps { key: string; cx: number; cz: number; data: Float32Array }
 
-type ModelKey = PropKind | 'busShelter' | 'car' | 'van';
+/** A prop kind, 'busShelter', or a parked car model "<car|van><variant>.<lod>". */
+type ModelKey = PropKind | string;
 
 export class PropLayer {
   readonly root = new THREE.Group();
@@ -71,23 +72,47 @@ export class PropLayer {
     const paint = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.35, metalness: 0.45, envMapIntensity: 1.2 });
     patchMaterial(paint, { wet: 0.3, snow: 0.9, upFrom: 0.7 });
     const detail = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 });
-    const add = (key: ModelKey, parts: [THREE.BufferGeometry, THREE.Material][]) => {
-      const list = parts.map(([g, mt]) => {
-        const im = new THREE.InstancedMesh(g, mt, 1);
-        im.count = 0;
-        im.frustumCulled = false;
-        im.castShadow = opts.shadows;
-        im.receiveShadow = opts.shadows;
-        this.root.add(im);
-        return im;
-      });
-      this.meshes.set(key, list);
-    };
-    for (const [k, g] of Object.entries(buildPropGeometries())) add((k === 'busShelter' ? k : Number(k)) as ModelKey, [[g, mat]]);
-    const cars = buildVehicleParts();
-    for (const v of ['car', 'van'] as const) add(v, [[cars[v].paint, paint], [cars[v].detail, detail], [cars[v].lights, detail]]);
+    this.shadows = opts.shadows;
+    this.carMats = { paint, detail };
+    for (const [k, g] of Object.entries(buildPropGeometries())) this.addModel((k === 'busShelter' ? k : Number(k)) as ModelKey, [[g, mat]]);
+    this.setVehicles(proceduralVehicleSet());
   }
   private info: WorldInfo;
+  private shadows: boolean;
+  private carMats: { paint: THREE.Material; detail: THREE.Material };
+  private carVariants = { car: 1, van: 1 };
+  private shownAt = new THREE.Vector3(Infinity, 0, 0);
+
+  private addModel(key: ModelKey, parts: [THREE.BufferGeometry, THREE.Material][]) {
+    const list = parts.map(([g, mt]) => {
+      const im = new THREE.InstancedMesh(g, mt, 1);
+      im.count = 0;
+      im.frustumCulled = false;
+      im.castShadow = this.shadows;
+      im.receiveShadow = this.shadows;
+      this.root.add(im);
+      return im;
+    });
+    this.meshes.set(key, list);
+  }
+
+  /** Parked cars use the traffic models (variants, and the simpler LOD beyond VEHICLE_LOD_DISTANCE). */
+  setVehicles(set: VehicleSet) {
+    for (const [key, list] of this.meshes) {
+      if (typeof key !== 'string' || !/^(car|van)/.test(key)) continue;
+      for (const im of list) { this.root.remove(im); im.dispose(); }
+      this.meshes.delete(key);
+    }
+    const { paint, detail } = this.carMats;
+    for (const kind of ['car', 'van'] as const) {
+      const variants = set[kind];
+      this.carVariants[kind] = Math.max(1, variants.length);
+      variants.forEach((v, n) => {
+        for (const [lod, parts] of [v.lod0, v.lod1].entries()) this.addModel(`${kind}${n}.${lod}`, [[parts.paint, paint], [parts.detail, detail], [parts.lights, detail]]);
+      });
+    }
+    this.dirty = true;
+  }
 
   /** Hooks into the tile streamer; call once at startup. */
   register(world: RAPIER_NS.World) {
@@ -118,20 +143,29 @@ export class PropLayer {
     const near: TileProps[] = [];
     for (const t of this.tiles.values()) if (Math.hypot(t.cx - camera.position.x, t.cz - camera.position.z) < r) near.push(t);
     const key = near.map((t) => t.key).sort().join(',');
-    if (key === this.shownKey && !this.dirty) return;
+    // Parked cars switch LOD with distance, so also rebuild after the camera has moved a bit.
+    if (key === this.shownKey && !this.dirty && this.shownAt.distanceTo(camera.position) < 15) return;
     this.shownKey = key;
     this.dirty = false;
-    this.rebuild(near);
+    this.shownAt.copy(camera.position);
+    this.rebuild(near, camera.position);
   }
 
-  private rebuild(tiles: TileProps[]) {
+  private rebuild(tiles: TileProps[], cam: THREE.Vector3) {
     const lists = new Map<ModelKey, { t: TileProps; i: number }[]>();
+    this.drawn.clear();
     for (const t of tiles)
       for (let i = 0; i * PROP_STRIDE < t.data.length; i++) {
         const kind = t.data[i * PROP_STRIDE] as PropKind;
         if (this.hiddenKinds.has(kind) || this.removedProps.has(`${t.key}:${i}`)) continue;
         const size = t.data[i * PROP_STRIDE + 5];
-        const model: ModelKey = kind === Prop.parkedCar ? (size % 2 ? 'van' : 'car') : kind === Prop.busStop && size ? 'busShelter' : kind;
+        let model: ModelKey = kind === Prop.busStop && size ? 'busShelter' : kind;
+        if (kind === Prop.parkedCar) {
+          const v = size % 2 ? 'van' : 'car';
+          const o = i * PROP_STRIDE;
+          const lod = Math.hypot(t.data[o + 1] - cam.x, t.data[o + 3] - cam.z) > VEHICLE_LOD_DISTANCE ? 1 : 0;
+          model = `${v}${(Math.floor(size / 2) + i) % this.carVariants[v]}.${lod}`;
+        }
         if (!lists.has(model)) lists.set(model, []);
         lists.get(model)!.push({ t, i });
       }
@@ -161,7 +195,7 @@ export class PropLayer {
         this.s.set(1, 1, LINEAR.has(kind) ? Math.max(0.2, t.data[o + 5]) : 1);
         this.m.compose(this.p.set(t.data[o + 1], t.data[o + 2], t.data[o + 3]), this.q, this.s);
         for (const im of meshes) im.setMatrixAt(n, this.m);
-        if (model === 'car' || model === 'van') meshes[0].setColorAt(n, this.c.setHex(CAR_PALETTE[Math.floor(t.data[o + 5] / 2) % CAR_PALETTE.length]));
+        if (typeof model === 'string' && model !== 'busShelter') meshes[0].setColorAt(n, this.c.setHex(CAR_PALETTE[Math.floor(t.data[o + 5] / 2) % CAR_PALETTE.length]));
       }
       for (const im of meshes) {
         im.instanceMatrix.needsUpdate = true;
@@ -258,7 +292,7 @@ export class PropLayer {
       name: 'props.count', help: 'Requisiten nach Typ: geladen und gerade gezeichnet',
       run: () => {
         const loaded = this.counts();
-        const drawn = (k: PropKind) => k === Prop.parkedCar ? (this.drawn.get('car') ?? 0) + (this.drawn.get('van') ?? 0) : k === Prop.busStop ? (this.drawn.get(k) ?? 0) + (this.drawn.get('busShelter') ?? 0) : this.drawn.get(k) ?? 0;
+        const drawn = (k: PropKind) => k === Prop.parkedCar ? [...this.drawn].reduce((a, [m, n]) => a + (typeof m === 'string' && m !== 'busShelter' ? n : 0), 0) : k === Prop.busStop ? (this.drawn.get(k) ?? 0) + (this.drawn.get('busShelter') ?? 0) : this.drawn.get(k) ?? 0;
         const rows = [...loaded.entries()].sort((a, b) => a[0] - b[0]).map(([k, n]) => `${PROP_NAMES[k]} ${drawn(k)}/${n}`);
         return `${rows.join(', ') || 'keine Requisiten geladen'} · ${this.colliderCount} Kollider · ${this.removedCount} entfernt`;
       },

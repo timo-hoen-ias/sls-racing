@@ -225,8 +225,11 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   for (const w of osm.ways) {
     if (!isDrivable(w.tags) || !/^(residential|living_street|unclassified)$/.test(w.tags.highway)) continue;
     if (o.boundary && !o.boundary.some((r) => pointInRing(w.pts[0][0], w.pts[0][1], r))) continue;
-    const off = roadWidth(w.tags)! / 2 + 0.35;
-    for (const s of [1, -1]) {
+    const width = roadWidth(w.tags)!;
+    const off = width / 2 + 0.35;
+    // Each kerb parker takes 0.55 m of the carriageway: none on narrow lanes, one side only on tight streets.
+    if (width < 4.5) continue;
+    for (const s of width < 5.5 ? [1] : [1, -1]) {
       const tag = w.tags[`parking:${s > 0 ? 'right' : 'left'}`] ?? w.tags['parking:both'] ?? w.tags[`parking:lane:${s > 0 ? 'right' : 'left'}`] ?? w.tags['parking:lane:both'];
       if (tag === 'no' || tag === 'separate') continue;
       // Without tags, about half of the street sides have parked cars.

@@ -51,6 +51,8 @@ import { PropLayer } from './world/props.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
+import { loadShops } from './world/shopGlb.ts';
+import { ShopLayer } from './world/shops.ts';
 import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
@@ -114,6 +116,8 @@ async function boot() {
   view.scene.add(far.root);
   const props = new PropLayer({ shadows: quality.shadows > 0, radius: quality.props, world: index.world, carBoxes: quality.lod.cars });
   props.register(world);
+  const shops = new ShopLayer(index.world);
+  shops.register();
   const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
@@ -178,6 +182,7 @@ async function boot() {
     if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
     peds.view.setVariants(set.peds);
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
+  loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
   peds.sim.events.knocked = (_, v) => {
     sound?.impact(Math.min(0.5, v / 30));
     input.rumble(0.5, 150);
@@ -337,6 +342,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
@@ -547,6 +553,7 @@ async function boot() {
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
+    shops.update(view.camera);
     vegetation.update(dt, view.camera, weather.weather);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);

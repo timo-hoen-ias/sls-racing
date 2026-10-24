@@ -7,8 +7,13 @@ import { loadedMu, splitAxle, tyreForce, type TyreOutput, type TyreSpec } from '
 type R = typeof RAPIER_NS;
 type V3 = { x: number; y: number; z: number };
 
-/** Collision groups: the player car is membership 1; debris (membership 2) ignores it but hits the world. */
-export const CAR_GROUPS = (0x0001 << 16) | 0xffff;
+/**
+ * Collision groups: the player car is membership 1; debris (membership 2) ignores it but hits the world.
+ * Road and pavement surfaces (membership 4) carry the wheels (their rays) but not the chassis, so
+ * kerbs do not catch the body; the terrain under them still does.
+ */
+export const CAR_GROUPS = (0x0001 << 16) | (0xffff & ~0x0004);
+export const ROAD_GROUPS = (0x0004 << 16) | 0xffff;
 export const DEBRIS_GROUPS = (0x0002 << 16) | 0xfffe;
 
 /** Approximate yaw inertia of the chassis box (kg·m²). */

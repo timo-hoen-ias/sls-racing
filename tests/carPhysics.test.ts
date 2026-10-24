@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { DriveInput } from '../src/input/input.ts';
-import { CarPhysics, maxSteerAngle, rotate } from '../src/vehicle/carPhysics.ts';
+import { CarPhysics, maxSteerAngle, ROAD_GROUPS, rotate } from '../src/vehicle/carPhysics.ts';
 import { CAR } from '../src/vehicle/tuning.ts';
 
 beforeAll(async () => {
@@ -203,5 +203,19 @@ describe('Vehicle dynamics', () => {
     let worst = 0;
     for (let i = 0; i < 180; i++) { drive({ throttle: 1, steer: 1 }, 1 / 60); worst = Math.max(worst, Math.abs(driftAngle(car))); }
     expect(worst).toBeLessThan(0.12);
+  });
+  it('rides on a road surface above the terrain, but kerbs do not catch the body', () => {
+    const { world, car, drive } = setup();
+    const s = 50, y = 0.15;
+    world.createCollider(
+      RAPIER.ColliderDesc.trimesh(new Float32Array([-s, y, -s, s, y, -s, -s, y, s, s, y, s]), new Uint32Array([0, 2, 1, 1, 2, 3])).setCollisionGroups(ROAD_GROUPS),
+      world.createRigidBody(RAPIER.RigidBodyDesc.fixed()),
+    );
+    drive({}, 2);
+    for (let i = 0; i < 4; i++) expect(car.controller.wheelContactPoint(i)!.y).toBeCloseTo(y, 2);
+    // A road-group wall in front of the car stops only the wheels' rays, not the chassis.
+    world.createCollider(RAPIER.ColliderDesc.cuboid(5, 0.15, 0.1).setTranslation(0, 0.3, -6).setCollisionGroups(ROAD_GROUPS), world.createRigidBody(RAPIER.RigidBodyDesc.fixed()));
+    drive({ throttle: 1 }, 2);
+    expect(car.body.translation().z).toBeLessThan(-8);
   });
 });

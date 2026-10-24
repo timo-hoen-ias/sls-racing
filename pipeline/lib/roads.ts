@@ -321,9 +321,12 @@ export function buildRoads(
         const ext = Math.min(hw, 4) * dir;
         const tip = { e: p.e + p.dx * ext, n: p.n + p.dy * ext };
         const corner = (q: { e: number; n: number }, o: number) => utmToLocal(world, q.e - p.dy * o, q.n + p.dx * o);
-        const y = p.y - STRIP_DROP;
+        // The cap keeps the road's grade: flat, it would stick up out of a road continuing downhill.
+        const q = dir > 0 ? ring[ring.length - 2] : ring[1];
+        const grade = (p.y - q.y) / (Math.abs(p.dist - q.dist) || 1);
+        const y = p.y - STRIP_DROP, yt = y + grade * Math.abs(ext);
         const t = tiles.at(p.e, p.n).collide;
-        const v = [corner(p, -hw), corner(p, hw), corner(tip, -hw), corner(tip, hw)].map(([x, z]) => t.vertex(x, y, z, {}));
+        const v = [corner(p, -hw), corner(p, hw), corner(tip, -hw), corner(tip, hw)].map(([x, z], i) => t.vertex(x, i < 2 ? y : yt, z, {}));
         // Upward-facing whichever way the cap points.
         if (dir > 0) { t.tri(v[0], v[2], v[1]); t.tri(v[1], v[2], v[3]); }
         else { t.tri(v[0], v[1], v[2]); t.tri(v[1], v[3], v[2]); }

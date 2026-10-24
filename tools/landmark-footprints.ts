@@ -15,6 +15,13 @@ const LANDMARKS: { id: string; ways: number[] }[] = [
   { id: 'festung-vauban-insel', ways: [71892595] },
   { id: 'marienbrunnen', ways: [26305739] },
   { id: 'kaserne-1', ways: [222138704] },
+  { id: 'kaserne-4', ways: [71891991] },
+  { id: 'kaserne-6', ways: [71891992] },
+  { id: 'katerturm', ways: [74139552] },
+  { id: 'haus-ludwig', ways: [73015028] },
+  { id: 'theater-am-ring', ways: [71934476] },
+  { id: 'festung-ravelin-5', ways: [297024093] },
+  { id: 'festung-bastion-6', ways: [372882703] },
 ];
 
 const UTM = '+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs';

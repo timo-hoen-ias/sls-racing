@@ -317,7 +317,7 @@ def offset(pts, d):
         n0, n1 = Vector((e0.y, -e0.x)), Vector((e1.y, -e1.x))
         m = (n0 + n1)
         m = m.normalized() if m.length > 0.2 else n1          # near-reversals: no long miter spikes
-        k = max(-3 * abs(d), min(3 * abs(d), d / max(0.3, m.dot(n1))))
+        k = max(-2.5 * abs(d), min(2.5 * abs(d), d / max(0.3, m.dot(n1))))
         q = p1 + m * k
         out.append((q.x, q.y))
     return out
@@ -502,14 +502,13 @@ def kasematten(entry, root, lod, gate=False):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
-def vauban_insel(entry, root, lod):
-    """Ravelin on the Vauban island: battered sandstone walls rising from the moat around the whole island,
-    with a low parapet; the island itself (trees, paths) comes from the terrain and vegetation layers."""
+def vauban_insel(entry, root, lod, top=0.5, base=-4.0):
+    """Fortification walls (Vauban island ravelin, bastions): battered sandstone walls around the whole footprint,
+    rising from the moat (base) to a low parapet (top); the ground inside comes from the terrain and vegetation."""
     f = Frame(0, ALL_MATS, detail=lod == 0)
     fp = ccw(local_footprint(entry))
-    top, base = 0.5, -4.0
     outer_top = fp
-    outer_base = offset(fp, 1.0)               # batter: the wall leans back about 1 m over 4.5 m
+    outer_base = offset(fp, 0.5)               # batter: the wall leans back about 0.5 m
     inner = offset(fp, -1.2)
     bm = f.bm
     ot = [bm.verts.new((x, y, top)) for x, y in outer_top]
@@ -618,10 +617,95 @@ def kaserne(entry, root, lod):
     return ob, c.finish(f"{entry['id']}_collider", root)
 
 
+def katerturm(entry, root, lod):
+    """Katerturm: square rubble-stone tower (about 11 m) with a small steel lookout and lantern, joined by a lower
+    fortification wall with a gate opening along the rest of the footprint."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    a, d, n, L = max(edges(fp, 1.0), key=lambda e: e[3])        # long side
+    depth = min(e[3] for e in edges(fp, 1.0))
+    inward = -n
+    t = min(depth, L / 2)
+    tower = [a, a + d * t, a + d * t + inward * depth, a + inward * depth]
+    tower = ccw([(p.x, p.y) for p in tower])
+    wall = ccw([(p.x, p.y) for p in (a + d * t, a + d * L, a + d * L + inward * depth, a + d * t + inward * depth)])
+    H, W = 11.0, 4.5
+    walls(f, 'stone', tower, -1.0, H)
+    walls(f, 'stone', wall, -1.0, W)
+    if f.detail:
+        f.prism('stone.light', offset(tower, 0.15), H - 0.3, H)
+        f.prism('stone.light', offset(wall, 0.08), W - 0.2, W)
+        for e in edges(tower, 2.0):
+            obox(f, 'stone.dark', e[0] + e[1] * (e[3] / 2) + e[2] * 0.03, e[1], 0.25, 0.1, 5.0, 6.6)
+        g = a + d * (t + (L - t) / 2)
+        for side in (n, -n):                                                          # gate through the wall
+            obox(f, 'stone.dark', g + side * (depth / 2 + 0.03) + inward * (depth / 2), d, 3.2, 0.1, 0.0, 3.3)
+    inner = offset(tower, -0.5)
+    f.prism('copper', inner, H, H + 0.15)                                             # lookout deck
+    if f.detail:
+        for e in edges(tower, 1.0):                                                   # railing
+            obox(f, 'copper', e[0] + e[1] * (e[3] / 2), e[1], e[3], 0.05, H + 0.15, H + 1.1)
+    c0 = sum((Vector(p) for p in tower), Vector((0, 0))) / 4
+    obox(f, 'glass', c0, d, 1.8, 1.8, H + 0.15, H + 1.9)                              # lantern
+    obox(f, 'copper', c0, d, 2.2, 2.2, H + 1.9, H + 2.2)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', tower, -1.0, H + 2.0)
+    c.prism('stone', wall, -1.0, W)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def villa(entry, root, lod):
+    """Two-storey rendered villa (Haus Ludwig): white walls, grey shutters, hipped slate roof with a ribbon dormer."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    H = 7.4
+    walls(f, 'plaster.white', fp, -1.0, H)
+    if f.detail:
+        f.prism('stone.dark', offset(fp, 0.05), -1.0, 0.5)
+        f.prism('plaster', offset(fp, 0.25), H - 0.3, H)
+        facade(f, fp, [1.2, 4.4], w=1.1, h=1.7, spacing=2.9, frame='slate', min_len=4.0)
+    roof(f, 'slate', offset(fp, 0.5), H, [(3.0, 3.2), (1.5, 0.6)])
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, H + 3.0)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
+def theater(entry, root, lod):
+    """Theater am Ring: light rendered cube with a tall fly tower block, glazed foyer on the ground floor."""
+    f = Frame(0, ALL_MATS, detail=lod == 0)
+    fp = ccw(local_footprint(entry))
+    H = 13.0
+    walls(f, 'plaster.white', fp, -1.0, H)
+    if f.detail:
+        f.prism('glass', offset(fp, 0.05), 0.3, 3.6)                                  # foyer glazing
+        f.prism('plaster', offset(fp, 0.15), H - 0.4, H)
+        facade(f, fp, [6.0, 9.5], w=2.4, h=1.8, spacing=5.0, min_len=8.0)
+    roof(f, 'roof', fp, H, [(0.3, 0.0)])
+    # Fly tower over the middle of the footprint.
+    tower = offset(fp, -6.0)
+    f.prism('plaster.white', tower, H, H + 7.0)
+    ob = f.finish(f"{entry['id']}_lod{lod}", root)
+    if lod:
+        return ob, None
+    c = Frame(0, ['stone'])
+    c.prism('stone', fp, -1.0, H)
+    c.prism('stone', tower, H, H + 7.0)
+    return ob, c.finish(f"{entry['id']}_collider", root)
+
+
 BUILDERS = {
     'ludwigskirche': ludwigskirche, 'rathaus': rathaus, 'kommandantur': kommandantur,
     'st-marien': st_marien, 'kasematten-sw': lambda e, r, l: kasematten(e, r, l, gate=True), 'kasematten-no': kasematten,
     'festung-vauban-insel': vauban_insel, 'marienbrunnen': marienbrunnen, 'kaserne-1': kaserne,
+    'kaserne-4': kaserne, 'kaserne-6': kaserne, 'katerturm': katerturm, 'haus-ludwig': villa, 'theater-am-ring': theater,
+    'festung-ravelin-5': lambda e, r, l: vauban_insel(e, r, l, top=0.9, base=-1.5),
+    'festung-bastion-6': lambda e, r, l: vauban_insel(e, r, l, top=0.6, base=-3.5),
 }
 
 

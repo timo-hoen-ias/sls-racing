@@ -65,7 +65,7 @@ export function tileColliderSteps(
     const tr = t.f32('trees');
     if (tr) for (let i = 0; i + 3 < tr.length; i += 4) {
       const sc = tr[i + 3];
-      add(R.ColliderDesc.cylinder(1.6 * sc, 0.3 * sc).setTranslation(tr[i], tr[i + 1] + 1.4 * sc, tr[i + 2]), 'tree');
+      add(R.ColliderDesc.cylinder(1.6 * sc, treeColliderRadius(sc)).setTranslation(tr[i], tr[i + 1] + 1.4 * sc, tr[i + 2]), 'tree');
     }
     const l = t.f32('lamps');
     if (l) for (let i = 0; i + 3 < l.length; i += 4) add(R.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i], l[i + 1] + 3.5, l[i + 2]), 'lamp', i / 4);
@@ -92,3 +92,7 @@ export function splitMesh(pos: Float32Array, idx: Uint32Array, maxTris: number):
   }
   return out;
 }
+
+/** Trunk collider radius (m) of a tree of this scale: like the drawn trunk, at most TREE_COLLIDER_MAX. */
+export const TREE_COLLIDER_MAX = 0.5;
+export const treeColliderRadius = (sc: number) => Math.min(TREE_COLLIDER_MAX, 0.1 + 0.18 * sc);

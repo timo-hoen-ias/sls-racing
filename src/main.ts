@@ -118,7 +118,7 @@ async function boot() {
   props.register(world);
   const shops = new ShopLayer(index.world);
   shops.register();
-  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
+  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod, impostor: quality.name === 'hoch' ? 256 : 128 });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
   view.scene.add(props.root);
@@ -167,11 +167,12 @@ async function boot() {
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
   // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  // Generated trees: foliage textures, species and impostors (treeRender.ts); the Blender GLB still has the hedge.
+  vegetation.init(view.renderer).catch((e) => console.warn('[veg] Bäume nicht geladen', e));
   loadVegetation().then((set) => {
-    vegetation.setModels(set);
     const hedge = set.species.hecke;
     if (hedge) props.setModel(Prop.hedge, hedge.lod0);
-  }, (e) => console.warn('[veg] GLB nicht geladen, nehme die prozeduralen Bäume', e));
+  }, (e) => console.warn('[veg] GLB nicht geladen', e));
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
   view.scene.add(peds.view.root);

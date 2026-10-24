@@ -41,6 +41,21 @@ Sie werden von `tools/textures/build-textures.ts` heruntergeladen, zu Atlanten g
 | roof_gravel | [Gravel023](https://ambientcg.com/view?id=Gravel023) |
 | painted_metal | [PaintedMetal004](https://ambientcg.com/view?id=PaintedMetal004) |
 
+### Bäume (public/textures/foliage/)
+Blätter und Rinden stammen von [ambientCG](https://ambientcg.com) (Lennart Demes), **CC0 1.0**. `tools/textures/build-foliage.ts` schneidet die Einzelblätter aus und legt sie zu Zweigkarten zusammen; die Bäume selbst wachsen im Spiel (`src/world/treeGen.ts`).
+
+| Verwendung | ambientCG-Material |
+|---|---|
+| Linde | [LeafSet004](https://ambientcg.com/view?id=LeafSet004) |
+| Ahorn, Platane | [LeafSet010](https://ambientcg.com/view?id=LeafSet010) |
+| Buche | [LeafSet014](https://ambientcg.com/view?id=LeafSet014) |
+| Eiche | [LeafSet016](https://ambientcg.com/view?id=LeafSet016) |
+| Obstbaum | [LeafSet018](https://ambientcg.com/view?id=LeafSet018) |
+| Fichte | [LeafSet019](https://ambientcg.com/view?id=LeafSet019) |
+| Birke, Pappel | [LeafSet022](https://ambientcg.com/view?id=LeafSet022) |
+| Busch, Gebüsch | [LeafSet001](https://ambientcg.com/view?id=LeafSet001), [LeafSet005](https://ambientcg.com/view?id=LeafSet005) |
+| Rinden | [Bark001](https://ambientcg.com/view?id=Bark001), [Bark006](https://ambientcg.com/view?id=Bark006), [Bark007](https://ambientcg.com/view?id=Bark007), [Bark009](https://ambientcg.com/view?id=Bark009), [Bark010](https://ambientcg.com/view?id=Bark010), [Bark012](https://ambientcg.com/view?id=Bark012) |
+
 Die Fassaden-Atlanten (Fenster, Schaufenster) zeichnet `src/render/facades.ts` weiterhin selbst; ihre Normal Map wird daraus berechnet.
 
 ## Code

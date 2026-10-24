@@ -1,5 +1,5 @@
 import type { EngineSound } from '../audio/engineSound.ts';
-import { registerCommand } from '../debug/registry.ts';
+import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { ChaseCamera } from '../render/chaseCamera.ts';
 import { type CarPhysics, maxSteerAngle } from './carPhysics.ts';
 import type { CarView } from './carView.ts';
@@ -16,6 +16,8 @@ export interface VehicleDebugContext {
   sound: () => EngineSound | undefined;
   setManual(on: boolean): void;
   reset(): void;
+  /** GLB of the selected car (car.select). */
+  carUrl?: () => string;
 }
 
 const num = (s: string | undefined, name: string) => {
@@ -74,7 +76,7 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
   });
   registerCommand({
     name: 'car.model',
-    help: 'Automodell: Blender-Coupé (glb), Hot Hatch (hothatch), GT (gt; Radstand passt erst mit eigenem Tuning) oder prozedurales Coupé',
+    help: 'Nur die Optik (Fahrwerk bleibt): GLB des gewählten Autos (glb), Hot Hatch, GT oder prozedurales Coupé; ganzes Auto wechseln mit car.select',
     args: '[glb|hothatch|gt|procedural]',
     complete: () => ['glb', 'hothatch', 'gt', 'procedural'],
     run: ([m]) => {
@@ -86,7 +88,7 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
         v.setModel(buildSportsCar(color), 'procedural');
         return 'prozedurales Coupé';
       }
-      const url = m === 'glb' ? undefined : `${import.meta.env.BASE_URL}models/cars/${m}.glb`;
+      const url = m === 'glb' ? c.carUrl?.() : `${import.meta.env.BASE_URL}models/cars/${m}.glb`;
       loadSportsCar(color, url).then(
         (model) => { v.setModel(model, 'glb'); console.info('[car] GLB geladen'); },
         (e) => console.warn('[car] GLB nicht geladen', e),
@@ -94,6 +96,7 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
       return 'lade GLB …';
     },
   });
+  registerToggle('car.wheelinst', 'Räder instanziert zeichnen (weniger Draw-Calls); aus = jedes Radteil einzeln', () => c.view.wheelSet.enabled, (v) => { c.view.wheelSet.enabled = v; });
   registerCommand({
     name: 'car.lod',
     help: 'Detailstufe von Karosserie und Rädern erzwingen (0 = voll) oder auto',

@@ -106,6 +106,15 @@ interface VegGroup {
   /** One instanced mesh per detail tier. */
   meshes: THREE.InstancedMesh[];
   n: number;
+  /** Every instance in thinning order: matrices, colours and ground position, copied into the tier meshes. */
+  mats: Float32Array;
+  cols: Float32Array;
+  xz: Float32Array;
+  /** What the meshes hold now ("w<tier>:<count>" whole tile in one tier, "s:<count>" split by distance). */
+  state: string;
+  /** Camera position of the last split. */
+  sx: number;
+  sz: number;
 }
 
 interface VegTile {
@@ -126,6 +135,15 @@ interface VegTile {
   oz: number;
 }
 
+/** Instances move between tiers per tree only within tiles that cross a tier boundary; re-sorted after this much camera movement (m). */
+const RESPLIT = 6;
+/** Tiles re-sorted per frame at most (each up to 2048 trees). */
+const SPLITS_PER_FRAME = 4;
+/** Bushes use their detailed model this close (m). */
+const BUSH_DETAIL = 30;
+
+interface Split { g: VegGroup; bands: number[]; count: number; d: number; tile: string }
+
 /** Height of the Blender species (all 8 m) per kind, relative to a tree of scale 1. */
 const KIND_HEIGHT = Object.fromEntries(Object.entries(TREE_HEIGHT).map(([k, h]) => [k, h / 8])) as Record<TreeKind, number>;
 /** Crown radius (m) of the procedural models (vegModels.ts) at scale 1. */
@@ -136,8 +154,14 @@ export class Vegetation {
   readonly root = new THREE.Group();
   /** Share of trees and bushes drawn, 0..1. */
   density = 1;
-  /** Detailed trees within this distance (m) of the tile centre. */
-  lodDistance = 260;
+  /** Detailed trees within this distance (m) of the camera, per tree. */
+  lodDistance: number;
+  /** Simple trees up to this distance, billboards beyond (m). */
+  billboardDistance: number;
+  /** Bushes are drawn up to this distance (m). */
+  bushDistance: number;
+  /** Tree and bush instances moved between tiers in the last frame (veg.info). */
+  private splitCount = 0;
   /** "auto" follows the weather, a number fixes the wind strength 0..1. */
   wind: 'auto' | number = 'auto';
   windNow = 0.3;
@@ -162,7 +186,10 @@ export class Vegetation {
   private graph: RoadGraph;
   private time = 0;
 
-  constructor(opts: { world: WorldInfo; graph: RoadGraph; mats: Materials; grass: number }) {
+  constructor(opts: { world: WorldInfo; graph: RoadGraph; mats: Materials; grass: number; lod?: { trees: number; billboards: number; bushes: number } }) {
+    this.lodDistance = opts.lod?.trees ?? 140;
+    this.billboardDistance = opts.lod?.billboards ?? 450;
+    this.bushDistance = opts.lod?.bushes ?? 120;
     this.info = opts.world;
     this.graph = opts.graph;
     this.treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, flatShading: true });
@@ -256,10 +283,11 @@ export class Vegetation {
       models.forEach((model, v) => {
         const ids = byModel[v];
         if (!ids.length) return;
-        const meshes = model.lods.map((g, l) => this.instances(g, model.mats[l], ids.length, t.shadows));
-        this.fill(meshes, shuffled(ids), at, tint, model);
+        // Only the detailed tier casts shadows: the shadow map covers about 110 m around the car anyway.
+        const meshes = model.lods.map((g, l) => this.instances(g, model.mats[l], ids.length, t.shadows && l === 0));
+        meshes.forEach((im, l) => (im.name = `vegetation/${kind === -1 ? 'bush' : TREE_NAMES[kind]} lod${l}`));
         t.group.add(...meshes);
-        t.groups.push({ kind, meshes, n: ids.length });
+        t.groups.push({ kind, meshes, n: ids.length, ...this.fill(meshes, shuffled(ids), at, tint, model), state: '', sx: 0, sz: 0 });
       });
     };
     const tr = t.trees;
@@ -286,16 +314,18 @@ export class Vegetation {
     }
   }
 
-  private instances(g: THREE.BufferGeometry, mat: THREE.Material, n: number, shadows: boolean) {
+  private instances(g: THREE.BufferGeometry, mat: THREE.Material, n: number, castShadow: boolean) {
     const im = new THREE.InstancedMesh(g, mat, n);
     im.userData.sharedGeometry = true;
-    im.castShadow = shadows;
-    im.receiveShadow = shadows;
+    im.castShadow = castShadow;
+    im.receiveShadow = true;
     return im;
   }
 
+  /** Instance data in thinning order; every tier mesh starts with all of it so its bounding sphere covers the tile. */
   private fill(meshes: THREE.InstancedMesh[], order: number[], at: (i: number) => Rec, tint: number, model: VegModel) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+    const mats = new Float32Array(order.length * 16), cols = new Float32Array(order.length * 3), xz = new Float32Array(order.length * 2);
     order.forEach((i, n) => {
       const [x, y, z, sc, crown] = at(i);
       const h = fract(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453);
@@ -303,15 +333,79 @@ export class Vegetation {
       // Measured trees keep their height and crown; the others vary a little.
       const w = crown ? crown / model.crown : sc * model.w;
       s.set(w, sc * model.h * (crown ? 1 : 0.9 + 0.2 * fract(h * 7.1)), w);
-      m.compose(p.set(x, y, z), q, s);
+      m.compose(p.set(x, y, z), q, s).toArray(mats, n * 16);
       // Each tree a little lighter or darker, warmer or cooler.
-      c.setRGB(1 + (fract(h * 3.7) - 0.5) * tint * 2, 1 + (fract(h * 5.3) - 0.5) * tint * 2, 1 - tint);
-      for (const im of meshes) {
-        im.setMatrixAt(n, m);
-        im.setColorAt(n, c);
-      }
+      c.setRGB(1 + (fract(h * 3.7) - 0.5) * tint * 2, 1 + (fract(h * 5.3) - 0.5) * tint * 2, 1 - tint).toArray(cols, n * 3);
+      xz[n * 2] = x;
+      xz[n * 2 + 1] = z;
     });
-    for (const im of meshes) im.computeBoundingSphere();
+    for (const im of meshes) {
+      im.setColorAt(0, c);
+      im.instanceMatrix.array.set(mats);
+      im.instanceColor!.array.set(cols);
+      im.computeBoundingSphere();
+    }
+    return { mats, cols, xz };
+  }
+
+  /** Upper distance of each tier of a group (Infinity = no limit); beyond the last one the group is hidden. */
+  private bands(g: VegGroup): number[] {
+    const n = g.meshes.length;
+    if (g.kind === -1) return n > 1 ? [BUSH_DETAIL, this.bushDistance] : [this.bushDistance];
+    return n > 2 ? [this.lodDistance, this.billboardDistance, Infinity] : n > 1 ? [this.lodDistance, Infinity] : [Infinity];
+  }
+
+  /** Puts the first `count` instances into one tier (-1 = none). */
+  private assignWhole(g: VegGroup, tier: number, count: number) {
+    const key = `w${tier}:${count}`;
+    if (g.state === key) return;
+    g.state = key;
+    g.meshes.forEach((im, l) => {
+      if (l !== tier) { im.count = 0; im.visible = false; return; }
+      im.instanceMatrix.array.set(g.mats.subarray(0, count * 16));
+      im.instanceColor!.array.set(g.cols.subarray(0, count * 3));
+      im.instanceMatrix.needsUpdate = true;
+      im.instanceColor!.needsUpdate = true;
+      im.count = count;
+      im.visible = count > 0;
+    });
+  }
+
+  /** Sorts the first `count` instances into tiers by their own distance to the camera. */
+  private assignSplit(g: VegGroup, bands: number[], count: number, cx: number, cz: number) {
+    g.state = `s:${count}`;
+    g.sx = cx;
+    g.sz = cz;
+    const n = g.meshes.map(() => 0);
+    const mA = g.meshes.map((im) => im.instanceMatrix.array as Float32Array);
+    const cA = g.meshes.map((im) => im.instanceColor!.array as Float32Array);
+    for (let i = 0; i < count; i++) {
+      const tier = tierOf(Math.hypot(g.xz[i * 2] - cx, g.xz[i * 2 + 1] - cz), bands);
+      if (tier < 0) continue;
+      const k = n[tier]++;
+      mA[tier].set(g.mats.subarray(i * 16, i * 16 + 16), k * 16);
+      cA[tier].set(g.cols.subarray(i * 3, i * 3 + 3), k * 3);
+    }
+    this.splitCount += count;
+    g.meshes.forEach((im, l) => {
+      im.count = n[l];
+      im.visible = n[l] > 0;
+      im.instanceMatrix.needsUpdate = true;
+      im.instanceColor!.needsUpdate = true;
+    });
+  }
+
+  /** Tier of every group in a tile; groups whose tile crosses a tier boundary are queued for a per-tree split. */
+  private updateTile(t: VegTile, cx: number, cz: number, splits: Split[]) {
+    const [near, far] = rectDistances(t.ox, t.oz, this.info.tileSize, cx, cz);
+    for (const g of t.groups) {
+      const count = Math.round(g.n * this.density);
+      if (this.forcedLod !== undefined) { this.assignWhole(g, Math.min(this.forcedLod, g.meshes.length - 1), count); continue; }
+      const bands = this.bands(g);
+      const a = tierOf(near, bands), b = tierOf(far, bands);
+      if (a === b) this.assignWhole(g, a, count);
+      else if (g.state !== `s:${count}` || Math.hypot(g.sx - cx, g.sz - cz) > RESPLIT) splits.push({ g, bands, count, d: near, tile: t.key });
+    }
   }
 
   update(dt: number, camera: THREE.Camera, weather?: { rain: number; snow: number; overcast: number }) {
@@ -321,17 +415,16 @@ export class Vegetation {
     vegUniforms.uVegTime.value = this.time;
     vegUniforms.uVegWind.value = this.windNow;
     const cx = camera.position.x, cz = camera.position.z;
-    for (const t of this.tiles.values()) {
-      const d = Math.hypot(t.cx - cx, t.cz - cz);
-      const tier = this.forcedLod ?? (d < this.lodDistance ? 0 : d < this.lodDistance * 2.5 ? 1 : 2);
-      for (const g of t.groups) {
-        // Bushes only near; trees fall back to the last tier they have.
-        const show = g.kind === -1 && tier > 0 && this.forcedLod === undefined ? -1 : Math.min(tier, g.meshes.length - 1);
-        g.meshes.forEach((im, l) => {
-          im.visible = l === show;
-          im.count = Math.round(g.n * this.density);
-        });
-      }
+    const splits: Split[] = [];
+    for (const t of this.tiles.values()) this.updateTile(t, cx, cz, splits);
+    // Nearest first, a few tiles per frame; a group that has never been split goes first.
+    this.splitCount = 0;
+    splits.sort((a, b) => Number(a.g.state.startsWith('s')) - Number(b.g.state.startsWith('s')) || a.d - b.d);
+    const tiles = new Set<string>();
+    for (const s of splits) {
+      if (tiles.size >= SPLITS_PER_FRAME && !tiles.has(s.tile)) break;
+      tiles.add(s.tile);
+      this.assignSplit(s.g, s.bands, s.count, cx, cz);
     }
     this.grass.visible = this.grassOn;
     if (this.grassOn && this.grassAt.distanceTo(camera.position) > 4) {
@@ -404,7 +497,7 @@ export class Vegetation {
         if (g.kind === -1) { bushes += g.n; continue; }
         const name = TREE_NAMES[g.kind];
         trees.set(name, (trees.get(name) ?? 0) + g.n);
-        if (g.meshes[0].visible) near += g.n;
+        near += g.meshes[0].visible ? g.meshes[0].count : 0;
       }
     }
     return { trees, bushes, near, lidar, grass: this.grass.count };
@@ -412,7 +505,9 @@ export class Vegetation {
 
   registerCommands() {
     registerValue('veg.density', 'Anteil der gezeichneten Bäume und Büsche 0..1', () => this.density, (v) => (this.density = v), [0, 1]);
-    registerValue('veg.lod', 'Entfernung (m), bis zu der Bäume detailliert gezeichnet werden', () => this.lodDistance, (v) => { this.lodDistance = v; this.forcedLod = undefined; }, [0, 3000]);
+    registerValue('veg.lod', 'Entfernung (m), bis zu der Bäume detailliert gezeichnet werden (pro Baum)', () => this.lodDistance, (v) => { this.lodDistance = v; this.forcedLod = undefined; }, [0, 3000]);
+    registerValue('veg.lod.billboard', 'Ab dieser Entfernung (m) werden Bäume als Billboard gezeichnet', () => this.billboardDistance, (v) => { this.billboardDistance = v; this.forcedLod = undefined; }, [0, 5000]);
+    registerValue('veg.lod.bush', 'Büsche bis zu dieser Entfernung (m) zeichnen', () => this.bushDistance, (v) => (this.bushDistance = v), [0, 1000]);
     registerCommand({
       name: 'veg.lod.force', help: 'Alle Bäume in einer Detailstufe zeigen (0 = detailliert, 1 = einfach, 2 = Billboard) oder auto', args: '0|1|2|auto',
       complete: () => ['0', '1', '2', 'auto'],
@@ -447,7 +542,8 @@ export class Vegetation {
       name: 'veg.info', help: 'Bäume nach Art, Büsche und Grasbüschel in den geladenen Kacheln',
       run: () => {
         const c = this.counts();
-        return `${[...c.trees].map(([k, n]) => `${k} ${n}`).join(', ') || 'keine Bäume'} · davon ${c.lidar} aus LiDAR · ${c.near} detailliert · ${c.bushes} Büsche · ${c.grass} Grasbüschel · Wind ${this.windNow.toFixed(2)}`;
+        return `${[...c.trees].map(([k, n]) => `${k} ${n}`).join(', ') || 'keine Bäume'} · davon ${c.lidar} aus LiDAR · ${c.near} detailliert · ${c.bushes} Büsche · ${c.grass} Grasbüschel · Wind ${this.windNow.toFixed(2)}\n`
+          + `LOD: detailliert bis ${this.lodDistance} m, einfach bis ${this.billboardDistance} m, dann Billboard · Büsche bis ${this.bushDistance} m · ${this.splitCount} Instanzen im letzten Bild umsortiert`;
       },
     });
   }
@@ -457,6 +553,20 @@ const fract = (v: number) => v - Math.floor(v);
 
 /** One instance: x, y, z, scale and the measured crown radius (m, 0 = model crown). */
 type Rec = [number, number, number, number, number?];
+
+/** Detail tier for a distance: the first band it is under, or -1 beyond the last. */
+export function tierOf(d: number, bands: number[]) {
+  let i = 0;
+  while (i < bands.length && d >= bands[i]) i++;
+  return i >= bands.length ? -1 : i;
+}
+
+/** Nearest and farthest distance from (x, z) to the square [ox, ox + size] × [oz, oz + size]. */
+export function rectDistances(ox: number, oz: number, size: number, x: number, z: number): [number, number] {
+  const dx = Math.max(ox - x, 0, x - (ox + size)), dz = Math.max(oz - z, 0, z - (oz + size));
+  const fx = Math.max(Math.abs(ox - x), Math.abs(ox + size - x)), fz = Math.max(Math.abs(oz - z), Math.abs(oz + size - z));
+  return [Math.hypot(dx, dz), Math.hypot(fx, fz)];
+}
 
 /** The same list in a fixed random order, so drawing only the first n gives an even thinning. */
 function shuffled(list: number[]) {

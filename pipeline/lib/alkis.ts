@@ -118,3 +118,17 @@ export function measureStreets(ways: Way[], area: StreetArea): AlkisRoads['ways'
   }
   return out;
 }
+
+/**
+ * Uses the measured carriageway width for every town street without a `width` tag, by setting the tag, so
+ * every later step (road sections, overlap, graph, game) sees the same width. Returns how many changed.
+ */
+export function applyMeasuredWidths(ways: Way[], data: AlkisRoads | undefined): number {
+  const measured = ways.flatMap((w) => {
+    if (!isDrivable(w.tags) || w.tags.width) return [];
+    const m = measuredWidth(w, data);
+    return m ? [[w, m] as const] : [];
+  });
+  for (const [w, m] of measured) w.tags.width = String(m);
+  return measured.length;
+}

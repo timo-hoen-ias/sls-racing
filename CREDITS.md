@@ -3,6 +3,7 @@
 ## Daten
 - Kartendaten © OpenStreetMap-Mitwirkende, verfügbar unter der Open Database License (ODbL): https://www.openstreetmap.org/copyright
 - Gelände und Brückendecks im Saarland: Digitales Geländemodell DGM1 und Oberflächenmodell DOM1 (Laserscan 2025, 1 m), © GeoBasis DE/LVGL-SL (2025), Datenlizenz Deutschland – Namensnennung – Version 2.0 (https://www.govdata.de/dl-de/by-2-0). Bezug: Landesamt für Vermessung, Geoinformation und Landentwicklung Saarland, freie Geobasisdaten.
+- Gebäude im Saarland: 3D-Gebäudemodelle LoD2 (CityGML), © GeoBasis DE/LVGL-SL (2025), Datenlizenz Deutschland – Namensnennung – Version 2.0 (https://www.govdata.de/dl-de/by-2-0).
 - Gelände außerhalb des Saarlands: Terrain Tiles auf AWS Open Data (Mapzen/Tilezen; Quellen u. a. SRTM, EU-DEM). Siehe https://github.com/tilezen/joerd/blob/master/docs/attribution.md
 
 ## Assets

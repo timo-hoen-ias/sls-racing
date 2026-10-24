@@ -9,7 +9,8 @@ import {
   FAR_N, FAR_TILE_SIZE, Ground, TERRAIN_N, TERRAIN_STEP, encode, encodeTile, localToUtm, tileKey, utmToLocal,
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
-import { buildBuildings } from './lib/buildings.ts';
+import { buildBuildings, buildLod2 } from './lib/buildings.ts';
+import { Footprints, isTrafficStructure, lod2Buildings, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
@@ -17,6 +18,7 @@ import { signalJunctions } from './lib/signals.ts';
 import { RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
+import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
@@ -62,14 +64,29 @@ function main() {
 
   const osm = readOsm(merged, project);
   const tiles = new TileMap(info.tileSize);
+  const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
+  console.log(`ALKIS: measured carriageway width on ${measured} streets`);
   roadHeights(osm.ways, regions, height, console.log);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const carve = new RoadCarve(TERRAIN_STEP);
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n) });
-  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${nBuildings}`);
+  // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
+  const lod2Dir = regions.some((r) => r.lod2?.length) ? paths.lod2 : undefined;
+  const footprints = new Footprints();
+  if (lod2Dir) for (const b of lod2Buildings(lod2Dir)) if (!isTrafficStructure(b)) footprints.add(b.ground);
+  // Only where the region has something already (roads, OSM buildings): the survey tiles reach past it.
+  const T0 = info.tileSize;
+  const used = new Set(tiles.tiles.keys());
+  for (const p of osm.polygons) if (p.tags.building && p.outer.length) used.add(`${Math.floor(p.outer[0][0] / T0)}_${Math.floor(p.outer[0][1] / T0)}`);
+  const outside = (b: Lod2Building) => {
+    const r = b.ground[0] ?? [];
+    return !r.length || !used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`);
+  };
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (b) => isTrafficStructure(b) || outside(b) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) });
+  console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
   const T = info.tileSize;
@@ -124,12 +141,12 @@ function main() {
   // Measured trees from the LiDAR survey where there is one; mapped OSM trees they stand on keep their species.
   const mapped = osm.trees.filter(([e, n]) => !onRoad.has(e, n)).map(([e, n, tags]) => ({ e, n, kind: treeKindOf(tags, rand(e, n, 31)) }));
   const coverage: [number, number, number, number][] = [];
-  const measured: MeasuredTree[] = [];
+  const measuredTrees: MeasuredTree[] = [];
   for (const r of regions) {
     const l = r.boundary.type === 'fixture' ? undefined : loadLidar(r.id);
-    if (l) { coverage.push(...l.coverage); for (const t of l.trees) measured.push(t); }
+    if (l) { coverage.push(...l.coverage); for (const t of l.trees) measuredTrees.push(t); }
   }
-  const lidar = placeLidarTrees(coverage, measured, {
+  const lidar = placeLidarTrees(coverage, measuredTrees, {
     skip: (e, n) => nearLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
     tagsAt: (e, n) => ground.tagsAt(e, n), mapped, rand,
   });
@@ -199,6 +216,8 @@ function main() {
     };
     const lamps = offLanes(b?.lamps ?? []);
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
+    const bi = lod2.info.get(k);
+    if (bi) tile.bldInfo = encode(new Float32Array(bi));
     const ww = waterways.get(k);
     if (ww) tile.waterways = encode(new Float32Array(ww));
     const trees = treesByTile.get(k);
@@ -238,6 +257,7 @@ function main() {
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',
         ...(regions.some((r) => r.laser) ? ['Gelände und Brücken: © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0'] : []),
+        ...(lod2.count ? [LOD2_ATTRIBUTION] : []),
         'Gelände außerhalb: Terrain Tiles (AWS Open Data, SRTM/EU-DEM)']
       : ['Synthetisches Testgelände'],
   };

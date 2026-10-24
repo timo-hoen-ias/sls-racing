@@ -8,7 +8,7 @@ import proj4 from 'proj4';
 // y (optional): absolute height (m NHN) of the model origin, for landmarks whose origin is not on the ground at
 // the centroid. The Schleusenbrücke's origin is its deck top; the map pipeline replaces the estimate with the DGM1
 // height at the bank ends.
-const LANDMARKS: { id: string; ways: number[]; y?: number }[] = [
+const LANDMARKS: { id: string; ways: number[]; y?: number; node?: number; size?: [number, number] }[] = [
   { id: 'ludwigskirche', ways: [72077603] },
   { id: 'rathaus', ways: [185464136] },
   { id: 'kommandantur', ways: [73205872] },
@@ -26,10 +26,20 @@ const LANDMARKS: { id: string; ways: number[]; y?: number }[] = [
   { id: 'festung-ravelin-5', ways: [297024093] },
   { id: 'festung-bastion-6', ways: [372882703] },
   { id: 'schleusenbruecke', ways: [681793548], y: 181.5 },
+  // Point features: a rectangle of `size` (east, north, m) around the OSM node.
+  { id: 'brunnenpflanze', ways: [], node: 288180654, size: [3.75, 2.35] },
 ];
 
 const UTM = '+proj=utm +zone=32 +ellps=GRS80 +units=m +no_defs';
 const round = (v: number) => Math.round(v * 100) / 100;
+
+async function nodeRect(id: number, [w, d]: [number, number]): Promise<[number, number][]> {
+  const res = await fetch(`https://api.openstreetmap.org/api/0.6/node/${id}.json`, { headers: { 'User-Agent': 'sls-racing landmark tool' } });
+  if (!res.ok) throw new Error(`OSM node ${id}: ${res.status}`);
+  const n = ((await res.json()) as { elements: { lat: number; lon: number }[] }).elements[0];
+  const [e, no] = proj4('WGS84', UTM, [n.lon, n.lat]) as [number, number];
+  return [[e - w / 2, no - d / 2], [e + w / 2, no - d / 2], [e + w / 2, no + d / 2], [e - w / 2, no + d / 2]];
+}
 
 async function wayOutline(id: number): Promise<[number, number][]> {
   const res = await fetch(`https://api.openstreetmap.org/api/0.6/way/${id}/full.json`, { headers: { 'User-Agent': 'sls-racing landmark tool' } });
@@ -58,16 +68,23 @@ function centroid(pts: [number, number][]): [number, number] {
 const out = [];
 for (const l of LANDMARKS) {
   // Multi-way landmarks are listed as separate footprints; the model covers all of them.
-  const outlines = await Promise.all(l.ways.map(wayOutline));
+  const outlines = l.node !== undefined ? [await nodeRect(l.node, l.size!)] : await Promise.all(l.ways.map(wayOutline));
   const [e, n] = centroid(outlines[0]);
-  out.push({ id: l.id, glb: `models/landmarks/${l.id}.glb`, e: round(e), n: round(n), heading: 0, footprint: outlines[0].map(([x, y]) => [round(x), round(y)]), osm: l.ways, ...(l.y !== undefined ? { y: l.y } : {}) });
+  out.push({ id: l.id, glb: `models/landmarks/${l.id}.glb`, e: round(e), n: round(n), heading: 0, footprint: outlines[0].map(([x, y]) => [round(x), round(y)]), osm: l.node !== undefined ? [l.node] : l.ways, ...(l.y !== undefined ? { y: l.y } : {}) });
 }
 // Road bridges: railings, fascias and piers on top of the pipeline's decks (tools/blender/make_bridges.py).
 // Needs public/tiles/bridges.json from "npm run world:build"; bridges shorter than MIN_BRIDGE are left plain.
 const MIN_BRIDGE = 30;
 const bridgesFile = new URL('../public/tiles/bridges.json', import.meta.url);
-if (existsSync(bridgesFile)) {
-  const { bridges } = JSON.parse(readFileSync(bridgesFile, 'utf8')) as { bridges: { id: number; name?: string; halfWidth: number; pts: number[] }[] };
+const manifestFile = new URL('../pipeline/landmarks.json', import.meta.url);
+const bridges = existsSync(bridgesFile) ? (JSON.parse(readFileSync(bridgesFile, 'utf8')) as { bridges: { id: number; name?: string; halfWidth: number; pts: number[] }[] }).bridges : [];
+if (!bridges.length && existsSync(manifestFile)) {
+  // No real-world build here (the fixture world has no bridges, and the tests rebuild it): keep the bridge entries.
+  const kept = (JSON.parse(readFileSync(manifestFile, 'utf8')) as { bridge?: number }[]).filter((l) => l.bridge !== undefined);
+  out.push(...kept);
+  console.log(`bridges.json ohne Brücken: ${kept.length} Brücken-Einträge übernommen`);
+}
+{
   for (const b of bridges) {
     const pts: [number, number, number][] = [];
     for (let i = 0; i < b.pts.length; i += 3) pts.push([b.pts[i], b.pts[i + 1], b.pts[i + 2]]);
@@ -88,5 +105,5 @@ if (existsSync(bridgesFile)) {
   }
 }
 
-writeFileSync(new URL('../pipeline/landmarks.json', import.meta.url), JSON.stringify(out, null, 1) + '\n');
+writeFileSync(manifestFile, JSON.stringify(out, null, 1) + '\n');
 console.log(out.map((l) => `${l.id}: ${l.e} / ${l.n}, ${l.footprint.length} Ecken`).join('\n'));

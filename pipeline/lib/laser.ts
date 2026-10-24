@@ -11,12 +11,13 @@ const KM = 1000;
 const NODATA = -9999;
 
 /** "dgm1_32_335_5465_1_SL_2025.tif" (or dom1_…) → [335, 5465], the tile's south-west corner in km. */
-function tileOf(name: string): [number, number] | undefined {
-  const m = /d[go]m1_32_(\d+)_(\d+)_1_/.exec(name);
+function tileOf(name: string, match = LASER_NAME): [number, number] | undefined {
+  const m = match.exec(name);
   return m ? [Number(m[1]), Number(m[2])] : undefined;
 }
+const LASER_NAME = /d[go]m1_32_(\d+)_(\d+)_1_/;
 
-const file = (dir: string, ekm: number, nkm: number) => `${dir}${ekm}_${nkm}.tif.deflate`;
+const file = (dir: string, ekm: number, nkm: number, ext = 'tif') => `${dir}${ekm}_${nkm}.${ext}.deflate`;
 
 /** The km tiles ([east, north] of the south-west corner in km) that touch a UTM bbox. */
 export function kmTiles([w, s, e, n]: [number, number, number, number]): [number, number][] {
@@ -29,9 +30,13 @@ export function kmTiles([w, s, e, n]: [number, number, number, number]): [number
  * Downloads the given km tiles, each from the first archive that has it. Returns how many exist locally,
  * how many of them were new and how many no archive has.
  */
-export async function fetchLaserTiles(dir: string, archives: string[], tiles: [number, number][], log = console.log) {
+export async function fetchLaserTiles(
+  dir: string, archives: string[], tiles: [number, number][], log = console.log,
+  // Other km-tiled archives of the same share (LoD2 CityGML) name their tiles differently.
+  { match = LASER_NAME, ext = 'tif' }: { match?: RegExp; ext?: string } = {},
+) {
   mkdirSync(dir, { recursive: true });
-  const want = tiles.filter(([e, n]) => !existsSync(file(dir, e, n)));
+  const want = tiles.filter(([e, n]) => !existsSync(file(dir, e, n, ext)));
   let have = tiles.length - want.length;
   let fetched = 0;
   for (const url of archives) {
@@ -39,7 +44,7 @@ export async function fetchLaserTiles(dir: string, archives: string[], tiles: [n
     const zip = await RemoteZip.open(url);
     const byTile = new Map<string, ZipEntry>();
     for (const e of zip.entries.values()) {
-      const t = tileOf(e.name);
+      const t = tileOf(e.name, match);
       if (t) byTile.set(`${t[0]}_${t[1]}`, e);
     }
     for (let i = want.length - 1; i >= 0; i--) {
@@ -47,7 +52,7 @@ export async function fetchLaserTiles(dir: string, archives: string[], tiles: [n
       const entry = byTile.get(`${e}_${n}`);
       if (!entry) continue;
       if (entry.method !== 8) throw new Error(`${entry.name}: ZIP method ${entry.method}, expected deflate`);
-      writeFileSync(file(dir, e, n), await zip.readRaw(entry));
+      writeFileSync(file(dir, e, n, ext), await zip.readRaw(entry));
       want.splice(i, 1);
       fetched++;
       have++;

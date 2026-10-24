@@ -166,6 +166,11 @@ export class WorldStreamer implements KnockableSource {
     for (const t of this.loaded.values()) fn(t.ix, t.iy);
   }
 
+  /** Calls fn with the data of every loaded tile (debug commands read extra fields such as bldInfo). */
+  forEachContent(fn: (content: TileContent) => void) {
+    for (const t of this.loaded.values()) fn(t.content);
+  }
+
   /** Calls fn with every street lamp head of the loaded tiles. */
   forEachLamp(fn: (x: number, y: number, z: number) => void) {
     for (const t of this.loaded.values()) {
@@ -412,7 +417,7 @@ export class WorldStreamer implements KnockableSource {
     group.name = `tile ${key}`;
     const shadows = this.quality.shadows > 0;
 
-    const mesh = (m: MeshArrays | undefined, mat: THREE.Material, opts: { cast?: boolean; receive?: boolean } = {}) => {
+    const mesh = (name: string, m: MeshArrays | undefined, mat: THREE.Material, opts: { cast?: boolean; receive?: boolean } = {}) => {
       if (!m) return;
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(m.pos, 3));
@@ -422,14 +427,15 @@ export class WorldStreamer implements KnockableSource {
       if (m.idx) geo.setIndex(new THREE.BufferAttribute(m.idx, 1));
       geo.computeBoundingSphere();
       const o = new THREE.Mesh(geo, mat);
+      o.name = name;
       o.castShadow = shadows && !!opts.cast;
       o.receiveShadow = shadows && opts.receive !== false;
       group.add(o);
       return o;
     };
-    mesh(b.terrain, this.mats.ground);
+    mesh('terrain', b.terrain, this.mats.ground);
     // Water surface with bank distance and flow for the water shader.
-    const wm = mesh(b.water, this.mats.water);
+    const wm = mesh('water', b.water, this.mats.water);
     if (wm) {
       const g = t.u8('ground')!;
       const h = t.f32('terrain')!;
@@ -443,10 +449,10 @@ export class WorldStreamer implements KnockableSource {
       wm.renderOrder = 1;
       this.waterMeshes.add(wm);
     }
-    mesh(b.meshes.roads, this.mats.road);
-    mesh(b.meshes.sidewalks, this.mats.sidewalk);
-    mesh(b.meshes.markings, this.mats.marking);
-    mesh(b.meshes.buildings, this.mats.building, { cast: true });
+    mesh('roads', b.meshes.roads, this.mats.road);
+    mesh('sidewalks', b.meshes.sidewalks, this.mats.sidewalk);
+    mesh('markings', b.meshes.markings, this.mats.marking);
+    mesh('buildings', b.meshes.buildings, this.mats.building, { cast: true });
 
     // Trees and bushes are drawn by the vegetation layer (src/world/vegetation.ts).
 
@@ -470,6 +476,8 @@ export class WorldStreamer implements KnockableSource {
         poles.setMatrixAt(i, m);
         heads.setMatrixAt(i, m);
       }
+      poles.name = 'lamps';
+      heads.name = 'lamp heads';
       poles.castShadow = shadows;
       poles.computeBoundingSphere();
       heads.computeBoundingSphere();

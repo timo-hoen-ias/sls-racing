@@ -2,6 +2,7 @@ import earcut from 'earcut';
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
 import { FACADE_WALLS, facadeType, facadeV } from './facades.ts';
+import { lod2Tags, type Lod2Building, type Surface } from './lod2.ts';
 import type { Polygon } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
 
@@ -42,13 +43,14 @@ function signedArea(r: [number, number][]) {
 
 export function buildBuildings(
   polys: Polygon[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap,
-  opts: { mainRoad?: (e: number, n: number) => boolean } = {},
+  opts: { mainRoad?: (e: number, n: number) => boolean; skip?: (outer: [number, number][]) => boolean } = {},
 ) {
   let count = 0;
   for (const p of polys) {
     if (!p.tags.building || p.tags.building === 'no') continue;
     const outer = p.outer.slice(0, -1);
     if (outer.length < 3 || Math.abs(signedArea(outer)) < 4) continue;
+    if (opts.skip?.(outer)) continue;
     const rings = [outer, ...p.holes.map((h) => h.slice(0, -1))];
     const hs = outer.map(([e, n]) => height(e, n));
     const base = Math.min(...hs) - 0.6;
@@ -199,4 +201,124 @@ function gableShape(rings: [number, number][][], tags: Record<string, string>, w
   const short = Math.min(len(0), len(1));
   const roofHeight = Math.min(short * 0.5 * Math.tan((38 * Math.PI) / 180), 5, wallHeight * 0.45);
   return { corners, roofHeight };
+}
+
+/**
+ * LoD2 buildings (lod2.ts) as measured: real wall and roof surfaces, façades and colours picked like for OSM
+ * buildings. Walls reach a little into the terrain so no gap shows on slopes. Returns per-building info for
+ * the debug overlay: [x, z, height above ground, ALKIS function group, function code] in local metres.
+ */
+export function buildLod2(
+  buildings: Iterable<Lod2Building>, world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap,
+  opts: { mainRoad?: (e: number, n: number) => boolean; skip?: (b: Lod2Building) => boolean } = {},
+): { count: number; info: Map<string, number[]> } {
+  let count = 0;
+  const info = new Map<string, number[]>();
+  for (const b of buildings) {
+    if (opts.skip?.(b)) continue;
+    const foot = b.ground.length ? b.ground : [b.walls.flatMap((w) => { const r: [number, number][] = []; for (let k = 0; k < w.outer.length; k += 3) r.push([w.outer[k], w.outer[k + 1]]); return r; })];
+    let ce = 0, cn = 0, np = 0, area = 0;
+    for (const r of foot) { area += Math.abs(signedArea(r)); for (const [e, n] of r) { ce += e; cn += n; np++; } }
+    ce /= np; cn /= np;
+    const tags = lod2Tags(b.fn);
+    const hsh = hash(parseInt(b.id.slice(-8), 36) || count);
+    const facade = facadeType(tags, {
+      area, height: b.top - b.base,
+      centre: Math.hypot(ce - world.originE, cn - world.originN),
+      mainRoad: !!opts.mainRoad && foot.some((r) => r.some(([e, n]) => opts.mainRoad!(e, n))),
+      rand: ((hsh >>> 16) % 1000) / 1000,
+    });
+    const walls = FACADE_WALLS[facade.type] ?? WALLS;
+    const wall = walls[hsh % walls.length];
+    const roof = ROOFS[(hsh >>> 8) % ROOFS.length];
+    const tile = tiles.at(ce, cn);
+    const buf = tile.buildings;
+    const ground = height(ce, cn);
+
+    for (const s of b.walls) {
+      const n = newell(s.outer);
+      if (!n) continue;
+      // Along the wall, horizontally: façade u runs this way.
+      const hl = Math.hypot(n[0], n[1]) || 1;
+      const he = -n[1] / hl, hn = n[0] / hl;
+      let zmin = Infinity;
+      for (let k = 2; k < s.outer.length; k += 3) zmin = Math.min(zmin, s.outer[k]);
+      const c = shade(wall, 0.92 + 0.08 * Math.abs(n[0] / hl));
+      polygon(buf, s, n, (e, nn, h) => {
+        // Foot of the wall: down into the terrain.
+        const y = h <= zmin + 0.05 ? Math.min(h, height(e, nn)) - 0.5 : h;
+        const u = ((e - s.outer[0]) * he + (nn - s.outer[1]) * hn) / 14;
+        return { y, c, uv: [u, facadeV(facade, (h - b.base) / 9)] as [number, number] };
+      }, world);
+    }
+    for (const s of b.roofs) {
+      const n = newell(s.outer);
+      if (!n) continue;
+      polygon(buf, s, n, (_e, _n, h) => ({ y: h, c: roof, uv: [0.02, 0.02] as [number, number] }), world);
+    }
+    const [x, z] = utmToLocal(world, ce, cn);
+    const k = `${Math.floor(ce / world.tileSize)}_${Math.floor(cn / world.tileSize)}`;
+    if (!info.has(k)) info.set(k, []);
+    const [group, code] = b.fn.split('_').map(Number);
+    info.get(k)!.push(x, z, Math.round((b.top - ground) * 10) / 10, group || 0, code || 0);
+    count++;
+  }
+  return { count, info };
+}
+
+const shade = (c: [number, number, number], f: number) => c.map((v) => Math.min(255, Math.round(v * f))) as [number, number, number];
+
+/** Unit normal (east, north, up) of a planar ring by Newell's method, as wound; undefined if degenerate. */
+function newell(r: number[]): V3 | undefined {
+  let x = 0, y = 0, z = 0;
+  const m = r.length / 3;
+  for (let i = 0; i < m; i++) {
+    const j = (i + 1) % m;
+    const [ae, an, ah] = [r[i * 3], r[i * 3 + 1], r[i * 3 + 2]];
+    const [be, bn, bh] = [r[j * 3], r[j * 3 + 1], r[j * 3 + 2]];
+    x += (an - bn) * (ah + bh);
+    y += (ah - bh) * (ae + be);
+    z += (ae - be) * (an + bn);
+  }
+  const l = Math.hypot(x, y, z);
+  return l > 1e-6 ? [x / l, y / l, z / l] : undefined;
+}
+
+/** Triangulates a planar surface (CityGML winding: counter-clockwise seen from outside) into the mesh. */
+function polygon(
+  buf: MeshBuf, s: Surface, n: V3,
+  attr: (e: number, n: number, h: number) => { y: number; c: [number, number, number]; uv: [number, number] },
+  world: WorldInfo,
+) {
+  // Project onto the plane the normal points most along.
+  const ax = Math.abs(n[0]) >= Math.abs(n[1]) && Math.abs(n[0]) >= Math.abs(n[2]) ? 0 : Math.abs(n[1]) >= Math.abs(n[2]) ? 1 : 2;
+  const [i0, i1] = ax === 0 ? [1, 2] : ax === 1 ? [2, 0] : [0, 1];
+  const all = [s.outer, ...s.holes];
+  const flat: number[] = [];
+  const holes: number[] = [];
+  for (const r of all) {
+    if (flat.length) holes.push(flat.length / 2);
+    for (let k = 0; k < r.length; k += 3) flat.push(r[k + i0], r[k + i1]);
+  }
+  const tris = earcut(flat, holes);
+  if (!tris.length) return;
+  const pts = all.flatMap((r) => { const o: number[][] = []; for (let k = 0; k < r.length; k += 3) o.push([r[k], r[k + 1], r[k + 2]]); return o; });
+  // Local frame normal: x = east, y = up, z = -north.
+  const ln: V3 = [n[0], n[2], -n[1]];
+  const start = buf.vertexCount;
+  for (const [e, nn, h] of pts) {
+    const a = attr(e, nn, h);
+    const [x, z] = utmToLocal(world, e, nn);
+    buf.vertex(x, a.y, z, { n: ln, c: a.c, uv: a.uv });
+  }
+  // earcut's winding in the projected plane says nothing about the face: orient each triangle by the normal.
+  for (let i = 0; i < tris.length; i += 3) {
+    const [a, b, c] = [pts[tris[i]], pts[tris[i + 1]], pts[tris[i + 2]]];
+    const cx = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]);
+    const cy = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+    const cz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    // (e, n, h) → (x, y, z) = (e, h, -n) is a rotation, so a winding counter-clockwise about n stays so about ln.
+    if (cx * n[0] + cy * n[1] + cz * n[2] > 0) buf.tri(start + tris[i], start + tris[i + 1], start + tris[i + 2]);
+    else buf.tri(start + tris[i], start + tris[i + 2], start + tris[i + 1]);
+  }
 }

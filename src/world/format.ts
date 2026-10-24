@@ -3,7 +3,7 @@
 /** Edge length of one world tile in metres. Tiles sit on the global UTM grid, not per city. */
 export const TILE_SIZE = 256;
 /** Terrain samples per tile edge (TERRAIN_N - 1 cells of TILE_SIZE / (TERRAIN_N - 1) metres). */
-export const TERRAIN_N = 33;
+export const TERRAIN_N = 65;
 export const TERRAIN_STEP = TILE_SIZE / (TERRAIN_N - 1);
 
 /** Far view tiles (P3): edge length in metres and terrain samples per edge (32 m grid). */
@@ -164,7 +164,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', bushes: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', bushes: 'f32', waterways: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

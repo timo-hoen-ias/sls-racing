@@ -24,6 +24,7 @@ import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
+import { WorldAudio } from './audio/worldAudio.ts';
 import { WorldStreamer } from './world/streamer.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -49,7 +50,8 @@ async function boot() {
   const view = createScene($('game') as HTMLCanvasElement, quality);
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
-  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, createMaterials(), quality);
+  const mats = createMaterials();
+  const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
   view.scene.add(streamer.root);
 
   const spawn = index.spawn;
@@ -74,6 +76,15 @@ async function boot() {
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
+  const worldAudio = new WorldAudio({
+    R: RAPIER, world, graph, car: car.body, scene: view.scene,
+    ignore: (c) => traffic.isSolid(c.parent()),
+    waterMeshes: () => {
+      const out: THREE.Mesh[] = [];
+      streamer.root.traverse((o) => { if ((o as THREE.Mesh).material === mats.water) out.push(o as THREE.Mesh); });
+      return out;
+    },
+  });
   let streetTimer = 0;
   let mapTimer = 0;
 
@@ -84,6 +95,7 @@ async function boot() {
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sound.onBackfire = () => effects.backfire(ip, iq, car.body.linvel());
     traffic.attachAudio(sound.context, sound.world);
+    worldAudio.attach(sound);
     await sound.resume().catch(() => {});
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
   });
@@ -241,6 +253,7 @@ async function boot() {
       const strength = Math.min(1, (hit - 3.5) / 12);
       effects.impact({ x: ip.x - hitDir.x * 2, y: ip.y - Math.max(0, hitDir.y) * 0.3, z: ip.z - hitDir.z * 2 }, strength);
       sound?.impact(strength);
+      worldAudio.impact(ip, car.heading(), strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
       hitCooldown = 0.25;
     }
@@ -248,6 +261,7 @@ async function boot() {
     const lvel = car.body.linvel();
     const simDt = debugState.frozen ? 0 : dt * debugState.timeScale;
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
+    if (worldReady) worldAudio.update(dt, ip, car.heading());
     effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
     cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     view.follow(ip);

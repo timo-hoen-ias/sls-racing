@@ -3,6 +3,7 @@
 // overrun crackle, shift clunks, tyre squeal, road roar, wind, nitro and impacts.
 // Engine voice and gearbox behaviour follow warehouse-racing's engine model, tuned for a road car.
 
+import { EnvReverb } from './envReverb.ts';
 import { createEngineSource, type EngineSource, type EngineVoiceSpec, loadEngineWorklet } from './engineWorklet.ts';
 
 export interface SoundState {
@@ -70,6 +71,8 @@ export class EngineSound {
   muted = false;
   /** Input for world sounds (traffic, ambience): mixed with the car, muted with it and sent through the reverb. */
   readonly world: GainNode;
+  /** Environment reverb, when the quality setting has it. */
+  reverb?: EnvReverb;
   /** Called when the exhaust backfires audibly (for the flame effect). */
   onBackfire?: () => void;
 
@@ -93,14 +96,8 @@ export class EngineSound {
     comp.threshold.value = -14;
     comp.ratio.value = 4;
     this.master.connect(comp).connect(ctx.destination);
-    if (reverb) {
-      // Reflections off the house fronts: a short, dark stereo tail.
-      const conv = ctx.createConvolver();
-      conv.buffer = streetImpulse(ctx);
-      const wet = ctx.createGain();
-      wet.gain.value = 0.22;
-      this.master.connect(conv).connect(wet).connect(comp);
-    }
+    // Reflections off house fronts, bridges and tunnel walls, following the surroundings (envReverb.ts).
+    if (reverb) this.reverb = new EnvReverb(ctx, this.master, comp);
 
     // Engine: pulses → drive → resonances → low-pass → level.
     this.engine = createEngineSource(ctx, VOICE, this.noise, worklet);
@@ -326,28 +323,6 @@ function driveCurve(drive: number) {
   const norm = Math.tanh(k);
   for (let i = 0; i < n; i++) curve[i] = Math.tanh(k * ((i / (n - 1)) * 2 - 1)) / norm;
   return curve;
-}
-
-/** Procedural impulse response: a few early reflections and a damped diffuse tail. */
-function streetImpulse(ctx: AudioContext) {
-  const len = Math.floor(ctx.sampleRate * 1.3);
-  const b = ctx.createBuffer(2, len, ctx.sampleRate);
-  for (let ch = 0; ch < 2; ch++) {
-    const d = b.getChannelData(ch);
-    let lp = 0;
-    for (let i = 0; i < len; i++) {
-      const t = i / ctx.sampleRate;
-      // Darker as it decays: one-pole low-pass with a falling cutoff.
-      const a = 0.5 * Math.exp(-t * 3) + 0.08;
-      lp += a * (Math.random() * 2 - 1 - lp);
-      d[i] = lp * Math.exp(-t * 4.2) * 0.6;
-    }
-    for (const [ms, g] of [[11, 0.5], [23, 0.35], [37, 0.3], [58, 0.22], [83, 0.15]]) {
-      const i = Math.floor(((ms + ch * 3.7) / 1000) * ctx.sampleRate);
-      d[i] += g * (ch ? -1 : 1);
-    }
-  }
-  return b;
 }
 
 function noiseBuffer(ctx: AudioContext) {

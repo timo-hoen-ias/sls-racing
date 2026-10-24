@@ -18,6 +18,7 @@ import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { buildRoads } from './lib/roads.ts';
+import { terrariumSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
 import { fixtureOsm } from './fixture.ts';
@@ -169,7 +170,7 @@ function main() {
   };
   // Far view (P3): coarse terrain and building blocks around regions that ask for it.
   const farRegion = regions.find((r) => r.far && existsSync(`${paths.raw(r.id)}far-osm.json`));
-  if (farRegion?.far && terrarium) {
+  if (farRegion?.far && farRegion.terrain.source === 'terrarium') {
     const farJson: OsmJson = JSON.parse(readFileSync(`${paths.raw(farRegion.id)}far-osm.json`, 'utf8'));
     const farOsm = readOsm(farJson, project);
     // The detailed tiles plus the far margin (the extract itself reaches further along long relations).
@@ -179,8 +180,7 @@ function main() {
     // Detailed terrain where the near tiles have it, so both meet; the coarse zoom beyond.
     const coarse = terrariumSampler(paths.terrain, farRegion.far.zoom);
     const farHeight = (e: number, n: number) => {
-      const ll = toLonLat(e, n);
-      try { return sampler.at(...ll); } catch { return coarse.at(...ll); }
+      try { return height.raw(e, n); } catch { return coarse.at(...toLonLat(e, n)); }
     };
     idx.far = { size: FAR_TILE_SIZE, n: FAR_N, tiles: buildFar({ info, polygons: farOsm.polygons, box: { e0, n0, e1, n1 }, height: farHeight, out: paths.out }) };
   }

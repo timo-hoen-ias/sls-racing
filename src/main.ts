@@ -160,6 +160,7 @@ async function boot() {
   bigMap.onClose = () => (input.mapOpen = false);
   $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
   const weather = new WeatherSystem(quality, view);
+  weather.precipitation.lights.push(...carLights.heads, ...lampLights.pool);
   weather.onChange = (text) => navHud.toast(text);
   for (const c of weatherCommands(weather)) registerCommand(c);
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);

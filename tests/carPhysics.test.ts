@@ -151,13 +151,13 @@ describe('Vehicle dynamics', () => {
     expect(car.wheels[2].load).toBeGreaterThan(car.wheels[3].load * 1.2);
   });
 
-  it('corners at about 1 g', () => {
+  it('corners at about 1.4 g (arcade grip)', () => {
     const { car, drive } = setup();
     drive({}, 1);
     while (car.speed < 100 / 3.6) drive({ throttle: 1 }, 1 / 60);
     drive({ throttle: 0.5, steer: 1 }, 3);
-    expect(Math.abs(car.accel.x) / 9.81).toBeGreaterThan(0.85);
-    expect(Math.abs(car.accel.x) / 9.81).toBeLessThan(1.3);
+    expect(Math.abs(car.accel.x) / 9.81).toBeGreaterThan(1.15);
+    expect(Math.abs(car.accel.x) / 9.81).toBeLessThan(1.7);
   });
 
   it('stops from 100 km/h in a realistic distance with ABS', () => {
@@ -167,8 +167,8 @@ describe('Vehicle dynamics', () => {
     const z0 = car.body.translation().z;
     while (car.speed > 0.5) drive({ brake: 1 }, 1 / 60);
     const d = Math.abs(car.body.translation().z - z0);
-    expect(d).toBeGreaterThan(30);
-    expect(d).toBeLessThan(40);
+    expect(d).toBeGreaterThan(24);
+    expect(d).toBeLessThan(36);
   });
 
   it('spins the rear wheels on a wet road without traction control', () => {

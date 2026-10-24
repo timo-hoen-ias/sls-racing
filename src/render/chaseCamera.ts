@@ -11,6 +11,11 @@ export class ChaseCamera {
   mode: CamMode = 'chase';
   /** Showroom view (cam.orbit): fixed angle around the car in rad (0 = behind, π = in front), or null. */
   orbit: number | null = null;
+  /**
+   * Vertical field of view at standstill (cam.fov), chase/far/hood and cockpit. Three.js FOV is vertical:
+   * 52° is about 82° horizontal on 16:9. Wider angles push the road away and make it look narrow.
+   */
+  fov = { chase: 52, cockpit: 58 };
   /** Cockpit head movement from g-forces, 0..1. */
   headbob = 1;
   /** Body-frame acceleration (m/s², x = left, z = forward) and steering, set each frame for the cockpit view. */
@@ -88,7 +93,7 @@ export class ChaseCamera {
       this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * s, (Math.random() - 0.5) * s, 0));
     }
     this.camera.lookAt(this.look);
-    const fov = 62 + Math.min(kmh, 220) * 0.07 + (boosting ? 8 : 0);
+    const fov = this.fov.chase + Math.min(kmh, 220) * 0.045 + (boosting ? 6 : 0);
     this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
     this.camera.updateProjectionMatrix();
   }
@@ -110,7 +115,7 @@ export class ChaseCamera {
     const look = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI + (lookBack ? Math.PI : 0) + m.steer * 0.35 * k);
     const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(-this.head.z * 0.6, 0, this.head.x * 1.2));
     this.camera.quaternion.copy(carQuat).multiply(look).multiply(tilt);
-    const fov = 68 + Math.min(Math.abs(speed) * 3.6, 250) * 0.02;
+    const fov = this.fov.cockpit + Math.min(Math.abs(speed) * 3.6, 250) * 0.02;
     this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
     this.camera.updateProjectionMatrix();
     this.initialised = false;

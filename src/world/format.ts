@@ -75,6 +75,12 @@ export interface RoadGraphData {
     c: number;
     /** One-way in a → b direction. */
     o?: 1;
+    /** Carriageway width (m); missing in graphs built before it was stored. */
+    w?: number;
+    /** Lanes (total on two-way roads). */
+    l?: number;
+    /** Centre of the rightmost lane, metres right of the centreline (a → b on one-way roads). */
+    r?: number;
     /** Polyline x, y, z from a to b, including both ends. */
     p: number[];
   }[];

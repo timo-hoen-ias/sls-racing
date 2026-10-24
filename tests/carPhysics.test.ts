@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { DriveInput } from '../src/input/input.ts';
-import { CarPhysics } from '../src/vehicle/carPhysics.ts';
+import { CarPhysics, maxSteerAngle } from '../src/vehicle/carPhysics.ts';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -18,7 +18,7 @@ function setup(heading = 0) {
   );
   const car = new CarPhysics(RAPIER, world, { x: 0, y: 1, z: 0 }, heading);
   const drive = (input: Partial<DriveInput>, seconds: number) => {
-    const full: DriveInput = { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, ...input };
+    const full: DriveInput = { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false, ...input };
     for (let i = 0; i < seconds * 60; i++) {
       car.update(full, 1 / 60);
       world.step();
@@ -111,5 +111,27 @@ describe('CarPhysics tyres', () => {
     }
     expect(t100).toBeGreaterThan(3);
     expect(t100).toBeLessThan(6);
+  });
+});
+
+describe('Steering', () => {
+  it('gives full lock when slow and only a few degrees at speed', () => {
+    expect(maxSteerAngle(0)).toBeCloseTo(0.6, 2);
+    expect(maxSteerAngle(100 / 3.6)).toBeLessThan(0.2);
+    expect(maxSteerAngle(200 / 3.6)).toBeLessThan(0.1);
+    expect(maxSteerAngle(200 / 3.6)).toBeGreaterThan(0.04);
+  });
+
+  it('stays stable with full lock at 200 km/h', () => {
+    const { car, drive } = setup();
+    drive({}, 1);
+    while (car.speed < 200 / 3.6) drive({ throttle: 1, nitro: true }, 1 / 60);
+    drive({ throttle: 0.6, steer: 1 }, 2);
+    // No spin: the car keeps most of its speed and still points along its travel.
+    expect(car.speed).toBeGreaterThan(150 / 3.6);
+    const lv = car.body.linvel();
+    const h = car.heading();
+    const travel = Math.atan2(lv.x, -lv.z);
+    expect(Math.abs(Math.atan2(Math.sin(travel - h), Math.cos(travel - h)))).toBeLessThan(0.2);
   });
 });

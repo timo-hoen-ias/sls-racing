@@ -15,7 +15,9 @@ import { BigMap } from './ui/bigMap.ts';
 import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
-import { ENGINE } from './vehicle/tuning.ts';
+import { ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
+import { runCommand } from './debug/registry.ts';
+import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { WorldStreamer } from './world/streamer.ts';
@@ -50,7 +52,7 @@ async function boot() {
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
   const carView = new CarView();
   view.scene.add(carView.root);
-  const effects = new CarEffects(quality);
+  const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
   const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
@@ -73,7 +75,7 @@ async function boot() {
   const startBtn = $('start') as HTMLButtonElement;
   startBtn.addEventListener('click', async () => {
     startBtn.hidden = true;
-    sound ??= await EngineSound.create(quality.reverb);
+    sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sound.onBackfire = () => effects.backfire(ip, iq, car.body.linvel());
     await sound.resume().catch(() => {});
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
@@ -102,11 +104,20 @@ async function boot() {
   let hitDir = { x: 0, y: 0, z: 0 };
   let hitCooldown = 0;
 
+  const setManual = (on: boolean) => {
+    car.drivetrain.manual = on;
+    navHud.toast(on ? 'Manuell schalten' : 'Automatik', 1.2);
+    try { localStorage.setItem('sls.gearbox', on ? 'manual' : 'auto'); } catch { /* storage blocked */ }
+  };
+  try { car.drivetrain.manual = localStorage.getItem('sls.gearbox') === 'manual'; } catch { /* storage blocked */ }
+
   const resetCar = () => {
     car.reset({ x: safe.x, y: safe.y + 1.2, z: safe.z }, safe.heading);
     prevVel.x = prevVel.y = prevVel.z = 0;
     hitCooldown = 0.6;
   };
+
+  const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
   let last = performance.now();
@@ -123,6 +134,12 @@ async function boot() {
       if (e === 'camera') cam.next();
       if (e === 'mute') sound?.toggleMute();
       if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
+      if (e === 'gearbox') setManual(!car.drivetrain.manual);
+      if (e === 'shiftUp' || e === 'shiftDown') {
+        // A shift paddle in automatic mode switches to manual, like a tiptronic.
+        if (!car.drivetrain.manual) setManual(true);
+        car.drivetrain.shift(e === 'shiftUp' ? 1 : -1);
+      }
     }
 
     const t = car.body.translation();
@@ -135,7 +152,8 @@ async function boot() {
       $('loading').hidden = worldReady;
     }
 
-    const drive = startBtn.hidden && worldReady && !bigMap.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false };
+    vehicleDebug.update();
+    const drive = startBtn.hidden && worldReady && !bigMap.open ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
     acc += dt;
     while (acc >= STEP) {
       prev.p.copy(curr.p);
@@ -174,7 +192,7 @@ async function boot() {
     }
     hit = 0;
     effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
-    cam.update(ip, iq, car.speed, car.boosting, dt);
+    cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     view.follow(ip);
     // Navigation, street name and maps.
     const heading = car.heading();
@@ -198,7 +216,7 @@ async function boot() {
     if (car.boosting) input.rumble(0.25, 60);
     else if (car.slip > 0.4) input.rumble(0.12 * car.slip, 60);
 
-    tacho.update({ rpm: dtr.rpm, gear: dtr.gear, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
+    tacho.update({ rpm: dtr.rpm, gear: dtr.gear, manual: dtr.manual, kmh: Math.abs(car.speed) * 3.6, nitro: car.nitro, boosting: car.boosting, limiter: dtr.limiter }, dt, now / 1000);
     frames++;
     fpsT += dt;
     if (fpsT > 0.5) {
@@ -212,6 +230,7 @@ async function boot() {
       fps, speed: car.speed, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
+      debug: (line: string) => runCommand(line),
     };
     requestAnimationFrame(frame);
   };

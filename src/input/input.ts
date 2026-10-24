@@ -6,20 +6,23 @@ export interface DriveInput {
   steer: number; // -1 (left) .. 1 (right)
   nitro: boolean;
   handbrake: boolean;
+  /** Held: camera looks backwards. */
+  lookBack: boolean;
 }
 
-export type InputEvent = 'reset' | 'camera' | 'mute' | 'map';
+export type InputEvent = 'reset' | 'camera' | 'mute' | 'map' | 'shiftUp' | 'shiftDown' | 'gearbox';
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const deadzone = (v: number, d = 0.12) => (Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d));
 
 export class Input {
-  readonly state: DriveInput = { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false };
+  readonly state: DriveInput = { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
   private keys = new Set<string>();
   private touch = { steer: 0, gas: false, brake: false, nitro: false, hand: false };
   private pending: InputEvent[] = [];
   private padButtons: boolean[] = [];
   private keySteer = 0;
+  private stickShift = 0;
   usingTouch = false;
   /** Set by the game while the full map is shown. */
   mapOpen = false;
@@ -33,6 +36,9 @@ export class Input {
       if (e.code === 'KeyR') this.pending.push('reset');
       if (e.code === 'KeyC') this.pending.push('camera');
       if (e.code === 'KeyM') this.pending.push('mute');
+      if (e.code === 'KeyE') this.pending.push('shiftUp');
+      if (e.code === 'KeyQ') this.pending.push('shiftDown');
+      if (e.code === 'KeyG') this.pending.push('gearbox');
       if (e.code === 'Tab' || e.code === 'KeyK' || (e.code === 'Escape' && this.mapOpen)) this.pending.push('map');
       if (e.code.startsWith('Arrow') || e.code === 'Space' || e.code === 'Tab') e.preventDefault();
     });
@@ -87,6 +93,7 @@ export class Input {
     let steer = this.keySteer;
     let nitro = k('ShiftLeft', 'ShiftRight');
     let handbrake = k('Space');
+    let lookBack = k('KeyB');
 
     for (const pad of navigator.getGamepads?.() ?? []) {
       if (!pad || !pad.connected) continue;
@@ -100,12 +107,21 @@ export class Input {
       brake = Math.max(brake, b(6)); // LT
       nitro ||= pressed(0) || pressed(5); // A / RB
       handbrake ||= pressed(1) || pressed(2); // B / X
+      lookBack ||= pressed(4); // LB
       // Edge-triggered buttons: Y = reset, Back/View = camera, Start/Menu = map.
-      ([[3, 'reset'], [8, 'camera'], [9, 'map']] as const).forEach(([i, ev]) => {
+      // R3 (right stick click) toggles the gearbox mode.
+      ([[3, 'reset'], [8, 'camera'], [9, 'map'], [11, 'gearbox']] as const).forEach(([i, ev]) => {
         const p = pressed(i);
         if (p && !this.padButtons[i]) this.pending.push(ev);
         this.padButtons[i] = p;
       });
+      // Right stick up/down shifts (edge-triggered with hysteresis).
+      const ry = pad.axes[3] ?? 0;
+      if (this.stickShift === 0 && Math.abs(ry) > 0.65) {
+        this.stickShift = ry < 0 ? 1 : -1;
+        this.pending.push(ry < 0 ? 'shiftUp' : 'shiftDown');
+        this.lastDevice = 'gamepad';
+      } else if (Math.abs(ry) < 0.3) this.stickShift = 0;
     }
 
     if (this.usingTouch) {
@@ -116,7 +132,7 @@ export class Input {
       handbrake ||= this.touch.hand;
     }
 
-    Object.assign(this.state, { throttle, brake, steer: clamp(steer, -1, 1), nitro, handbrake });
+    Object.assign(this.state, { throttle, brake, steer: clamp(steer, -1, 1), nitro, handbrake, lookBack });
   }
 
   takeEvents(): InputEvent[] {

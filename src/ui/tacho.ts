@@ -23,6 +23,7 @@ function arc(r: number, v0: number, v1: number) {
 export interface TachoReading {
   rpm: number;
   gear: number; // -1 = reverse
+  manual: boolean;
   kmh: number;
   nitro: number; // 0..1
   boosting: boolean;
@@ -36,10 +37,11 @@ export class Tacho {
   private nitroArc: SVGPathElement;
   private nitroLen: number;
   private shiftLight: SVGCircleElement;
+  private mode: SVGTextElement;
   private root: HTMLElement;
   private shown = 0;
   private burn = 0;
-  private last = { kmh: -1, gear: '', nitro: -1, shift: false, burn: -1 };
+  private last = { kmh: -1, gear: '', nitro: -1, shift: false, burn: -1, mode: '' };
 
   private maxRpm: number;
   private redRpm: number;
@@ -74,6 +76,7 @@ export class Tacho {
         <path d="${arc(80, v(redRpm), v(scaleMax))}" fill="none" stroke="#ff3b30" stroke-width="5" opacity=".9"/>
         <g class="tacho-ticks">${ticks}</g>
         <text x="100" y="62" class="tacho-unit">×1000 /min</text>
+        <text x="100" y="78" class="tacho-mode">A</text>
         <circle class="tacho-shift" cx="100" cy="40" r="4.5"/>
         <g class="tacho-needle"><g transform="rotate(${A0} ${CX} ${CY})">
           <path d="M${CX - 14} ${CY - 2.2} L${CX + 76} ${CY - 0.8} L${CX + 76} ${CY + 0.8} L${CX - 14} ${CY + 2.2} Z" fill="#ff4a2e"/>
@@ -87,6 +90,7 @@ export class Tacho {
     this.speed = root.querySelector('.tacho-speed span')!;
     this.nitroArc = root.querySelector('.tacho-nitro')!;
     this.shiftLight = root.querySelector('.tacho-shift')!;
+    this.mode = root.querySelector('.tacho-mode')!;
     this.nitroLen = (SWEEP / 360) * 2 * Math.PI * 91;
     this.nitroArc.style.strokeDasharray = `${this.nitroLen} ${this.nitroLen}`;
     this.maxRpm = scaleMax;
@@ -107,6 +111,8 @@ export class Tacho {
     if (kmh !== L.kmh) this.speed.textContent = String((L.kmh = kmh));
     const gear = r.gear < 0 ? 'R' : r.kmh < 1 && r.rpm < 1000 ? 'N' : String(r.gear);
     if (gear !== L.gear) this.gear.textContent = L.gear = gear;
+    const mode = r.manual ? 'M' : 'A';
+    if (mode !== L.mode) this.mode.textContent = L.mode = mode;
     if (Math.abs(r.nitro - L.nitro) > 0.002) {
       L.nitro = r.nitro;
       this.nitroArc.style.strokeDashoffset = f1(this.nitroLen * (1 - r.nitro));

@@ -36,7 +36,11 @@ export class CarEffects {
   private smokeRate: number;
   private nitroAcc = 0;
 
-  constructor(q: Quality) {
+  private exhausts: THREE.Vector3[];
+
+  /** exhausts: tailpipe ends in body space. */
+  constructor(q: Quality, exhausts: THREE.Vector3[]) {
+    this.exhausts = exhausts;
     this.marks = new SkidMarks(q.effects.skids);
     this.particles = new Particles(q.effects.particles);
     this.smokeRate = 30 * q.effects.particles;
@@ -120,7 +124,7 @@ export class CarEffects {
       this.nitroAcc += dt * 70;
       while (this.nitroAcc >= 1) {
         this.nitroAcc -= 1;
-        this.exhaust(pos, quat, lv, Math.random() < 0.5 ? -1 : 1, '#6fc4ff', 0.35, 0.12 + Math.random() * 0.08);
+        this.exhaust(pos, quat, lv, Math.floor(Math.random() * this.exhausts.length), '#6fc4ff', 0.35, 0.12 + Math.random() * 0.08);
       }
     }
     this.particles.update(Math.min(dt, 0.05), viewHeight, camera.fov);
@@ -128,7 +132,7 @@ export class CarEffects {
 
   /** Orange flame burst from the tailpipes (overrun pops). */
   backfire(pos: THREE.Vector3, quat: THREE.Quaternion, lv: { x: number; y: number; z: number }) {
-    for (const side of [-1, 1]) for (let k = 0; k < 5; k++) this.exhaust(pos, quat, lv, side, k < 2 ? '#fff1b0' : '#ff8a2a', 0.28, 0.08 + Math.random() * 0.06);
+    for (let e = 0; e < this.exhausts.length; e++) for (let k = 0; k < 5; k++) this.exhaust(pos, quat, lv, e, k < 2 ? '#fff1b0' : '#ff8a2a', 0.28, 0.08 + Math.random() * 0.06);
   }
 
   /** Sparks and a puff of dust at a hit; strength 0..1. */
@@ -156,9 +160,8 @@ export class CarEffects {
     }
   }
 
-  private exhaust(pos: THREE.Vector3, quat: THREE.Quaternion, lv: { x: number; y: number; z: number }, side: number, color: string, size: number, life: number) {
-    // Tailpipes at the rear bumper (body space: +x left, +z forward).
-    tmp.set(side * 0.45, -0.13, -2.35).applyQuaternion(quat).add(pos);
+  private exhaust(pos: THREE.Vector3, quat: THREE.Quaternion, lv: { x: number; y: number; z: number }, pipe: number, color: string, size: number, life: number) {
+    tmp.copy(this.exhausts[pipe]).applyQuaternion(quat).add(pos);
     tmpQ.copy(quat);
     const back = new THREE.Vector3(0, 0, -1).applyQuaternion(tmpQ);
     const sp = 6 + Math.random() * 4;

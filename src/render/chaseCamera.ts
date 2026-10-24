@@ -9,6 +9,9 @@ export class ChaseCamera {
   private pos = new THREE.Vector3();
   private look = new THREE.Vector3();
   private initialised = false;
+  /** Current swing around the car (rad): 0 = behind, π = in front looking back. */
+  private yaw = 0;
+  private wasLookBack = false;
   private camera: THREE.PerspectiveCamera;
 
   constructor(camera: THREE.PerspectiveCamera) {
@@ -19,10 +22,23 @@ export class ChaseCamera {
     this.mode = MODES[(MODES.indexOf(this.mode) + 1) % MODES.length];
   }
 
-  update(carPos: THREE.Vector3, carQuat: THREE.Quaternion, speed: number, boosting: boolean, dt: number) {
+  /**
+   * reversing: swings the camera round to look where the car is going.
+   * lookBack: held button, snaps to a rear view at once.
+   */
+  update(carPos: THREE.Vector3, carQuat: THREE.Quaternion, speed: number, boosting: boolean, dt: number, reversing = false, lookBack = false) {
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuat);
     fwd.y *= 0.3;
     fwd.normalize();
+    const want = reversing !== lookBack ? Math.PI : 0;
+    if (lookBack !== this.wasLookBack) {
+      this.yaw = want;
+      this.initialised = false;
+      this.wasLookBack = lookBack;
+    } else {
+      this.yaw += (want - this.yaw) * (1 - Math.exp(-dt * 3));
+    }
+    if (Math.abs(this.yaw) > 1e-4) fwd.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
     const kmh = Math.abs(speed) * 3.6;
     let desired: THREE.Vector3;
     let target: THREE.Vector3;

@@ -12,8 +12,10 @@ export interface SceneSetup {
   sun: THREE.DirectionalLight;
   /** Post-processing chain; absent on low quality. */
   post?: PostFX;
-  /** Keeps the shadow camera centred on the car. */
+  /** Keeps the shadow camera on the car, pushed ahead in the view direction. */
   follow(target: THREE.Vector3): void;
+  /** Half width of the shadowed square around the car in m (fx.shadowdist). */
+  shadowExtent: number;
   resize(): void;
   /** speed01: 0 standing .. 1 flat out, boost 0..1, for the speed blur. */
   render(dt: number, speed01: number, boost: number): void;
@@ -43,7 +45,7 @@ export function createScene(canvas: HTMLCanvasElement, q: Quality, ground: numbe
     sun.castShadow = true;
     sun.shadow.mapSize.set(q.shadows, q.shadows);
     const s = sun.shadow.camera;
-    s.left = -110; s.right = 110; s.top = 110; s.bottom = -110; s.near = 10; s.far = 700;
+    s.near = 10; s.far = 900;
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.6;
   }
@@ -63,8 +65,11 @@ export function createScene(canvas: HTMLCanvasElement, q: Quality, ground: numbe
   addEventListener('resize', resize);
   resize();
 
-  return {
+  const ahead = new THREE.Vector3();
+  const setup: SceneSetup = {
     renderer, scene, camera, daylight, sun, post, resize,
+    // PC high quality: a 4096 map over 340 m keeps shadows sharp (8 cm texels) and reaching far.
+    shadowExtent: q.name === 'hoch' ? 170 : 110,
     render(dt, speed01, boost) {
       daylight.update(dt);
       if (post) post.render(dt, speed01, boost);
@@ -74,9 +79,20 @@ export function createScene(canvas: HTMLCanvasElement, q: Quality, ground: numbe
       }
     },
     follow(target) {
+      const e = setup.shadowExtent;
+      const s = sun.shadow.camera;
+      if (s.right !== e) {
+        s.left = -e; s.right = e; s.top = e; s.bottom = -e;
+        s.updateProjectionMatrix();
+      }
+      // Most of the shadowed area lies ahead, where the driver looks.
+      camera.getWorldDirection(ahead).setY(0);
+      if (ahead.lengthSq() > 1e-6) ahead.normalize().multiplyScalar(e * 0.45);
       // Snap to shadow texels so shadows do not shimmer while driving.
-      const step = 220 / Math.max(1, q.shadows);
-      daylight.follow(new THREE.Vector3(Math.round(target.x / step) * step, target.y, Math.round(target.z / step) * step));
+      const step = (2 * e) / Math.max(1, q.shadows);
+      const x = target.x + ahead.x, z = target.z + ahead.z;
+      daylight.follow(new THREE.Vector3(Math.round(x / step) * step, target.y, Math.round(z / step) * step));
     },
   };
+  return setup;
 }

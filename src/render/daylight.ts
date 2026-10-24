@@ -36,6 +36,8 @@ export class Daylight {
   readonly fogColor = new THREE.Color();
   readonly ambTop = new THREE.Color();
   readonly ambBottom = new THREE.Color();
+  /** Sky light (environment map) strength factor; lower = deeper shadows (sky.env). */
+  envScale = 1;
   /** 0 at night, 1 in full daylight. */
   daylight = 1;
   /** Sun strength for clouds, god rays and flare (0 once it has set). */
@@ -177,7 +179,7 @@ export class Daylight {
 
     // Darker scenes get more exposure, like an eye adapting.
     this.renderer.toneMappingExposure = lerp(1.7, 0.8, this.daylight);
-    this.scene.environmentIntensity = lerp(0.12, 0.35, this.daylight);
+    this.scene.environmentIntensity = lerp(0.12, 0.35, this.daylight) * this.envScale;
 
     // Re-render the environment only when the sun has moved noticeably.
     if (this.envDir.distanceToSquared(s) > 0.0004 || Math.abs(this.envOvercast - oc) > 0.05) {

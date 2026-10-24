@@ -26,7 +26,7 @@ const STEP = 0.3;
 
 export const GAP_KINDS = ['hole', 'bump', 'dip', 'step'] as const;
 type Kind = (typeof GAP_KINDS)[number];
-interface Issue { x: number; y: number; z: number; kind: Kind; size: number; way: number; what: string }
+interface Issue { x: number; y: number; z: number; kind: Kind; size: number; way: number; what: string; lane: number }
 
 const index: WorldIndex = JSON.parse(readFileSync(`${paths.out}index.json`, 'utf8'));
 const W = index.world;
@@ -90,7 +90,8 @@ async function main() {
       }
     world.step();
     for (const [x, y, z, way, lane, i] of probes.get(tileKey(ix, iy))!) {
-      const ray = new RAPIER.Ray({ x, y: y + 1.5, z }, { x: 0, y: -1, z: 0 });
+      // Slightly off the sample: a ray exactly on the shared edge of two meshes can slip between them.
+      const ray = new RAPIER.Ray({ x: x + 0.013, y: y + 1.5, z: z + 0.007 }, { x: 0, y: -1, z: 0 });
       const hit = world.castRay(ray, 4, true);
       hits.set(`${way}:${lane}:${i}`, hit ? { y: y + 1.5 - hit.timeOfImpact, what: kinds.get(hit.collider.handle) ?? '?' } : null);
     }
@@ -108,7 +109,7 @@ async function main() {
         if (!hits.has(`${w.id}:${lane}:${i}`)) { prev = undefined; return; }
         const h = hits.get(`${w.id}:${lane}:${i}`);
         const x = p.x - p.dy * o, z = p.z - p.dx * o;
-        const add = (kind: Kind, size: number, what: string) => issues.push({ x, y: p.y, z, kind, size, way: w.id, what });
+        const add = (kind: Kind, size: number, what: string) => issues.push({ x, y: p.y, z, kind, size, way: w.id, what, lane });
         if (!h || h.y < p.y - 2.4) { add('hole', 2.5, h?.what ?? 'nothing'); prev = undefined; return; }
         if (h.y > p.y + BUMP) add('bump', h.y - p.y, h.what);
         else if (h.y < p.y - DIP) add('dip', p.y - h.y, h.what);
@@ -150,7 +151,7 @@ async function main() {
   for (const s of kept.slice(0, 25)) {
     const way = osm.ways.find((w) => w.id === s.way)!;
     const [e, n] = [s.x + W.originE, W.originN - s.z];
-    console.log(`  ${s.kind} ${s.size.toFixed(2)} m (${s.what}) on way ${s.way} ${way.tags.highway}${way.tags.bridge ? ' bridge' : ''} "${way.tags.name ?? ''}" at UTM ${e.toFixed(0)} ${n.toFixed(0)}`);
+    console.log(`  ${s.kind} ${s.size.toFixed(2)} m (${s.what}) on way ${s.way} ${way.tags.highway}${way.tags.bridge ? ' bridge' : ''} "${way.tags.name ?? ''}" at UTM ${e.toFixed(1)} ${n.toFixed(1)}, road ${s.y.toFixed(2)}, ${['centre', 'right', 'left'][(s.lane + 3) % 3]}`);
   }
   if (kept.length > MAX) {
     console.log(`FAIL: ${kept.length} places with gaps or steps (allowed ${MAX})`);

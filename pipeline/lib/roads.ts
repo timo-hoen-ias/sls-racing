@@ -86,11 +86,21 @@ function surface(way: Way, height: (e: number, n: number) => number) {
     const t = Math.min(1, Math.max(0, (dist - cum[seg]) / (cum[seg + 1] - cum[seg] || 1)));
     return raise[seg] + (raise[seg + 1] - raise[seg]) * t;
   };
+  const prof = way.profile;
+  let pseg = 0;
+  const ground = (e: number, n: number, dist: number) => {
+    if (!prof) return height(e, n);
+    const d = prof.dist;
+    if (dist < d[pseg]) pseg = 0;
+    while (pseg < d.length - 2 && dist > d[pseg + 1]) pseg++;
+    const t = Math.min(1, Math.max(0, (dist - d[pseg]) / (d[pseg + 1] - d[pseg] || 1)));
+    return prof.y[pseg] + (prof.y[pseg + 1] - prof.y[pseg]) * t;
+  };
   const deck = way.deck;
   let dseg = 0;
   // Measured deck heights per node (from the surface model), else a straight span between the ends.
   const span = (dist: number) => {
-    if (!deck) return h0 + (h1 - h0) * (dist / (len || 1)) + 0.4;
+    if (!deck) return h0 + (h1 - h0) * (dist / (len || 1)) + ROAD_LIFT;
     if (dist < cum[dseg]) dseg = 0;
     while (dseg < cum.length - 2 && dist > cum[dseg + 1]) dseg++;
     const t = Math.min(1, Math.max(0, (dist - cum[dseg]) / (cum[dseg + 1] - cum[dseg] || 1)));
@@ -98,7 +108,7 @@ function surface(way: Way, height: (e: number, n: number) => number) {
   };
   return isBridge(way.tags)
     ? (_e: number, _n: number, dist: number) => span(dist) + raised(dist)
-    : (e: number, n: number, dist: number) => height(e, n) + lift + raised(dist);
+    : (e: number, n: number, dist: number) => ground(e, n, dist) + lift + raised(dist);
 }
 
 /** Surface height at each original node of a way (for the road graph). */
@@ -205,7 +215,15 @@ export function buildRoads(
         // Where a deck or ramp is close to the ground, sink its collision into the terrain so its edge is no kerb.
         const cy = (p: typeof a) => p.y - Math.max(0, 0.6 - (p.y - height(p.e, p.n)));
         strip(tile.collide, -hw - 0.5, hw + 0.5, [cy(a), cy(a)], [cy(b), cy(b)]);
-      } else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, hw);
+      } else if (carve) {
+        // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the
+        // edges down to the terrain mesh, which is fitted below it (carve.ts).
+        carve.add(a.e, a.n, a.y, b.e, b.n, b.y, hw);
+        const c = (p: typeof a, d: number) => p.y - d;
+        strip(tile.collide, -hw, hw, [c(a, 0.05), c(a, 0.05)], [c(b, 0.05), c(b, 0.05)]);
+        strip(tile.collide, hw, hw + 1, [c(a, 0.05), c(a, ROAD_LIFT + 0.1)], [c(b, 0.05), c(b, ROAD_LIFT + 0.1)]);
+        strip(tile.collide, -hw - 1, -hw, [c(a, ROAD_LIFT + 0.1), c(a, 0.05)], [c(b, ROAD_LIFT + 0.1), c(b, 0.05)]);
+      }
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
       if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
         const o = hw + 0.5;
@@ -245,6 +263,22 @@ export function buildRoads(
         }
       }
     }
+
+    // Where two roads meet at an angle, their collision strips end square to each road and leave a wedge
+    // open on the outside of the bend; continue each strip a little past both ends so they overlap.
+    if (carve || bridge)
+      for (const [p, dir] of [[ring[0], -1], [ring[ring.length - 1], 1]] as const) {
+        const hw = width / 2 + (bridge ? 0.5 : 0);
+        const ext = Math.min(hw, 4) * dir;
+        const tip = { e: p.e + p.dx * ext, n: p.n + p.dy * ext };
+        const corner = (q: { e: number; n: number }, o: number) => utmToLocal(world, q.e - p.dy * o, q.n + p.dx * o);
+        const y = p.y - 0.05;
+        const t = tiles.at(p.e, p.n).collide;
+        const v = [corner(p, -hw), corner(p, hw), corner(tip, -hw), corner(tip, hw)].map(([x, z]) => t.vertex(x, y, z, {}));
+        // Upward-facing whichever way the cap points.
+        if (dir > 0) { t.tri(v[0], v[2], v[1]); t.tri(v[1], v[2], v[3]); }
+        else { t.tri(v[0], v[1], v[2]); t.tri(v[1], v[3], v[2]); }
+      }
 
     // Street lamps, alternating sides.
     if (cls.street && cls.rank >= 3 && !bridge) {

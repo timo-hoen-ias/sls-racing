@@ -17,9 +17,9 @@ export function groundClassOf(tags: Record<string, string>): { cls: GroundClass;
 
 /** Point lookup of ground classes with a coarse grid index over polygon bounding boxes. */
 export class GroundIndex {
-  private cells = new Map<string, { p: Polygon; cls: GroundClass; prio: number }[]>();
+  private cells = new Map<string, { p: Polygon; cls: GroundClass; prio: number; box: number[] }[]>();
   private cell: number;
-  constructor(polys: Polygon[], cell = 256) {
+  constructor(polys: Polygon[], cell = 64) {
     this.cell = cell;
     for (const p of polys) {
       const g = groundClassOf(p.tags);
@@ -30,7 +30,7 @@ export class GroundIndex {
         for (let cy = Math.floor(y0 / cell); cy <= Math.floor(y1 / cell); cy++) {
           const k = `${cx}_${cy}`;
           if (!this.cells.has(k)) this.cells.set(k, []);
-          this.cells.get(k)!.push({ p, ...g });
+          this.cells.get(k)!.push({ p, ...g, box: [x0, y0, x1, y1] });
         }
     }
     for (const list of this.cells.values()) list.sort((a, b) => b.prio - a.prio);
@@ -38,7 +38,7 @@ export class GroundIndex {
 
   at(e: number, n: number, fallback: GroundClass): GroundClass {
     const list = this.cells.get(`${Math.floor(e / this.cell)}_${Math.floor(n / this.cell)}`);
-    if (list) for (const g of list) if (pointInPolygon(e, n, g.p)) return g.cls;
+    if (list) for (const g of list) if (e >= g.box[0] && e <= g.box[2] && n >= g.box[1] && n <= g.box[3] && pointInPolygon(e, n, g.p)) return g.cls;
     return fallback;
   }
 }

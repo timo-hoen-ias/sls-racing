@@ -10,24 +10,22 @@ const WINDOW = 8;
 /** How far a measured deck may leave the straight line between the bridge ends (m). */
 const BELOW = 2, ABOVE = 4;
 
-export interface DeckReport { bridges: number; measured: number; maxRise: number }
+export interface DeckReport {
+  bridges: number;
+  measured: number;
+  maxRise: number;
+  /** Deck height per bridge node (the ends included), for the roads that join there. */
+  anchors: Map<number, number>;
+}
 
 /**
- * Sets `way.deck` on drivable bridges. Ends that join a road off the bridge keep the terrain height
- * (the abutment), so approaches meet the deck; ends shared with another bridge way use the surface model
- * as well, cached per node so both ways agree.
+ * Sets `way.deck` on drivable bridges. All heights are cached per node, so ways that share a node agree and
+ * the approach roads can be pinned to the deck where they join (see profiles.ts). At an abutment the OSM node
+ * often sits a few metres off the real end, on the embankment slope, where the terrain is metres too low; the
+ * surface model along the first metres of the deck gives the true level there.
  */
-export function bridgeDecks(ways: Way[], dom: LaserGrid, height: (e: number, n: number) => number): DeckReport {
+export function bridgeDecks(ways: Way[], dom: LaserGrid | undefined, height: (e: number, n: number) => number): DeckReport {
   const bridges = ways.filter((w) => isDrivable(w.tags) && isBridge(w.tags));
-  const onBridge = new Map<number, number>(); // node id → bridge ways using it
-  const onRoad = new Set<number>(); // node ids used by drivable roads off bridges
-  for (const w of ways) {
-    if (!isDrivable(w.tags)) continue;
-    for (const id of w.ids) {
-      if (isBridge(w.tags)) onBridge.set(id, (onBridge.get(id) ?? 0) + 1);
-      else onRoad.add(id);
-    }
-  }
   const byNode = new Map<number, number>();
   let measured = 0, maxRise = 0;
   for (const w of bridges) {
@@ -39,7 +37,7 @@ export function bridgeDecks(ways: Way[], dom: LaserGrid, height: (e: number, n: 
     let d = 0;
     for (let i = 0; i < dense.length; i++) {
       if (i) d += Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]);
-      const v = dom.at(dense[i][0], dense[i][1]);
+      const v = dom?.at(dense[i][0], dense[i][1]);
       if (v !== undefined) samples.push([d, v]);
     }
     if (samples.length < Math.min(5, dense.length)) continue;
@@ -50,9 +48,12 @@ export function bridgeDecks(ways: Way[], dom: LaserGrid, height: (e: number, n: 
     const last = w.ids.length - 1;
     const end = (i: number) => {
       const id = w.ids[i];
-      // An abutment: the bridge meets a road on the ground here.
-      if (onRoad.has(id) && (onBridge.get(id) ?? 0) === 1) return height(...w.pts[i]);
-      if (!byNode.has(id)) byNode.set(id, median(cum[i]) ?? height(...w.pts[i]));
+      if (!byNode.has(id)) {
+        const ground = height(...w.pts[i]);
+        const m = median(cum[i]);
+        // Trust the surface model unless it shows something far above the ground (a tree, a truck).
+        byNode.set(id, m !== undefined && m > ground - 1 && m < ground + 8 ? m : ground);
+      }
       return byNode.get(id)!;
     };
     const y0 = end(0), y1 = end(last);
@@ -70,5 +71,12 @@ export function bridgeDecks(ways: Way[], dom: LaserGrid, height: (e: number, n: 
     w.deck = deck;
     measured++;
   }
-  return { bridges: bridges.length, measured, maxRise };
+  for (const w of bridges)
+    if (!w.deck) {
+      // No surface data: a straight span between the terrain at both ends, as before.
+      const [a, b] = [w.ids[0], w.ids[w.ids.length - 1]];
+      if (!byNode.has(a)) byNode.set(a, height(...w.pts[0]));
+      if (!byNode.has(b)) byNode.set(b, height(...w.pts[w.pts.length - 1]));
+    }
+  return { bridges: bridges.length, measured, maxRise, anchors: byNode };
 }

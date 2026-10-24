@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { Ground, TERRAIN_N, TileContent, encode, encodeTile, tileOriginLocal, type TileData, type WorldInfo } from '../src/world/format.ts';
+import { Ground, TERRAIN_N, TERRAIN_STEP, TileContent, encode, encodeTile, tileOriginLocal, type TileData, type WorldInfo } from '../src/world/format.ts';
 import { buildTile, gridIndex, terrainHeights, transferList } from '../src/world/tileBuild.ts';
 import { addTileColliders, splitMesh } from '../src/world/tileColliders.ts';
 
@@ -88,6 +88,9 @@ describe('tile colliders', () => {
       const x = ox + 1 + rnd() * 254, z = oz + 1 + rnd() * 254;
       // Skip the tree trunk.
       if (Math.hypot(x - ox - 50, z - oz - 50) < 2) continue;
+      // A ray exactly on a shared triangle edge can slip through the reference trimesh.
+      const onLine = (v: number) => Math.abs(v / TERRAIN_STEP - Math.round(v / TERRAIN_STEP)) < 0.01;
+      if (onLine(x - ox) || onLine(z - oz)) continue;
       expect(at(world, x, z)).toBeCloseTo(at(ref, x, z), 3);
     }
     // Water cells are lowered like the mesh.

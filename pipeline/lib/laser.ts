@@ -96,8 +96,9 @@ export interface LaserGrid {
 
 export function laserSampler(dir: string): LaserGrid {
   const cache = new Map<string, Float32Array | null>();
-  // Each tile is 4 MB as floats; keep the most recently used ones (the build walks the world tile by tile).
-  const KEEP = 48;
+  // Each tile is 4 MB as floats (outside the JS heap); keep the most recently used ones. Roads and buildings
+  // jump across the whole world, so this covers a typical region.
+  const KEEP = 320;
   const tile = (ekm: number, nkm: number) => {
     const key = `${ekm}_${nkm}`;
     let t = cache.get(key);

@@ -1,5 +1,6 @@
 // Terrain height and road heights shared by the build and the drive test, so both see the same world.
 import { bridgeDecks } from './decks.ts';
+import { roadProfiles } from './profiles.ts';
 import { laserSampler } from './laser.ts';
 import type { Way } from './osm.ts';
 import { liftOverpasses } from './overpasses.ts';
@@ -35,10 +36,11 @@ export function terrainHeight(regions: RegionConfig[], toLonLat: (e: number, n: 
 
 /** Bridge decks from DOM1 (where available), then lifts for crossings that still lack headroom. */
 export function roadHeights(ways: Way[], regions: RegionConfig[], height: (e: number, n: number) => number, log = (_: string) => {}) {
-  if (regions.some((r) => r.laser?.dom1?.length)) {
-    const d = bridgeDecks(ways, laserSampler(paths.dom1), height);
-    log(`Bridges: ${d.measured}/${d.bridges} decks measured from DOM1, max. ${d.maxRise.toFixed(1)} m above the straight span`);
-  }
+  const dom = regions.some((r) => r.laser?.dom1?.length) ? laserSampler(paths.dom1) : undefined;
+  const d = bridgeDecks(ways, dom, height);
+  if (dom) log(`Bridges: ${d.measured}/${d.bridges} decks measured from DOM1, max. ${d.maxRise.toFixed(1)} m above the straight span`);
+  const p = roadProfiles(ways, height, d.anchors);
+  log(`Road profiles: ${p.roads} roads, ${p.nodes} node heights, largest correction ${p.maxCorrection.toFixed(1)} m`);
   const over = liftOverpasses(ways, height);
   log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
 }

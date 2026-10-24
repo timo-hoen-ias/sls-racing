@@ -19,6 +19,8 @@ export interface Way {
   raise?: number[];
   /** Bridges: measured deck height per node, from the surface model. */
   deck?: number[];
+  /** Roads: smoothed terrain height along the way (see profiles.ts), by distance from the first node. */
+  profile?: { dist: Float32Array; y: Float32Array };
   closed: boolean;
 }
 

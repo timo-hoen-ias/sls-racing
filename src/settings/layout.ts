@@ -61,6 +61,8 @@ export const SECTIONS: MenuSection[] = [
   },
   {
     id: 'fahren', label: 'Fahren', items: [
+      'Auto',
+      e('car.select', 'Modell'),
       'Fahrhilfen',
       e('phys.model', 'Paket'),
       e('assist.abs', 'ABS'),

@@ -2,7 +2,7 @@
 // colliders every 2 m along each road (centre and both wheel tracks) and reports holes, bumps (terrain,
 // a deck edge or an obstacle sticking up through the road), dips and steps. Writes public/tiles/gaps.json
 // for the in-game `world.gaps` command.
-//   node pipeline/gapcheck.ts [region] [--max=<allowed issues>]
+//   node pipeline/gapcheck.ts [region] [--max=<allowed issues>] [--list=<places to print, default 25>]
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -157,7 +157,7 @@ async function main() {
   const byWhat = new Map<string, number>();
   for (const s of kept) byWhat.set(`${s.kind} on ${s.what}`, (byWhat.get(`${s.kind} on ${s.what}`) ?? 0) + 1);
   console.log(`  ${[...byWhat].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v}× ${k}`).join(', ')}`);
-  for (const s of kept.slice(0, 25)) {
+  for (const s of kept.slice(0, Number(arg('list', '25')))) {
     const way = osm.ways.find((w) => w.id === s.way)!;
     const [e, n] = [s.x + W.originE, W.originN - s.z];
     console.log(`  ${s.kind} ${s.size.toFixed(2)} m (${s.what}) on way ${s.way} ${way.tags.highway}${way.tags.bridge ? ' bridge' : ''} "${way.tags.name ?? ''}" at UTM ${e.toFixed(1)} ${n.toFixed(1)}, road ${s.y.toFixed(2)}, ${['centre', 'right', 'left'][(s.lane + 3) % 3]}`);

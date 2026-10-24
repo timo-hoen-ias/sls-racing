@@ -95,7 +95,6 @@ export class WorldStreamer {
   private mats: Materials;
   private quality: Quality;
   private loader: TileLoader;
-  private treeGeo: { trunk: THREE.BufferGeometry; crown: THREE.BufferGeometry };
   private lampGeo: { pole: THREE.BufferGeometry; head: THREE.BufferGeometry };
   /** Colliders are built within this distance (m) and dropped beyond physRadius + 150. */
   physRadius = 420;
@@ -121,12 +120,6 @@ export class WorldStreamer {
     this.loader = new TileLoader(Math.min(3, Math.max(1, (navigator.hardwareConcurrency || 4) - 2)));
     this.available = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
     this.root.name = 'world';
-    const crown = new THREE.IcosahedronGeometry(2.6, 1);
-    crown.translate(0, 5.2, 0);
-    crown.scale(1, 1.15, 1);
-    const trunk = new THREE.CylinderGeometry(0.18, 0.26, 3.2, 6);
-    trunk.translate(0, 1.6, 0);
-    this.treeGeo = { trunk, crown };
     // Street lamp: 7 m pole with an arm reaching over the road (+z).
     const pole = mergeGeometries([
       new THREE.CylinderGeometry(0.07, 0.1, 7, 8).translate(0, 3.5, 0),
@@ -372,30 +365,7 @@ export class WorldStreamer {
     mesh(b.meshes.markings, this.mats.marking);
     mesh(b.meshes.buildings, this.mats.building, { cast: true });
 
-    const tr = t.f32('trees');
-    if (tr && this.quality.trees) {
-      const n = tr.length / 4;
-      const trunks = new THREE.InstancedMesh(this.treeGeo.trunk, this.mats.trunk, n);
-      const crowns = new THREE.InstancedMesh(this.treeGeo.crown, this.mats.crown, n);
-      const m = new THREE.Matrix4();
-      const q = new THREE.Quaternion();
-      const s = new THREE.Vector3();
-      const p = new THREE.Vector3();
-      const c = new THREE.Color();
-      for (let i = 0; i < n; i++) {
-        const [x, y, z, sc] = [tr[i * 4], tr[i * 4 + 1], tr[i * 4 + 2], tr[i * 4 + 3]];
-        q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, (x * 7.3 + z * 3.1) % (Math.PI * 2));
-        s.setScalar(sc);
-        m.compose(p.set(x, y - 0.2, z), q, s);
-        trunks.setMatrixAt(i, m);
-        crowns.setMatrixAt(i, m);
-        crowns.setColorAt(i, c.setHSL(0.24 + fract(x * 0.37) * 0.07, 0.42, 0.24 + fract(z * 0.53) * 0.08));
-      }
-      crowns.castShadow = trunks.castShadow = shadows;
-      trunks.computeBoundingSphere();
-      crowns.computeBoundingSphere();
-      group.add(trunks, crowns);
-    }
+    // Trees and bushes are drawn by the vegetation layer (src/world/vegetation.ts).
 
     const l = t.f32('lamps');
     let lampHeads: Float32Array | undefined;
@@ -480,6 +450,5 @@ export class WorldStreamer {
   }
 }
 
-const fract = (v: number) => v - Math.floor(v);
 /** All colliders of the tile exist. */
 const solid = (t: LoadedTile | undefined) => !!t?.body && !t.pending;

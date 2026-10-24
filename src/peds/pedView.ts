@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Ped, PedState } from './pedSim.ts';
 
-const STATE_COLORS: Record<PedState, number> = { walk: 0x3ddc84, cross: 0xffc400, dodge: 0xff7a00, down: 0xff2d2d, stand: 0x4aa3ff };
+const STATE_COLORS: Record<PedState, number> = { walk: 0x3ddc84, cross: 0xffc400, wait: 0xff40ff, dodge: 0xff7a00, down: 0xff2d2d, stand: 0x4aa3ff };
 
 /** Simple instanced people: torso, head, swinging legs and arms. Model space: feet at y = 0, +z forward. */
 export class PedView {

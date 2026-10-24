@@ -15,6 +15,8 @@ export interface Way {
   pts: [number, number][];
   /** OSM node ids, aligned with pts. */
   ids: number[];
+  /** Extra height per node for roads lifted over others (see overpasses.ts). */
+  raise?: number[];
   closed: boolean;
 }
 

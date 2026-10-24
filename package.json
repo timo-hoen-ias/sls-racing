@@ -11,7 +11,8 @@
     "test": "vitest run",
     "world:fetch": "node pipeline/fetch.ts saarlouis",
     "world:build": "node pipeline/build.ts saarlouis",
-    "world:fixture": "node pipeline/build.ts fixture"
+    "world:fixture": "node pipeline/build.ts fixture",
+    "world:drivetest": "node pipeline/drivetest.ts saarlouis"
   },
   "engines": {
     "node": ">=22.18"

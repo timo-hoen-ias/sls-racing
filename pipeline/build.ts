@@ -5,14 +5,16 @@
 // Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.json
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import {
-  Ground, TERRAIN_N, TERRAIN_STEP, encode, tileKey, utmToLocal,
+  Ground, TERRAIN_N, TERRAIN_STEP, encode, localToUtm, tileKey, utmToLocal,
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
+import { RoadMask } from './lib/clearance.ts';
 import { GroundIndex, rand } from './lib/ground.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
+import { liftOverpasses } from './lib/overpasses.ts';
 import { buildRoads } from './lib/roads.ts';
 import { flatSampler, terrariumSampler, type HeightSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
@@ -54,6 +56,8 @@ function main() {
 
   const osm = readOsm(merged, project);
   const tiles = new TileMap(info.tileSize);
+  const over = liftOverpasses(osm.ways, height);
+  console.log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const samples = buildRoads(osm.ways, info, height, tiles, junctions);
   const nBuildings = buildBuildings(osm.polygons, info, height, tiles);
@@ -75,7 +79,14 @@ function main() {
   }
 
   const ground = new GroundIndex(osm.polygons);
-  const roadNear = new Set(samples.map((s) => `${Math.round(s.x / 6)}_${Math.round(s.z / 6)}`));
+  const onRoad = new RoadMask(osm.ways);
+  // Lamps stand beside their own road; drop the ones that end up on another road's lanes.
+  const onLanes = new RoadMask(osm.ways, -0.5);
+  const offLanes = (lamps: number[]) => {
+    const out: number[] = [];
+    for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
+    return out;
+  };
   const treesByTile = new Map<string, number[]>();
   const addTree = (e: number, n: number, s: number) => {
     const [x, z] = utmToLocal(info, e, n);
@@ -83,7 +94,7 @@ function main() {
     if (!treesByTile.has(k)) treesByTile.set(k, []);
     treesByTile.get(k)!.push(x, height(e, n), z, s);
   };
-  for (const [e, n] of osm.trees) addTree(e, n, 0.8 + rand(e, n) * 0.5);
+  for (const [e, n] of osm.trees) if (!onRoad.has(e, n)) addTree(e, n, 0.8 + rand(e, n) * 0.5);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
@@ -108,8 +119,7 @@ function main() {
           for (let i = 0; i < count; i++) {
             const te = e + rand(e, n, i * 2 + 1) * TERRAIN_STEP;
             const tn = n - rand(e, n, i * 2 + 2) * TERRAIN_STEP;
-            const [x, z] = utmToLocal(info, te, tn);
-            if (!roadNear.has(`${Math.round(x / 6)}_${Math.round(z / 6)}`) && ground.at(te, tn, Ground.grass) === cls) addTree(te, tn, 0.7 + rand(te, tn) * 0.7);
+            if (!onRoad.has(te, tn) && ground.at(te, tn, Ground.grass) === cls) addTree(te, tn, 0.7 + rand(te, tn) * 0.7);
           }
         }
       }
@@ -119,7 +129,8 @@ function main() {
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
       sidewalks: b?.sidewalks.pack(),
     };
-    if (b?.lamps.length) tile.lamps = encode(new Float32Array(b.lamps.map((v) => Math.round(v * 100) / 100)));
+    const lamps = offLanes(b?.lamps ?? []);
+    if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
     const json = JSON.stringify(tile);

@@ -2,7 +2,8 @@
 //   node pipeline/fetch.ts saarlouis
 import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync, statSync } from 'node:fs';
 import { extractRegion } from './lib/pbf.ts';
-import { loadRegion, paths, type RegionConfig } from './lib/region.ts';
+import { fetchLaserTiles, kmTiles } from './lib/laser.ts';
+import { loadRegion, loadWorld, paths, type RegionConfig } from './lib/region.ts';
 import { fetchTerrarium, tilesForBbox } from './lib/terrain.ts';
 
 const OVERPASS = process.env.OVERPASS_URL
@@ -24,6 +25,7 @@ ${area}
   way["natural"~"water|wood|scrub|grassland"]${f};
   relation["type"="multipolygon"]["natural"~"water|wood"]${f};
   way["waterway"="riverbank"]${f};
+  way["waterway"~"^(river|stream|canal|ditch|drain)$"]${f};
   way["leisure"~"park|pitch|garden|playground"]${f};
   way["amenity"="parking"]${f};
   node["natural"="tree"]${f};
@@ -137,6 +139,30 @@ async function main() {
     const n = await fetchTerrarium(paths.terrain, tiles, region.terrain.zoom);
     console.log(`Terrain: ${tiles.length} tiles (${n} new) at z${region.terrain.zoom}`);
   }
+
+  if (region.laser) await fetchLaser(region.laser, JSON.parse(readFileSync(osmFile, 'utf8')));
+}
+
+/** DGM1 for every km tile that holds part of a way (so every tile the build emits); DOM1 only where there are bridges. */
+async function fetchLaser(laser: NonNullable<RegionConfig['laser']>, osm: { elements: any[] }) {
+  const { project } = loadWorld();
+  const nodes = new Map<number, [number, number]>();
+  for (const el of osm.elements) if (el.type === 'node') nodes.set(el.id, project(el.lon, el.lat));
+  const km = (pred: (tags: Record<string, string>) => boolean) => {
+    const set = new Set<string>();
+    for (const el of osm.elements)
+      if (el.type === 'way' && pred(el.tags ?? {}))
+        for (const id of el.nodes) {
+          const p = nodes.get(id);
+          if (p) set.add(`${Math.floor(p[0] / 1000)}_${Math.floor(p[1] / 1000)}`);
+        }
+    return [...set].map((k) => k.split('_').map(Number) as [number, number]);
+  };
+  const dgm = await fetchLaserTiles(paths.dgm1, laser.dgm1, km(() => true));
+  console.log(`DGM1: ${dgm.have} km tiles (${dgm.fetched} new, ${dgm.missing} outside the data)`);
+  if (!laser.dom1?.length) return;
+  const dom = await fetchLaserTiles(paths.dom1, laser.dom1, km((t) => !!t.highway && !!t.bridge && t.bridge !== 'no'));
+  console.log(`DOM1 (bridges): ${dom.have} km tiles (${dom.fetched} new)`);
 }
 
 main().catch((e) => {

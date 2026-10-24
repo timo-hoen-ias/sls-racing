@@ -41,6 +41,7 @@ import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
+import { registerWorldCommands } from './world/worldCommands.ts';
 import { PhysicsDebugView } from './debug/physicsDebug.ts';
 import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
@@ -246,6 +247,11 @@ async function boot() {
   view.scene.add(physDebug.lines);
   registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
   registerStreamCommands(streamer, quality, () => (hold ?? ip));
+  registerWorldCommands({
+    R: RAPIER, world, scene: view.scene, mats, index, baseUrl: TILES_URL, pos: () => (hold ?? ip),
+    teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
+    print: (t) => debug.print(t, 'info'),
+  });
   if (new URLSearchParams(location.search).has('perf')) perf.setVisible(true);
   // ?cmd=day;nitro.infinite runs commands at startup.
   const bootCmd = new URLSearchParams(location.search).get('cmd');

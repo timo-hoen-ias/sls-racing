@@ -232,6 +232,7 @@ export function wanted(tags: Tags): boolean {
     tags.highway || tags.building || tags.landuse ||
     /^(water|wood|scrub|grassland)$/.test(tags.natural ?? '') ||
     tags.waterway === 'riverbank' ||
+    /^(river|stream|canal|ditch|drain)$/.test(tags.waterway ?? '') ||
     /^(park|pitch|garden|playground)$/.test(tags.leisure ?? '') ||
     tags.amenity === 'parking'
   );

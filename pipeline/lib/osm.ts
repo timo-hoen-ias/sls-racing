@@ -17,6 +17,8 @@ export interface Way {
   ids: number[];
   /** Extra height per node for roads lifted over others (see overpasses.ts). */
   raise?: number[];
+  /** Bridges: measured deck height per node, from the surface model. */
+  deck?: number[];
   closed: boolean;
 }
 

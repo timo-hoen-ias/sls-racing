@@ -11,6 +11,11 @@ export interface RegionConfig {
   /** PBF extracts that contain the region, tried in order. Without them fetch.ts falls back to Overpass. */
   osm?: { extracts: string[] };
   terrain: { source: 'terrarium'; zoom: number } | { source: 'flat' };
+  /**
+   * Laser-scan rasters (ZIPs of 1 km GeoTIFFs, 1 m grid, UTM 32N), tried in order per tile. DGM1 replaces
+   * the terrain where it exists, with the terrain source above as the fallback; DOM1 gives bridge decks.
+   */
+  laser?: { dgm1: string[]; dom1?: string[] };
   spawn: { lat: number; lon: number };
 }
 
@@ -27,6 +32,8 @@ const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 export const paths = {
   raw: (region: string) => here(`../../data/raw/${region}/`),
   terrain: here('../../data/raw/terrain/'),
+  dgm1: here('../../data/raw/dgm1/'),
+  dom1: here('../../data/raw/dom1/'),
   out: here('../../public/tiles/'),
 };
 

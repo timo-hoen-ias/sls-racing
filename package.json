@@ -13,6 +13,7 @@
     "world:build": "node pipeline/build.ts saarlouis",
     "world:fixture": "node pipeline/build.ts fixture",
     "world:drivetest": "node pipeline/drivetest.ts saarlouis",
+    "world:gaps": "node pipeline/gapcheck.ts saarlouis",
     "models:build": "blender --background --factory-startup --python tools/blender/make_sportscar.py -- public/models/sportscar.raw.glb && node tools/compress-model.ts public/models/sportscar.raw.glb public/models/sportscar.glb && blender --background --factory-startup --python tools/blender/make_traffic.py -- public/models/traffic.raw.glb && node tools/compress-model.ts public/models/traffic.raw.glb public/models/traffic.glb"
   },
   "engines": {

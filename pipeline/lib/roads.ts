@@ -1,5 +1,6 @@
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
+import type { RoadCarve } from './carve.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
@@ -85,8 +86,18 @@ function surface(way: Way, height: (e: number, n: number) => number) {
     const t = Math.min(1, Math.max(0, (dist - cum[seg]) / (cum[seg + 1] - cum[seg] || 1)));
     return raise[seg] + (raise[seg + 1] - raise[seg]) * t;
   };
+  const deck = way.deck;
+  let dseg = 0;
+  // Measured deck heights per node (from the surface model), else a straight span between the ends.
+  const span = (dist: number) => {
+    if (!deck) return h0 + (h1 - h0) * (dist / (len || 1)) + 0.4;
+    if (dist < cum[dseg]) dseg = 0;
+    while (dseg < cum.length - 2 && dist > cum[dseg + 1]) dseg++;
+    const t = Math.min(1, Math.max(0, (dist - cum[dseg]) / (cum[dseg + 1] - cum[dseg] || 1)));
+    return deck[dseg] + (deck[dseg + 1] - deck[dseg]) * t + ROAD_LIFT;
+  };
   return isBridge(way.tags)
-    ? (_e: number, _n: number, dist: number) => h0 + (h1 - h0) * (dist / (len || 1)) + 0.4 + raised(dist)
+    ? (_e: number, _n: number, dist: number) => span(dist) + raised(dist)
     : (e: number, n: number, dist: number) => height(e, n) + lift + raised(dist);
 }
 
@@ -97,6 +108,26 @@ export function roadSurfaceHeights(way: Way, height: (e: number, n: number) => n
   return way.pts.map((p, i) => {
     if (i) dist += Math.hypot(p[0] - way.pts[i - 1][0], p[1] - way.pts[i - 1][1]);
     return y(p[0], p[1], dist);
+  });
+}
+
+/** Centreline samples every STEP metres with direction, distance and surface height, as the road is drawn. */
+export function roadProfile(way: Way, height: (e: number, n: number) => number, world: WorldInfo, step = STEP) {
+  const pts = densify(way.pts, step);
+  if (pts.length < 2) return [];
+  const ySurf = surface(way, height);
+  let dist = 0;
+  return pts.map((p, i) => {
+    if (i) dist += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(pts.length - 1, i + 1)];
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    const dl = Math.hypot(dx, dy) || 1;
+    dx /= dl;
+    dy /= dl;
+    const [x, z] = utmToLocal(world, p[0], p[1]);
+    return { e: p[0], n: p[1], x, z, dx, dy, y: ySurf(p[0], p[1], dist), dist };
   });
 }
 
@@ -134,6 +165,7 @@ class JunctionIndex {
  */
 export function buildRoads(
   ways: Way[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap, junctions: Junction[],
+  carve?: RoadCarve,
 ): RoadSample[] {
   const samples: RoadSample[] = [];
   const jIndex = new JunctionIndex(junctions);
@@ -141,25 +173,10 @@ export function buildRoads(
     if (!isDrivable(way.tags)) continue;
     const width = roadWidth(way.tags)!;
     const cls = ROAD_CLASSES[way.tags.highway];
-    const pts = densify(way.pts);
-    if (pts.length < 2) continue;
+    const ring = roadProfile(way, height, world);
+    if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
-    const ySurf = surface(way, height);
     const sidewalk = cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk);
-
-    let dist = 0;
-    const ring = pts.map((p, i) => {
-      if (i) dist += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
-      const a = pts[Math.max(0, i - 1)];
-      const b = pts[Math.min(pts.length - 1, i + 1)];
-      let dx = b[0] - a[0];
-      let dy = b[1] - a[1];
-      const dl = Math.hypot(dx, dy) || 1;
-      dx /= dl;
-      dy /= dl;
-      const [x, z] = utmToLocal(world, p[0], p[1]);
-      return { e: p[0], n: p[1], x, z, dx, dy, y: ySurf(p[0], p[1], dist), dist };
-    });
 
     for (const r of ring) samples.push({ x: r.x, z: r.z, y: r.y, heading: Math.atan2(r.dx, r.dy) });
 
@@ -188,7 +205,7 @@ export function buildRoads(
         // Where a deck or ramp is close to the ground, sink its collision into the terrain so its edge is no kerb.
         const cy = (p: typeof a) => p.y - Math.max(0, 0.6 - (p.y - height(p.e, p.n)));
         strip(tile.collide, -hw - 0.5, hw + 0.5, [cy(a), cy(a)], [cy(b), cy(b)]);
-      }
+      } else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, hw);
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
       if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
         const o = hw + 0.5;

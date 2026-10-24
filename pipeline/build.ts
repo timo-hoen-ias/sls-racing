@@ -92,6 +92,9 @@ function main() {
   const onRoad = new RoadMask(osm.ways);
   // Lamps stand beside their own road; drop the ones that end up on another road's lanes.
   const onLanes = new RoadMask(osm.ways, -0.5);
+  // Tree trunks, fences and hedges keep clear of the carriageway edge too: narrow roads are mapped narrower
+  // than the car drives them, and the car must not clip them.
+  const nearLanes = new RoadMask(osm.ways, 0.5);
   const offLanes = (lamps: number[]) => {
     const out: number[] = [];
     for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
@@ -126,8 +129,6 @@ function main() {
     const l = r.boundary.type === 'fixture' ? undefined : loadLidar(r.id);
     if (l) { coverage.push(...l.coverage); for (const t of l.trees) measured.push(t); }
   }
-  // Trunks keep clear of the carriageway edge too (tracks are narrow and the car must not clip them).
-  const nearLanes = new RoadMask(osm.ways, 0.5);
   const lidar = placeLidarTrees(coverage, measured, {
     skip: (e, n) => nearLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
     tagsAt: (e, n) => ground.tagsAt(e, n), mapped, rand,
@@ -149,7 +150,7 @@ function main() {
       if (kind) detected.push({ kind, e, n, size: kind === Prop.sign ? signSize(mapillarySignType(value)) : 0 });
     }
   }
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), junctions, boundary: osm.boundary, detected });
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 

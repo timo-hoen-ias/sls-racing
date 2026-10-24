@@ -69,6 +69,8 @@ export interface PropOptions {
   height: (e: number, n: number) => number;
   /** True where a point lies on any road's driving lanes. */
   onLanes: (e: number, n: number) => boolean;
+  /** True within a car's clearance of the lanes; fences, walls and hedges stay out of it (default onLanes). */
+  nearLanes?: (e: number, n: number) => boolean;
   junctions: Junction[];
   boundary?: [number, number][][];
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
@@ -163,8 +165,11 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     const b = w.tags.barrier;
     const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : b === 'guard_rail' ? Prop.guardRail : undefined;
     if (!kind) continue;
+    // Guard rails belong right at the edge; the rest keeps a car's clearance.
+    const clear = kind === Prop.guardRail ? o.onLanes : o.nearLanes ?? o.onLanes;
     pieces(w.pts, 4, (e, n, de, dn, len) => {
-      if (o.onLanes(e, n)) return;
+      // The whole piece stays off the lanes, not only its centre (a barrier way crossing a street).
+      for (const f of [-0.5, -0.25, 0, 0.25, 0.5]) if (clear(e + de * len * f, n + dn * len * f)) return;
       add(kind, e, n, headingOf(de, dn), len);
     });
   }

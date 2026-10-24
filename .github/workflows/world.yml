@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,12 +18,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Download OSM and terrain
-        run: |
-          for i in 1 2 3; do
-            npm run world:fetch && exit 0
-            echo "retry in 60 s"; sleep 60
-          done
-          exit 1
+        run: npm run world:fetch
       - run: npm run world:build
       - name: Summary
         run: |

@@ -4,7 +4,9 @@ import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { loadRegion, paths } from './lib/region.ts';
 import { fetchTerrarium, tilesForBbox } from './lib/terrain.ts';
 
-const OVERPASS = process.env.OVERPASS_URL ?? 'https://overpass-api.de/api/interpreter';
+const OVERPASS = process.env.OVERPASS_URL
+  ? [process.env.OVERPASS_URL]
+  : ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 // Overpass rejects generic clients; identify the project as its usage policy asks.
 const HEADERS = { 'User-Agent': 'sls-racing-pipeline/0.1 (+https://github.com/timo-hoen-ias/sls-racing)', Accept: 'application/json' };
 
@@ -27,6 +29,26 @@ ${area}
 );
 (._;>;);
 out body;`;
+}
+
+/** Runs a query, rotating through public Overpass servers with exponential backoff when they are busy. */
+async function overpass(query: string) {
+  let wait = 15;
+  let last = '';
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const url = OVERPASS[attempt % OVERPASS.length];
+    try {
+      const res = await fetch(url, { method: 'POST', headers: HEADERS, body: new URLSearchParams({ data: query }) });
+      if (res.ok) return (await res.json()) as { elements: any[] };
+      last = `${new URL(url).host}: HTTP ${res.status} ${(await res.text()).slice(0, 120).replace(/\s+/g, ' ')}`;
+    } catch (e) {
+      last = `${new URL(url).host}: ${(e as Error).message}`;
+    }
+    console.log(`  ${last} → retry in ${wait} s`);
+    await new Promise((r) => setTimeout(r, wait * 1000));
+    wait *= 2;
+  }
+  throw new Error(`Overpass failed: ${last}`);
 }
 
 async function main() {
@@ -53,14 +75,8 @@ async function main() {
       filter = `(${b.south},${b.west},${b.north},${b.east})`;
     }
     console.log(`Overpass: ${region.name} …`);
-    const res = await fetch(OVERPASS, { method: 'POST', headers: HEADERS, body: new URLSearchParams({ data: overpassQuery(area, filter) }) });
-    if (!res.ok) throw new Error(`Overpass HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const json = await res.json();
-    if (boundaryQuery) {
-      const b = await fetch(OVERPASS, { method: 'POST', headers: HEADERS, body: new URLSearchParams({ data: boundaryQuery }) });
-      if (!b.ok) throw new Error(`Overpass boundary HTTP ${b.status}`);
-      json.elements.push(...(await b.json()).elements);
-    }
+    const json = await overpass(overpassQuery(area, filter));
+    if (boundaryQuery) json.elements.push(...(await overpass(boundaryQuery)).elements);
     writeFileSync(osmFile, JSON.stringify(json));
     console.log(`  ${json.elements.length} OSM elements → ${osmFile}`);
   }

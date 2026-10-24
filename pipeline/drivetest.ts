@@ -135,7 +135,7 @@ function driveRoute(pts: [number, number][], startY: number): Result {
     const speedGoal = bend > 0.5 ? 5 : bend > 0.25 ? 8 : 14;
     const input = {
       throttle: car.speed < speedGoal ? 1 : 0, brake: car.speed > speedGoal + 2 ? 1 : 0,
-      steer: Math.max(-1, Math.min(1, d * 2.5)), nitro: false, handbrake: false,
+      steer: Math.max(-1, Math.min(1, d * 2.5)), nitro: false, handbrake: false, lookBack: false,
     };
     car.update(input, STEP);
     world.step();

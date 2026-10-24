@@ -37,10 +37,27 @@ Ohne lokalen Netzzugang baut der GitHub-Workflow **World build** die Kacheln und
 | Kamera | C | View | |
 | Karte / Ziel setzen | Tab oder K | Menu | Minimap antippen |
 | Ton an/aus | M | | |
+| Debug-Konsole | ^ oder F1 | | |
 
 In der großen Karte setzt ein Klick oder Tipp auf eine Straße das Ziel. Das Navi berechnet die Route, zeigt sie auf Minimap und Straße an und plant neu, wenn du abweichst.
 
 Qualität per URL erzwingen: `?q=low`, `?q=mid`, `?q=high`. Mittel und hoch nutzen Post-Processing (MSAA, Bloom, auf hoch zusätzlich Ambient Occlusion).
+
+## Debug-Konsole
+
+`^` oder `F1` öffnet die Konsole. `help` listet alle Befehle, `help nitro` zeigt einen Namensraum, Tab ergänzt Befehle und Argumente (auch Straßennamen), ↑/↓ blättert im Verlauf, mehrere Befehle trennt `;`. Beispiele: `tp Ahornstraße`, `tp utm 337000 5465000`, `nitro.inf on`, `slowmo 0.3`, `cam.mode hood`, `fx.fog off`, `hud off`, `nav.to "Großer Markt"`. Per URL laufen Befehle direkt beim Start: `?cmd=tp spawn;nitro.inf on`. Aus Tests oder der Browser-Konsole: `__sls.run('pos')`.
+
+**Regel:** Jedes neue Feature und jede Anpassung bringt passende Debug-Befehle mit. Registrieren geht aus jedem Modul:
+
+```ts
+import { registerCommand, registerToggle, registerValue } from './debug/registry.ts';
+
+registerToggle('fx.bloom', 'Bloom an/aus', () => bloom.enabled, (v) => (bloom.enabled = v));
+registerValue('car.grip', 'Reifenhaftung', () => grip, (v) => (grip = v), [0.5, 4]);
+registerCommand({ name: 'gear.set', help: 'Gang einlegen', args: '<gang>', run: ([g]) => { /* … */ return `Gang ${g}`; } });
+```
+
+Namen sind klein geschrieben mit Namensraum (`car.*`, `gear.*`, `cam.*`, `fx.*`, `weather.*`, `world.*` …), Hilfetexte auf Deutsch. `run` gibt den Ausgabetext zurück oder wirft einen Fehler.
 
 ## Aufbau
 

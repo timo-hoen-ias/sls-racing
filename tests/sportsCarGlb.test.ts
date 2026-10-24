@@ -73,4 +73,16 @@ describe('alternative player cars', () => {
     expect(Math.abs(box.max.z - box.min.z - extras.length)).toBeLessThan(0.15); // plus tailpipes
     expect(car.exhausts.length).toBe(2);
   });
+
+  it('GT carries its own, longer wheel layout in the extras', async () => {
+    const buf = readFileSync(new URL('../public/models/cars/gt.glb', import.meta.url));
+    const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), '');
+    const extras = gltf.scene.getObjectByName('car')!.userData;
+    expect(extras.name).toBe('GT');
+    expect(extras.wheel.front - extras.wheel.rear).toBeCloseTo(2.75, 2);
+    const car = sportsCarFromScene(gltf.scene);
+    const box = new THREE.Box3().setFromObject((car.body.getObjectByName('bodyLod') as THREE.LOD).levels[0].object);
+    expect(Math.abs(box.max.z - box.min.z - extras.length)).toBeLessThan(0.15);
+    expect(box.max.y).toBeLessThan(1.4);
+  });
 });

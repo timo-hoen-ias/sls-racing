@@ -31,7 +31,7 @@ import { matchRampHeights, planRamps, rampList } from './lib/ramps.ts';
 import { planKerbs } from './lib/kerbs.ts';
 import { buildRoadside } from './lib/roadside.ts';
 import { terrariumSampler } from './lib/terrain.ts';
-import { TileMap } from './lib/tilebuf.ts';
+import { MeshBuf, TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
@@ -264,6 +264,27 @@ function main() {
   const inData = (l: [number, number][]) => l.every(([e, n]) => used.has(`${Math.floor(e / T0)}_${Math.floor(n / T0)}`));
   const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings, hedges: landcover?.hedges.filter(inData), walls: landcover?.walls.filter(inData) });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
+  // Stall lines: 12 cm wide, 4.8 m long, in two pieces that follow the ground, 4 cm above it.
+  const stallBufs = new Map<string, MeshBuf>();
+  for (let i = 0; i < props.stallLines.length; i += 4) {
+    const [e, n, de, dn] = props.stallLines.slice(i, i + 4);
+    const k = tileKey(Math.floor(e / info.tileSize), Math.floor(n / info.tileSize));
+    if (!stallBufs.has(k)) stallBufs.set(k, new MeshBuf());
+    const buf = stallBufs.get(k)!;
+    const pt = (t: number, s: number) => {
+      const pe = e + de * t + dn * s, pn = n + dn * t - de * s;
+      const [x, z] = utmToLocal(info, pe, pn);
+      return buf.vertex(x, height(pe, pn) + 0.04, z);
+    };
+    const row = [-2.4, 0, 2.4].map((t) => [pt(t, -0.06), pt(t, 0.06)]);
+    for (let j = 1; j < row.length; j++) {
+      const [a, b] = row[j - 1], [c, d] = row[j];
+      // a → b runs right across the line, a → c along it: counter-clockwise seen from above.
+      buf.tri(a, b, c);
+      buf.tri(b, d, c);
+    }
+  }
+  console.log(`Car parks: ${props.stallLines.length / 4} painted stall lines`);
   if (landcover) console.log(`Hedges: ${landcover.hedges.length} measured from the laser heights, ${props.measuredHedges} pieces placed, ${hedgeBushes} bushes on them dropped; ${props.alkisWalls} wall pieces from ALKIS`);
   const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
@@ -339,7 +360,7 @@ function main() {
     const tile: TileData = {
       v: 1, ix, iy, terrain: encode(h), ground: encode(g),
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
-      sidewalks: b?.sidewalks.pack(),
+      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(),
     };
     const cover = landcover && tileCover(landcover, E0, N0, g);
     if (cover) {

@@ -115,6 +115,8 @@ Hecken: Zellen mit grünem Bewuchs 0,8–3,5 m über Grund (DOM1 − DGM1 und ND
 
 Befehle: `ground.aerial 0..2` (0 = nur Klassenfarben), `ground.rows 0..1`, `ground.view normal|cover|aerial`, `ground.at` (Bodenbedeckung unter dem Auto), `roof.at` (gemessene Dachfarben in der Nähe), `props.laserhecken on|off` (Hecken aus den Laserhöhen ein/aus), `props.near` zeigt bei Hecken „aus Laserhöhen“.
 
+Parkplätze: Asphaltierte Parkplätze (OSM `amenity=parking` ohne `surface` oder mit Asphalt/Beton, nicht Straßenrand, Tiefgarage oder Parkhaus) bekommen weiße Stellplatzlinien im selben 2,6-m-Raster, in dem die parkenden Autos stehen, als eigenes Mesh-Feld `stalls` (`src/world/stalls.ts`). Befehle: `parking.lines on|off`, `parking.count`.
+
 ## 3D-Modelle (Blender)
 
 Der Sportwagen wird per Blender-Python-Skript gebaut, nicht von Hand modelliert: `tools/blender/make_sportscar.py` erzeugt Karosserie, Kabine, Räder und Anbauteile, schneidet die Radhäuser per Boolean aus und legt Scheinwerfer, Fenster, Lufteinlässe und Fugen direkt als Flächen der Karosserie an. Export als GLB mit drei Detailstufen (LOD 0/1/2 für Karosserie, 2 für Räder), danach Meshopt-Kompression (`tools/compress-model.ts`, Positionen bleiben float, damit das Schadensmodell Beulen eindrücken kann).

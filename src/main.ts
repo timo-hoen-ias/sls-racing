@@ -50,6 +50,7 @@ import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
+import { StallLayer } from './world/stalls.ts';
 import { registerRoadsideCommands } from './world/roadsideCommands.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
@@ -125,6 +126,9 @@ async function boot() {
   // Guard rails: drawn per tile; their colliders come with the tile physics.
   const rails = new RailLayer();
   rails.register();
+  // Painted stall lines on car parks.
+  const stalls = new StallLayer();
+  stalls.register();
   const shops = new ShopLayer(index.world);
   shops.register();
   const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod, impostor: quality.name === 'hoch' ? 256 : 128 });
@@ -363,6 +367,7 @@ async function boot() {
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
+  stalls.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
   registerGarageCommands(garage);

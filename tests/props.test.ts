@@ -28,6 +28,18 @@ const records = (tiles: Map<string, number[]>) => [...tiles.values()].flatMap((d
 });
 
 describe('street furniture', () => {
+  it('paints stall lines on paved car parks only', () => {
+    const lot = (tags: Record<string, string>) => {
+      const outer: [number, number][] = [[E, N + 20], [E + 40, N + 20], [E + 40, N + 40], [E, N + 40], [E, N + 20]];
+      return { id: 3, tags: { amenity: 'parking', ...tags }, outer, holes: [] };
+    };
+    const paved = run({ polygons: [lot({})] }).stallLines;
+    // Two rows of 15 stalls, 16 separators each.
+    expect(paved.length / 4).toBe(32);
+    for (let i = 0; i < paved.length; i += 4) expect(Math.hypot(paved[i + 2], paved[i + 3])).toBeCloseTo(1, 2);
+    expect(run({ polygons: [lot({ surface: 'gravel' })] }).stallLines.length).toBe(0);
+  });
+
   it('places measured hedges off the lanes and not beside a mapped hedge', () => {
     const mapped: Way = { id: 2, tags: { barrier: 'hedge' }, pts: [[E + 20, N + 10], [E + 60, N + 10]], ids: [20, 21], closed: false };
     const r = run({ ways: [street({ 'parking:both': 'no' }), mapped] }, undefined, [

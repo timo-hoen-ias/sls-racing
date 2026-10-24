@@ -305,7 +305,7 @@ async function main() {
     index.tiles.push([e0, n0]);
     console.log(`  ${e0 / 1000}_${n0 / 1000}: classified in ${((Date.now() - t0) / 1000).toFixed(1)} s (${t + 1}/${wanted.length})`);
   }
-  writeFileSync(`${out}index.json`, JSON.stringify(index));
+  writeFileSync(`${out}index.json.gz`, gzipSync(JSON.stringify(index), { level: 9 }));
   const total = counts.reduce((a, b) => a + b, 0) || 1;
   console.log(`Land cover: ${index.tiles.length} tiles, ${index.roofs.length} roof colours → ${out}`);
   console.log(`  ${COVER_NAMES.map((n, i) => [n, counts[i]] as const).filter(([, c]) => c).map(([n, c]) => `${n} ${((c / total) * 100).toFixed(1)}%`).join(', ')}`);

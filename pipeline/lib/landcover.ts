@@ -13,6 +13,7 @@
 //   vegetable growing of the Lisdorfer Au with its rows.
 // Licence of the inputs: dl-de/by-2-0, © GeoBasis DE/LVGL-SL (2025).
 import { existsSync, readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { PNG } from 'pngjs';
 import { derivedDir } from './derived.ts';
 import { COVER_LOOK, Cover, GROUND_LOOK, SPLAT, SPLAT_AERIAL_REF, type CoverClass, lookWeights } from '../../src/world/coverKinds.ts';
@@ -193,13 +194,19 @@ export interface Landcover {
 /** Reads the committed land cover rasters of a region; undefined when the region has none. */
 export function loadLandcover(region: string): Landcover | undefined {
   const dir = landcoverDir(region);
-  if (!existsSync(`${dir}index.json`)) return undefined;
-  const file: LandcoverFile = JSON.parse(readFileSync(`${dir}index.json`, 'utf8'));
-  const known = new Set(file.tiles.map(([e, n]) => `${e}_${n}`));
-  const cache = new Map<string, { cls: Uint8Array; col: Uint8Array; rows?: Uint8Array } | null>();
+  if (!existsSync(`${dir}index.json.gz`)) return undefined;
+  const file: LandcoverFile = JSON.parse(gunzipSync(readFileSync(`${dir}index.json.gz`)).toString('utf8'));
+  const known = new Set(file.tiles.map(([e, n]) => `${e / 1000}_${n / 1000}`));
+  type Raster = { cls: Uint8Array; col: Uint8Array; rows?: Uint8Array } | null;
+  const cache = new Map<number, Raster>();
+  // The terrain asks for neighbouring points over and over: remember the last tile.
+  let lastKey = NaN, last: Raster = null;
   const tile = (e0: number, n0: number) => {
-    const k = `${e0}_${n0}`;
-    let t = cache.get(k);
+    const nk = e0 * 1e4 + n0 / LC_TILE;
+    if (nk === lastKey) return last;
+    // Files are named by the south-west corner in km.
+    const k = `${e0 / 1000}_${n0 / 1000}`;
+    let t = cache.get(nk);
     if (t === undefined) {
       if (!known.has(k)) t = null;
       else {
@@ -215,8 +222,10 @@ export function loadLandcover(region: string): Landcover | undefined {
         }
         t = { cls: c, col: col.data, rows };
       }
-      cache.set(k, t);
+      cache.set(nk, t);
     }
+    lastKey = nk;
+    last = t;
     return t;
   };
   const N_CLS = LC_TILE / LC_CLASS_STEP, N_COL = LC_TILE / LC_COLOUR_STEP;

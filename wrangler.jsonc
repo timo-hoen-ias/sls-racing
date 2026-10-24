@@ -6,5 +6,7 @@
   // Real Saarlouis tiles are not in the repo yet (later: R2), so the deploy ships the
   // synthetic fixture world; vite copies public/tiles into dist.
   "build": { "command": "npm run world:fixture && npm run build" },
-  "assets": { "directory": "./dist" }
+  "assets": { "directory": "./dist" },
+  // Required by `wrangler preview`, which Workers Builds runs for non-main branches.
+  "previews": {}
 }

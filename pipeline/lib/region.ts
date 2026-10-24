@@ -16,6 +16,8 @@ export interface RegionConfig {
    * the terrain where it exists, with the terrain source above as the fallback; DOM1 gives bridge decks.
    */
   laser?: { dgm1: string[]; dom1?: string[] };
+  /** LoD2 building models (ZIPs of 1 km CityGML tiles, UTM 32N, heights NHN), tried in order per tile. */
+  lod2?: string[];
   spawn: { lat: number; lon: number };
   /** Far view (P3): coarse terrain and building blocks this far around the region, terrain at this Terrarium zoom. */
   far?: { marginMeters: number; zoom: number };
@@ -36,6 +38,7 @@ export const paths = {
   terrain: here('../../data/raw/terrain/'),
   dgm1: here('../../data/raw/dgm1/'),
   dom1: here('../../data/raw/dom1/'),
+  lod2: here('../../data/raw/lod2/'),
   out: here('../../public/tiles/'),
 };
 

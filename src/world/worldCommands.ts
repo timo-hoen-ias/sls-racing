@@ -3,7 +3,7 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { Materials } from '../render/materials.ts';
-import { TERRAIN_STEP, type WorldIndex } from './format.ts';
+import { TERRAIN_STEP, type TileContent, type WorldIndex } from './format.ts';
 
 interface Gaps { kinds: string[]; issues: [number, number, number, number, number, number][] }
 
@@ -21,7 +21,20 @@ export interface WorldCommandContext {
   teleport: (x: number, z: number, heading?: number) => void;
   /** Prints into the console after an asynchronous load. */
   print: (text: string) => void;
+  /** Data of every loaded tile. */
+  tiles: (fn: (t: TileContent) => void) => void;
 }
+
+/** Common ALKIS building functions (group 31001 = Gebäude), for bld.info. */
+const ALKIS_FN: Record<number, string> = {
+  1000: 'Wohnhaus', 1010: 'Wohnhaus', 1100: 'Wohn- und Geschäftshaus', 1120: 'Wohn- und Betriebsgebäude', 1200: 'Wohnheim',
+  2000: 'Wirtschafts-/Gewerbegebäude', 2020: 'Bürogebäude', 2050: 'Geschäftsgebäude', 2071: 'Hotel', 2100: 'Gebäude für Gewerbe und Industrie',
+  2463: 'Garage', 2500: 'Versorgungsanlage', 2523: 'Umformer', 3010: 'Öffentliches Gebäude', 3020: 'Bildung und Forschung', 3021: 'Schule',
+  3022: 'Schule', 3040: 'Kirche', 3041: 'Kirche', 3060: 'Gesundheitswesen', 3062: 'Krankenhaus', 3211: 'Sporthalle',
+};
+
+/** [x, z, height above ground, function group, function code] per LoD2 building (tile field bldInfo). */
+const BLD_STRIDE = 5;
 
 export function registerWorldCommands(g: WorldCommandContext) {
   let gaps: Gaps | null = null;
@@ -110,6 +123,46 @@ export function registerWorldCommands(g: WorldCommandContext) {
   registerToggle('terrain.wire', 'Gelände als Drahtgitter (zeigt das 4-m-Netz und wie es an die Straßen angepasst ist)', () => g.mats.ground.wireframe, (v) => {
     g.mats.ground.wireframe = v;
     g.mats.ground.needsUpdate = true;
+  });
+  // LoD2 buildings (pipeline/lib/lod2.ts): which buildings come from the survey models, and what they are.
+  const lod2 = () => {
+    const out: number[][] = [];
+    g.tiles((t) => {
+      const b = t.f32('bldInfo');
+      if (b) for (let i = 0; i + BLD_STRIDE <= b.length; i += BLD_STRIDE) out.push(Array.from(b.subarray(i, i + BLD_STRIDE)));
+    });
+    return out;
+  };
+  const fnName = (group: number, code: number) => (group === 31001 ? ALKIS_FN[code] ?? `Gebäude ${code}` : `Bauwerk ${group}_${code}`);
+  registerCommand({
+    name: 'bld.info',
+    help: 'Nächstes LoD2-Gebäude (Vermessungsmodell) beim Auto oder bei x z: Funktion, Höhe, Entfernung',
+    args: '[x z]',
+    run([xs, zs]) {
+      const p = g.pos();
+      const x = xs !== undefined ? +xs : p.x, z = zs !== undefined ? +zs : p.z;
+      const near = lod2().map((b) => [b, Math.hypot(b[0] - x, b[1] - z)] as const).sort((a, b) => a[1] - b[1]).slice(0, 5);
+      if (!near.length) return 'Keine LoD2-Gebäude in den geladenen Kacheln (dort OSM-Grundrisse)';
+      return near.map(([b, d]) => `${fnName(b[3], b[4])}, ${b[2].toFixed(1)} m hoch, ${d.toFixed(0)} m entfernt bei ${b[0].toFixed(0)} / ${b[1].toFixed(0)}`).join('\n');
+    },
+  });
+  let lodMarks: THREE.InstancedMesh | null = null;
+  registerToggle('bld.lod', 'Markiert LoD2-Gebäude (grün) in den geladenen Kacheln; unmarkierte stammen aus OSM-Grundrissen', () => !!lodMarks?.visible, (v) => {
+    if (lodMarks) { g.scene.remove(lodMarks); lodMarks.dispose(); lodMarks = null; }
+    if (!v) return;
+    const list = lod2();
+    lodMarks = new THREE.InstancedMesh(new THREE.ConeGeometry(0.8, 3, 4), new THREE.MeshBasicMaterial({ color: 0x33dd66, depthTest: false, transparent: true, opacity: 0.85 }), Math.max(1, list.length));
+    const m = new THREE.Matrix4();
+    list.forEach(([x, z, h], n) => {
+      const ground = down(x, z);
+      const y = ground ? 2000 - ground.timeOfImpact : h;
+      lodMarks!.setMatrixAt(n, m.makeRotationX(Math.PI).setPosition(x, y + 2, z));
+    });
+    lodMarks.count = list.length;
+    lodMarks.renderOrder = 998;
+    lodMarks.frustumCulled = false;
+    g.scene.add(lodMarks);
+    g.print(`${list.length} LoD2-Gebäude markiert`);
   });
   registerCommand({
     name: 'terrain.info',

@@ -166,6 +166,11 @@ export class WorldStreamer implements KnockableSource {
     for (const t of this.loaded.values()) fn(t.ix, t.iy);
   }
 
+  /** Calls fn with the data of every loaded tile (debug commands read extra fields such as bldInfo). */
+  forEachContent(fn: (content: TileContent) => void) {
+    for (const t of this.loaded.values()) fn(t.content);
+  }
+
   /** Calls fn with every street lamp head of the loaded tiles. */
   forEachLamp(fn: (x: number, y: number, z: number) => void) {
     for (const t of this.loaded.values()) {

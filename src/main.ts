@@ -25,6 +25,7 @@ import { RoadGraph } from './world/roadGraph.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
+import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -76,6 +77,12 @@ async function boot() {
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
+  const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
+  view.scene.add(peds.view.root);
+  peds.sim.events.knocked = (_, v) => {
+    sound?.impact(Math.min(0.5, v / 30));
+    input.rumble(0.5, 150);
+  };
   const worldAudio = new WorldAudio({
     R: RAPIER, world, graph, car: car.body, scene: view.scene,
     ignore: (c) => traffic.isSolid(c.parent()),
@@ -145,6 +152,7 @@ async function boot() {
   };
 
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
+  peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar() });
 
   let acc = 0;
@@ -261,6 +269,7 @@ async function boot() {
     const lvel = car.body.linvel();
     const simDt = debugState.frozen ? 0 : dt * debugState.timeScale;
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
+    peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
     cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
@@ -301,6 +310,7 @@ async function boot() {
       fps, speed: car.speed, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,
+      peds: peds.sim,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),

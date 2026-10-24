@@ -28,6 +28,7 @@ import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerS
 import { RoadSurface } from './vehicle/roadSurface.ts';
 import { registerReplayCommands } from './replay/commands.ts';
 import { Recorder } from './replay/recorder.ts';
+import { Rescue, registerRescueCommands } from './vehicle/rescue.ts';
 import { ReplayPlayer } from './replay/replayPlayer.ts';
 import { Telemetry } from './ui/telemetry.ts';
 import { Debris } from './render/debris.ts';
@@ -266,6 +267,18 @@ async function boot() {
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
   registerDamageCommands(carView.damage, debris);
+  // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
+  const rescue = new Rescue();
+  const rewind = () => {
+    if (replay.active) return 'nicht während der Wiederholung';
+    if (!rescue.rewind(car, recorder)) return 'noch nichts aufgezeichnet';
+    const v = car.body.linvel();
+    prevVel.x = v.x; prevVel.y = v.y; prevVel.z = v.z;
+    hitCooldown = 0.6;
+    navHud.toast(`⏪ ${rescue.rewindSeconds} s zurück`, 1);
+    return `${rescue.rewindSeconds} s zurückgespult`;
+  };
+  registerRescueCommands(rescue, rewind);
   // Street lamps and light street furniture give way when hit fast enough: lamps go dark, poles tip over.
   const knockdown = new Knockdown(world, car, debris);
   knockdown.addSource(streamer, lampDebris(streamer.lampGeo, mats.lampPole, mats.lampPole), 90);
@@ -350,7 +363,8 @@ async function boot() {
       // The open menu reads the gamepad itself and eats the keyboard.
       if (menu.open) continue;
       if (e === 'menu' && !debug.open) menu.toggle(true);
-      if (e === 'reset') resetCar();
+      if (e === 'reset') { resetCar(); rescue.clear(car); }
+      if (e === 'rewind') rewind();
       if (e === 'camera') cam.next();
       if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
       if (e === 'map') { bigMap.toggle(); input.mapOpen = bigMap.open; }
@@ -434,6 +448,11 @@ async function boot() {
       safeTimer = 0;
     }
     if (worldReady && (ip.y < spawn.y - 150 || !streamer.hasTileAt(ip.x, ip.z))) resetCar();
+    const stuck = worldReady && !replay.active ? rescue.update(car, drive, dt * debugState.timeScale) : null;
+    if (stuck) {
+      resetCar();
+      navHud.toast(stuck === 'flip' ? 'Aufs Dach gelegt: zurück auf die Straße' : 'Festgefahren: zurück auf die Straße', 1.8);
+    }
 
     facades.update(view.daylight.daylight);
     const night = 1 - view.daylight.daylight;

@@ -35,10 +35,24 @@ export function areaTreeKind(tags: Record<string, string> | undefined, r: number
 /** Trees per terrain cell and bushes per terrain cell for an area, by its tags (forest or grass class). */
 export function areaDensity(tags: Record<string, string> | undefined, forest: boolean): { trees: number; bushes: number } {
   if (tags?.natural === 'scrub') return { trees: 0.15, bushes: 2.5 };
-  if (forest) return { trees: 2, bushes: 0.25 };
+  // A closed wood: about 400 trees per hectare with undergrowth.
+  if (forest) return { trees: 2.6, bushes: 0.6 };
   const lu = tags?.landuse, lei = tags?.leisure;
   if (lu === 'orchard') return { trees: 0.3, bushes: 0 };
-  if (lei === 'park' || lei === 'garden' || lu === 'allotments' || lu === 'cemetery') return { trees: 0.1, bushes: 0.12 };
+  if (isPark(tags)) return { trees: 0.3, bushes: 0.2 };
   if (lei === 'pitch' || lei === 'playground') return { trees: 0, bushes: 0.01 };
   return { trees: 0.06, bushes: 0.04 };
+}
+
+/** Parks, gardens, allotments and cemeteries: planted with trees, also between the trees the LiDAR survey found. */
+export function isPark(tags: Record<string, string> | undefined) {
+  const lu = tags?.landuse, lei = tags?.leisure;
+  return lei === 'park' || lei === 'garden' || lu === 'allotments' || lu === 'cemetery' || lu === 'village_green';
+}
+
+/** Scale (height / TREE_HEIGHT of the kind) of a scattered tree: tall in woods, mid-sized in parks. r is 0..1. */
+export function areaTreeScale(tags: Record<string, string> | undefined, forest: boolean, r: number) {
+  if (forest && tags?.natural !== 'scrub') return 1.7 + r * 1.0;
+  if (isPark(tags)) return 0.9 + r * 0.8;
+  return 0.7 + r * 0.7;
 }

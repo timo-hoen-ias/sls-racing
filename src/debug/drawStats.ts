@@ -27,7 +27,7 @@ export class DrawStats {
   private rows = new Map<string, DrawRow>();
   private original?: THREE.WebGLRenderer['renderBufferDirect'];
   private renderer: THREE.WebGLRenderer;
-  /** The player's view; draws with any other camera (reflections, post passes) count as "other". */
+  /** The player's view; draws with any other camera (reflections) or an override material (car mask) count as "other". */
   camera?: THREE.Camera;
   constructor(renderer: THREE.WebGLRenderer) { this.renderer = renderer; }
 
@@ -36,7 +36,9 @@ export class DrawStats {
     const r = this.renderer;
     const orig = (this.original = r.renderBufferDirect);
     r.renderBufferDirect = (camera, scene, geometry, material, object, group) => {
-      const pass = (material as THREE.MeshDepthMaterial).isMeshDepthMaterial || (material as THREE.MeshDistanceMaterial).isMeshDistanceMaterial ? 'shadow' : !this.camera || camera === this.camera ? 'main' : 'other';
+      const pass = (material as THREE.MeshDepthMaterial).isMeshDepthMaterial || (material as THREE.MeshDistanceMaterial).isMeshDistanceMaterial ? 'shadow'
+        // Override passes (the car mask for motion blur) use the player's camera too, but are not the image.
+        : (!this.camera || camera === this.camera) && !scene?.overrideMaterial ? 'main' : 'other';
       const layer = layerOf(object);
       const key = `${pass} ${layer}`;
       let row = this.rows.get(key);

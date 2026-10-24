@@ -169,7 +169,8 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
       <tr><td>Fahrmodell</td><td>Arcade-Tuning über Rapier: Grip-Kurven, Drift-Assistent, Nitro-Boost, Lenkhilfe, Luftkontrolle</td><td>Spaß vor Simulation, wie bei The Crew</td></tr>
       <tr><td>Audio</td><td>Web Audio API: RPM-basiertes Crossfading mehrerer Motor-Loops, Turbo, Nitro, Reifenquietschen, Kollisionen, Hall per Umgebung</td><td>Glaubwürdiger Motorsound ohne Engine-Middleware</td></tr>
       <tr><td>Daten-Pipeline</td><td>Node-Skripte mit osmium/pyosmium, proj4, GDAL für DGM; Ausgabe glTF-Kacheln</td><td>Läuft offline einmal pro Stadt, neue Städte per Konfiguration</td></tr>
-      <tr><td>Online (später)</td><td>Node-Server mit Colyseus oder eigener WebSocket/WebTransport-Schicht</td><td>Räume, Matchmaking, autoritativer Server, Client-Prediction</td></tr>
+      <tr><td>Hosting</td><td>Cloudflare Pages (Spiel), Cloudflare R2 (Kacheln)</td><td>Günstiger Speicher ohne Traffic-Kosten, weltweites CDN</td></tr>
+      <tr><td>Online (später)</td><td>Cloudflare Workers + Durable Objects mit WebSockets (ein Objekt pro Raum)</td><td>Räume, Matchmaking, autoritativer Server, Client-Prediction, alles beim selben Anbieter</td></tr>
     </tbody>
   </table></div>
 </section>
@@ -244,7 +245,7 @@ flowchart LR
       <ul><li>Raycast-Fahrzeug mit Arcade-Tuning, Drift, Nitro-Leiste und Boost-Effekt.</li><li>Verfolger-Kamera mit Geschwindigkeitsgefühl (FOV, Kamerawackeln).</li><li>Eingabe-Schicht für Tastatur, Gamepad und Touch, früh auf einem echten Handy getestet.</li></ul>
       <div class="done">Fertig, wenn: eine Runde um den Festungsring Spaß macht.</div></div>
     <div class="ms-item mvp"><div class="ms-head"><h3>M3 · Grafik-Pass</h3><span class="mono">ca. 2–3 Wochen</span></div>
-      <ul><li>PBR-Fassaden, Asphalt mit Markierungen, Bäume, Laternen, Wasser der Saar.</li><li>Himmel, Tageszeit, Schatten, Post-Processing. Optionaler Google-Foto-Modus.</li></ul></div>
+      <ul><li>PBR-Fassaden, Asphalt mit Markierungen, Bäume, Laternen, Wasser der Saar.</li><li>Himmel, Tageszeit, Schatten, Post-Processing.</li></ul></div>
     <div class="ms-item mvp"><div class="ms-head"><h3>M4 · Sound</h3><span class="mono">ca. 1 Woche</span></div>
       <ul><li>Motor-Loops nach Drehzahl und Last, Schaltvorgänge, Nitro-Zischen, Reifen, Crashs, Stadtatmosphäre.</li></ul></div>
     <div class="ms-item mvp"><div class="ms-head"><h3>M5 · Rennen</h3><span class="mono">ca. 1–2 Wochen</span></div>
@@ -282,13 +283,14 @@ flowchart LR
 </section>
 
 <section class="questions">
-  <div class="eyebrow">Vor dem Start</div>
-  <h2>Offene Fragen</h2>
-  <ol>
-    <li><b>Google 3D Tiles:</b> Willst du den Foto-Modus im Prototyp? Dann brauche ich einen Google-Cloud-API-Key mit Abrechnung und Kostenlimit.</li>
-    <li><b>Hosting:</b> Reicht GitHub Pages für die spielbare Version? Die Kacheln für Saarlouis werden geschätzt einige hundert MB groß, dafür eignet sich eher ein Objektspeicher mit CDN (z.&nbsp;B. Cloudflare R2).</li>
-    <li><b>Assets:</b> Darf ich für das erste Auto und die Sounds freie CC-lizenzierte Assets verwenden, bis eigene da sind?</li>
-  </ol>
+  <div class="eyebrow">Entschieden am 24.10.2026</div>
+  <h2>Entscheidungen</h2>
+  <ul>
+    <li><b>Kein Google</b> im Prototyp. Der Foto-Modus (M3) entfällt vorerst, die Welt kommt komplett aus offenen Daten.</li>
+    <li><b>CC-Assets</b> für Auto und Sounds sind erlaubt, mit Namensnennung im Spiel und in <code>CREDITS.md</code>.</li>
+    <li><b>Hosting bei Cloudflare:</b> Spiel auf Cloudflare Pages, Welt-Kacheln in Cloudflare R2 hinter dem CDN, später Spielserver auf Cloudflare Workers mit Durable Objects.</li>
+    <li><b>Repository:</b> <code>timo-hoen-ias/sls-racing</code>.</li>
+  </ul>
 </section>
 
 <footer>Stand 24.10.2026. Lizenz- und Preisangaben bitte vor Nutzung bei der jeweiligen Quelle prüfen. Kartendaten © OpenStreetMap-Mitwirkende (ODbL).</footer>

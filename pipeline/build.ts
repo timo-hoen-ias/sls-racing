@@ -10,6 +10,7 @@ import {
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings, buildLod2 } from './lib/buildings.ts';
+import { landmarkArea, landmarkList, readLandmarks } from './lib/landmarks.ts';
 import { Footprints, isTrafficStructure, lod2Buildings, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
@@ -71,6 +72,11 @@ function main() {
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
   const lod2Dir = regions.some((r) => r.lod2?.length) ? paths.lod2 : undefined;
+  // Landmark models replace the generic buildings on their footprints (real regions only).
+  const real = regions.some((r) => r.boundary.type !== 'fixture');
+  const landmarks = real ? readLandmarks(new URL('./landmarks.json', import.meta.url).pathname) : [];
+  const landmarkFoot = landmarkArea(landmarks);
+  const centre = (r: [number, number][]) => r.reduce(([a, b], [e, n]) => [a + e / r.length, b + n / r.length], [0, 0]);
   const footprints = new Footprints();
   if (lod2Dir) for (const b of lod2Buildings(lod2Dir)) if (!isTrafficStructure(b)) footprints.add(b.ground);
   // Only where the region has something already (roads, OSM buildings): the survey tiles reach past it.
@@ -81,8 +87,8 @@ function main() {
     const r = b.ground[0] ?? [];
     return !r.length || !used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`);
   };
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (b) => isTrafficStructure(b) || outside(b) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) });
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) });
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
@@ -238,6 +244,9 @@ function main() {
   graph.s = signalJunctions(graph, signalPts);
   console.log(`Traffic lights: ${signalPts.length} signal nodes → ${graph.s.length} junctions in ${new Set(graph.s.map((s) => s[1])).size} groups`);
   writeFileSync(`${paths.out}graph.json`, JSON.stringify(graph));
+  const placed = landmarkList(landmarks, info, height, (e, n) => want.has(`${Math.floor(e / T)}_${Math.floor(n / T)}`));
+  writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
+  console.log(`Landmarks: ${placed.length} models placed`);
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);

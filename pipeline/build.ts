@@ -25,6 +25,8 @@ import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { buildRoads } from './lib/roads.ts';
+import { planKerbs } from './lib/kerbs.ts';
+import { buildRoadside } from './lib/roadside.ts';
 import { terrariumSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
@@ -68,6 +70,9 @@ function main() {
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
   roadHeights(osm.ways, regions, height, console.log);
+  // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
+  const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
+  console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const carve = new RoadCarve(TERRAIN_STEP);
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info));
@@ -175,6 +180,16 @@ function main() {
   }
   const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
+  // Guard rails, delineators and chevron boards outside town (roadside.ts).
+  const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
+  const roadside = buildRoadside(osm.ways, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), dressed });
+  for (const [k, list] of roadside.props) {
+    if (!props.tiles.has(k)) props.tiles.set(k, []);
+    props.tiles.get(k)!.push(...list);
+  }
+  const railTiles = roadside.rails.tiles();
+  const rc = roadside.counts;
+  console.log(`Roadside: ${rc.railKm} km guard rail (${rc.motorway} motorway, ${rc.bridges} bridge, ${rc.mapped} mapped runs, ${rc.embankments} embankment roads), ${rc.posts} delineators, ${rc.chevrons} chevron boards`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
@@ -234,6 +249,8 @@ function main() {
     if (crowns?.some((c) => c > 0)) tile.treeCrowns = encode(new Uint8Array(crowns));
     const bushes = bushesByTile.get(k);
     if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
+    const rails = railTiles.get(k);
+    if (rails) tile.rails = encode(new Float32Array(rails));
     const tileProps = props.tiles.get(k);
     if (tileProps) tile.props = encode(new Float32Array(tileProps));
     // Gzipped here because static hosting does not compress application/octet-stream; the client inflates it.

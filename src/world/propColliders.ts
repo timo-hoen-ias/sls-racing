@@ -14,6 +14,7 @@ const SHAPES: Partial<Record<PropKind, { r: number; h: number } | { w: number; h
   [Prop.recycling]: { w: 3.5, h: 1.75, d: 1.1 }, [Prop.hydrant]: { r: 0.13, h: 0.8 }, [Prop.bikeStand]: { w: 2, h: 0.8, d: 0.8 },
   [Prop.column]: { r: 0.62, h: 3.2 }, [Prop.fence]: { w: 0.1, h: 1.4, d: 1 }, [Prop.wall]: { w: 0.32, h: 1.68, d: 1 },
   [Prop.hedge]: { w: 0.9, h: 1.5, d: 1 }, [Prop.guardRail]: { w: 0.2, h: 0.8, d: 1 },
+  [Prop.delineator]: { r: 0.06, h: 1 }, [Prop.chevronLeft]: { w: 1, h: 1.4, d: 0.1 }, [Prop.chevronRight]: { w: 1, h: 1.4, d: 0.1 },
 };
 
 /** Adds one collider per prop record to body; skip(i) leaves a record out (removed props). */

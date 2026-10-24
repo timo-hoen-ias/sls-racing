@@ -19,7 +19,8 @@ const box = (g: THREE.BufferGeometry) => new THREE.Box3().setFromBufferAttribute
 describe('props GLB', () => {
   it('has every furniture kind of propKinds (except hedge and parked cars) with two LODs', async () => {
     const set = await load();
-    const skip = new Set(['hecke', 'parker', 'schild', 'stoppschild', 'vorfahrt-achten', 'ortsschild']);
+    // Delineators and chevron boards are procedural only (propModels.ts) for now.
+    const skip = new Set(['hecke', 'parker', 'schild', 'stoppschild', 'vorfahrt-achten', 'ortsschild', 'leitpfosten', 'richtungstafel-links', 'richtungstafel-rechts']);
     for (const name of Object.values(PROP_NAMES)) {
       if (skip.has(name)) continue;
       const p = set.props[name];

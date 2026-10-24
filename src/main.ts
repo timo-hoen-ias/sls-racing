@@ -32,6 +32,7 @@ import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
+import { FacadeControl } from './render/facades.ts';
 import { WeatherSystem } from './weather/weatherSystem.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -59,6 +60,7 @@ async function boot() {
   world.timestep = STEP;
   const mats = createMaterials();
   patchWorldMaterials(mats);
+  const facades = new FacadeControl(mats.building);
   const streamer = new WorldStreamer(RAPIER, world, TILES_URL, index, mats, quality);
   view.scene.add(streamer.root);
 
@@ -277,6 +279,7 @@ async function boot() {
     }
     if (worldReady && (ip.y < spawn.y - 150 || !streamer.hasTileAt(ip.x, ip.z))) resetCar();
 
+    facades.update(view.daylight.daylight);
     const night = 1 - view.daylight.daylight;
     const braking = drive.brake > 0 && car.speed > 1;
     carView.setNight(night);

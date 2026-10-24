@@ -1,6 +1,7 @@
 import earcut from 'earcut';
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
+import { FACADE_WALLS, facadeType, facadeV } from './facades.ts';
 import type { Polygon } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
 
@@ -39,7 +40,10 @@ function signedArea(r: [number, number][]) {
   return a / 2; // > 0 = counter-clockwise in UTM (east right, north up)
 }
 
-export function buildBuildings(polys: Polygon[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap) {
+export function buildBuildings(
+  polys: Polygon[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap,
+  opts: { mainRoad?: (e: number, n: number) => boolean } = {},
+) {
   let count = 0;
   for (const p of polys) {
     if (!p.tags.building || p.tags.building === 'no') continue;
@@ -55,7 +59,16 @@ export function buildBuildings(polys: Polygon[], world: WorldInfo, height: (e: n
     const gable = gableShape(rings, p.tags, top - bottom);
     const wallTop = gable ? top - gable.roofHeight : top;
     const hsh = hash(p.id);
-    const wall = WALLS[hsh % WALLS.length];
+    let ce0 = 0, cn0 = 0;
+    for (const [e, n] of outer) { ce0 += e / outer.length; cn0 += n / outer.length; }
+    const facade = facadeType(p.tags, {
+      area: Math.abs(signedArea(outer)), height: wallTop - bottom,
+      centre: Math.hypot(ce0 - world.originE, cn0 - world.originN),
+      mainRoad: !!opts.mainRoad && outer.some(([e, n]) => opts.mainRoad!(e, n)),
+      rand: ((hsh >>> 16) % 1000) / 1000,
+    });
+    const walls = FACADE_WALLS[facade.type] ?? WALLS;
+    const wall = walls[hsh % walls.length];
     const roof = ROOFS[(hsh >>> 8) % ROOFS.length];
     const shade = (c: [number, number, number], f: number) => c.map((v) => Math.min(255, Math.round(v * f))) as [number, number, number];
 
@@ -88,10 +101,10 @@ export function buildBuildings(polys: Polygon[], world: WorldInfo, height: (e: n
         const c = shade(wall, 0.92 + 0.08 * Math.abs(nx));
         const [ax, az] = utmToLocal(world, a[0], a[1]);
         const [bx, bz] = utmToLocal(world, b[0], b[1]);
-        const v0 = buf.vertex(ax, bottom, az, { n, c, uv: [u0, 0] });
-        const v1 = buf.vertex(bx, bottom, bz, { n, c, uv: [u1, 0] });
-        const v2 = buf.vertex(bx, wallTop, bz, { n, c, uv: [u1, vt] });
-        const v3 = buf.vertex(ax, wallTop, az, { n, c, uv: [u0, vt] });
+        const v0 = buf.vertex(ax, bottom, az, { n, c, uv: [u0, facadeV(facade, 0)] });
+        const v1 = buf.vertex(bx, bottom, bz, { n, c, uv: [u1, facadeV(facade, 0)] });
+        const v2 = buf.vertex(bx, wallTop, bz, { n, c, uv: [u1, facadeV(facade, vt)] });
+        const v3 = buf.vertex(ax, wallTop, az, { n, c, uv: [u0, facadeV(facade, vt)] });
         // Pick the winding whose face normal matches n.
         if (outward) { buf.tri(v0, v1, v2); buf.tri(v0, v2, v3); }
         else { buf.tri(v0, v2, v1); buf.tri(v0, v3, v2); }

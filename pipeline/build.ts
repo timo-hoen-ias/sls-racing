@@ -60,7 +60,9 @@ function main() {
   console.log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const samples = buildRoads(osm.ways, info, height, tiles, junctions);
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles);
+  // Main roads (tertiary and up) for shop fronts on the ground floor.
+  const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n) });
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${nBuildings}`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.

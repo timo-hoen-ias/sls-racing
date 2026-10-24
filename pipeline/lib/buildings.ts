@@ -5,6 +5,7 @@ import { FACADE_WALLS, facadeType, facadeV } from './facades.ts';
 import { lod2Tags, type Lod2Building, type Surface } from './lod2.ts';
 import type { Polygon } from './osm.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
+import type { ShopBuilding } from './shops.ts';
 
 // Plaster and sandstone tones typical for the Saarland, plus a few brick and grey façades.
 const WALLS: [number, number, number][] = [
@@ -43,7 +44,12 @@ function signedArea(r: [number, number][]) {
 
 export function buildBuildings(
   polys: Polygon[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap,
-  opts: { mainRoad?: (e: number, n: number) => boolean; skip?: (outer: [number, number][]) => boolean } = {},
+  opts: {
+    mainRoad?: (e: number, n: number) => boolean;
+    skip?: (outer: [number, number][]) => boolean;
+    /** Called per building with its open outer ring and whether the façade has shop windows (shop fronts). */
+    onBuilding?: (b: ShopBuilding) => void;
+  } = {},
 ) {
   let count = 0;
   for (const p of polys) {
@@ -69,6 +75,7 @@ export function buildBuildings(
       mainRoad: !!opts.mainRoad && outer.some(([e, n]) => opts.mainRoad!(e, n)),
       rand: ((hsh >>> 16) % 1000) / 1000,
     });
+    opts.onBuilding?.({ id: p.id, outer, shopWindows: facade.shop, centre: Math.hypot(ce0 - world.originE, cn0 - world.originN) });
     const walls = FACADE_WALLS[facade.type] ?? WALLS;
     const wall = walls[hsh % walls.length];
     const roof = ROOFS[(hsh >>> 8) % ROOFS.length];
@@ -210,7 +217,7 @@ function gableShape(rings: [number, number][][], tags: Record<string, string>, w
  */
 export function buildLod2(
   buildings: Iterable<Lod2Building>, world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap,
-  opts: { mainRoad?: (e: number, n: number) => boolean; skip?: (b: Lod2Building) => boolean } = {},
+  opts: { mainRoad?: (e: number, n: number) => boolean; skip?: (b: Lod2Building) => boolean; onBuilding?: (b: ShopBuilding) => void } = {},
 ): { count: number; info: Map<string, number[]> } {
   let count = 0;
   const info = new Map<string, number[]>();
@@ -228,6 +235,9 @@ export function buildLod2(
       mainRoad: !!opts.mainRoad && foot.some((r) => r.some(([e, n]) => opts.mainRoad!(e, n))),
       rand: ((hsh >>> 16) % 1000) / 1000,
     });
+    // Shop fronts go on the largest footprint ring.
+    const outer = foot.reduce((a, r) => (Math.abs(signedArea(r)) > Math.abs(signedArea(a)) ? r : a));
+    opts.onBuilding?.({ id: hsh, outer, shopWindows: facade.shop, centre: Math.hypot(ce - world.originE, cn - world.originN) });
     const walls = FACADE_WALLS[facade.type] ?? WALLS;
     const wall = walls[hsh % walls.length];
     const roof = ROOFS[(hsh >>> 8) % ROOFS.length];

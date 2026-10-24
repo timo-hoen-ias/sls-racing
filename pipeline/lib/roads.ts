@@ -41,6 +41,15 @@ export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
 /** Road collision lies this far under the drawn surface. */
 const STRIP_DROP = 0.05;
 const SIDEWALK = { width: KERB.width, height: KERB.height };
+/**
+ * Bridges without a landmark model get a raised walkway (cap) on both sides with a pedestrian railing at its
+ * outer edge. On fast roads the cap starts behind the guard rail (props.ts), else right at the carriageway.
+ */
+const BRIDGE_CAP = { width: 1.5, behindRail: 0.6, railInset: 0.1 };
+const FAST = /^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link)$/;
+
+/** A pedestrian railing piece along a bridge cap: centre (UTM), direction, length and foot height. */
+export interface Railing { e: number; n: number; de: number; dn: number; len: number; y: number }
 const LAMP_SPACING = 32;
 
 /** Carriageway width in metres (lanes and edge strips, see src/world/roadSpec.ts). */
@@ -170,11 +179,11 @@ class JunctionIndex {
 
 /** Carriageways of all roads, to keep sidewalks off other roads where they meet at an angle. */
 class CarriagewayIndex {
-  private cells = new Map<string, { way: Way; x0: number; z0: number; x1: number; z1: number; hw: number }[]>();
-  add(way: Way, ring: { x: number; z: number }[], hw: number) {
+  private cells = new Map<string, { way: Way; x0: number; z0: number; x1: number; z1: number; y0: number; y1: number; hw: number }[]>();
+  add(way: Way, ring: { x: number; y: number; z: number }[], hw: number) {
     for (let i = 1; i < ring.length; i++) {
       const [a, b] = [ring[i - 1], ring[i]];
-      const s = { way, x0: a.x, z0: a.z, x1: b.x, z1: b.z, hw };
+      const s = { way, x0: a.x, z0: a.z, x1: b.x, z1: b.z, y0: a.y, y1: b.y, hw };
       for (let cx = Math.floor((Math.min(a.x, b.x) - hw) / 16); cx <= Math.floor((Math.max(a.x, b.x) + hw) / 16); cx++)
         for (let cz = Math.floor((Math.min(a.z, b.z) - hw) / 16); cz <= Math.floor((Math.max(a.z, b.z) + hw) / 16); cz++) {
           const k = `${cx}_${cz}`;
@@ -183,12 +192,13 @@ class CarriagewayIndex {
         }
     }
   }
-  /** Whether (x, z) lies on the carriageway of a road other than `self` (plus a margin). */
-  onOther(self: Way, x: number, z: number, margin: number) {
+  /** Whether (x, z) lies on the carriageway of a road other than `self` (plus a margin), near height y if given. */
+  onOther(self: Way, x: number, z: number, margin: number, y?: number) {
     for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
       if (s.way === self) continue;
       const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
       const t = Math.min(1, Math.max(0, ((x - s.x0) * dx + (z - s.z0) * dz) / (dx * dx + dz * dz || 1)));
+      if (y !== undefined && Math.abs(s.y0 + (s.y1 - s.y0) * t - y) > 3) continue;
       if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw + margin) return true;
     }
     return false;
@@ -202,6 +212,7 @@ class CarriagewayIndex {
 export function buildRoads(
   ways: Way[], world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap, junctions: Junction[],
   carve?: RoadCarve, halves?: Map<Way, HalfWidths>,
+  bridges: { dressed?: Set<number>; railings?: Railing[] } = {},
 ): RoadSample[] {
   const samples: RoadSample[] = [];
   const jIndex = new JunctionIndex(junctions);
@@ -221,6 +232,9 @@ export function buildRoads(
     // Pavement sides as kerbs.ts planned them (left = positive offsets), else the old default for streets.
     const sides = way.sidewalks ?? (cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk) ? { left: true, right: true } : { left: false, right: false });
     const sidewalk = !bridge && (sides.left || sides.right);
+    // Bridges dressed by a landmark model bring their own railings.
+    const walkway = bridge && !bridges.dressed?.has(way.id);
+    const capFrom = FAST.test(way.tags.highway) ? BRIDGE_CAP.behindRail : 0;
     // Surface, wear, edge lines and gutters for the road shader (src/render/pbr/roadCode.ts).
     const look = encodeRoad(roadLook(way.tags, way.id, section, sidewalk));
     // Usable half width per sample, narrower where a road at another height runs alongside (overlap.ts).
@@ -301,7 +315,7 @@ export function buildRoads(
       }
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
       if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
-        const o = hw + 0.5;
+        const o = walkway ? hw + capFrom + BRIDGE_CAP.width : hw + 0.5;
         strip(tile.sidewalks, o, -o, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1], () => [0, 0]);
         wall(tile.sidewalks, off(a, o), off(b, o), a.y - 1, a.y, b.y - 1, b.y, true);
         wall(tile.sidewalks, off(a, -o), off(b, -o), a.y - 1, a.y, b.y - 1, b.y, false);
@@ -323,24 +337,47 @@ export function buildRoads(
         for (const d of section.dividers) strip(tile.markings, -d - 0.075, -d + 0.075, [a.y + 0.02, a.y + 0.02], [b.y + 0.02, b.y + 0.02]);
       }
 
-      if (sidewalk) {
-        const sw = SIDEWALK.width;
+      // Bridge caps run through the nodes where the road continues; a road branching off stops them below.
+      if (walkway || sidewalk) {
+        const sw = walkway ? BRIDGE_CAP.width : SIDEWALK.width;
+        const from = walkway ? capFrom : 0;
         const ground = (p: typeof a, o: number) => {
+          // On a bridge the skirt ends at the underside of the deck slab.
+          if (walkway) return p.y - 1;
           const [e, n] = [p.e - p.dy * o, p.n + p.dx * o];
           return Math.min(height(e, n), p.y) - 0.3;
         };
         const tuv = (p: typeof a, s: 0 | 1) => [p.dist / 2, s * (sw / 2)] as [number, number];
         for (const side of [1, -1]) {
-          if (!paved.get(side)![i]) continue;
-          const ka = a.y + kerbAt(side, i - 1), kb = b.y + kerbAt(side, i);
-          const inner = side * hw;
-          const outer = side * (hw + sw);
+          let ka: number, kb: number;
+          if (walkway) {
+            // No cap where the road had to give way to another road alongside.
+            const full = (p: typeof a) => (side > 0 ? L : R).get(p)! >= hw - 0.05;
+            if (!full(a) || !full(b)) continue;
+            // A bridge cap may pass over a road below, not onto one at its own height.
+            const corners = [off(a, side * (hw + from + sw)), off(b, side * (hw + from + sw)), off(a, side * (hw + from + sw / 2)), off(b, side * (hw + from + sw / 2))];
+            if (corners.some(([x, z], i) => carriageways.onOther(way, x, z, 0.3, i % 2 ? b.y : a.y))) continue;
+            ka = a.y + SIDEWALK.height;
+            kb = b.y + SIDEWALK.height;
+          } else {
+            if (!paved.get(side)![i]) continue;
+            ka = a.y + kerbAt(side, i - 1);
+            kb = b.y + kerbAt(side, i);
+          }
+          const inner = side * (hw + from);
+          const outer = side * (hw + from + sw);
           const [i0, i1] = side > 0 ? [inner, outer] : [outer, inner];
           // Top surface.
           strip(tile.sidewalks, i0, i1, [ka, ka], [kb, kb], tuv);
           // Kerb face towards the road and skirt on the outer edge, as narrow vertical strips.
           wall(tile.sidewalks, off(a, inner), off(b, inner), a.y - 0.05, ka, b.y - 0.05, kb, side < 0);
           wall(tile.sidewalks, off(a, outer), off(b, outer), ground(a, outer), ka, ground(b, outer), kb, side > 0);
+          if (walkway && bridges.railings) {
+            const o = side * (hw + from + sw - BRIDGE_CAP.railInset);
+            const pa = [a.e - a.dy * o, a.n + a.dx * o], pb = [b.e - b.dy * o, b.n + b.dx * o];
+            const de = pb[0] - pa[0], dn = pb[1] - pa[1];
+            bridges.railings.push({ e: (pa[0] + pb[0]) / 2, n: (pa[1] + pb[1]) / 2, de, dn, len: Math.hypot(de, dn), y: (ka + kb) / 2 });
+          }
         }
       }
     }

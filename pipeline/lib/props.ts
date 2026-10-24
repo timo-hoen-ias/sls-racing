@@ -9,7 +9,7 @@ import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
 import { KERB } from '../../src/world/roadSpec.ts';
-import { ROAD_LIFT, densify, isDrivable, roadSurfaceHeights, roadWidth } from './roads.ts';
+import { ROAD_LIFT, densify, isDrivable, roadSurfaceHeights, roadWidth, type Railing } from './roads.ts';
 
 interface Seg {
   ae: number; an: number; be: number; bn: number;
@@ -74,6 +74,8 @@ export interface PropOptions {
   nearLanes?: (e: number, n: number) => boolean;
   junctions: Junction[];
   boundary?: [number, number][][];
+  /** Pedestrian railings along bridge caps, from buildRoads. */
+  railings?: Railing[];
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
   detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
@@ -177,6 +179,9 @@ export function buildProps(osm: OsmData, o: PropOptions) {
 
   // Guard rails (motorways, embankments, bridges, mapped ones) are their own tile field now: roadside.ts.
 
+  // Bridge railings, at the cap height buildRoads gave them.
+  for (const r of o.railings ?? []) add(Prop.railing, r.e, r.n, headingOf(r.de, r.dn), r.len, r.y);
+
   // City limit signs where roads cross the boundary.
   for (const ring of o.boundary ?? []) {
     for (const w of osm.ways) {
@@ -208,8 +213,11 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   for (const w of osm.ways) {
     if (!isDrivable(w.tags) || !/^(residential|living_street|unclassified)$/.test(w.tags.highway)) continue;
     if (o.boundary && !o.boundary.some((r) => pointInRing(w.pts[0][0], w.pts[0][1], r))) continue;
-    const off = roadWidth(w.tags)! / 2 + 0.35;
-    for (const s of [1, -1]) {
+    const width = roadWidth(w.tags)!;
+    const off = width / 2 + 0.35;
+    // Each kerb parker takes 0.55 m of the carriageway: none on narrow lanes, one side only on tight streets.
+    if (width < 4.5) continue;
+    for (const s of width < 5.5 ? [1] : [1, -1]) {
       const tag = w.tags[`parking:${s > 0 ? 'right' : 'left'}`] ?? w.tags['parking:both'] ?? w.tags[`parking:lane:${s > 0 ? 'right' : 'left'}`] ?? w.tags['parking:lane:both'];
       if (tag === 'no' || tag === 'separate') continue;
       // Without tags, about half of the street sides have parked cars.

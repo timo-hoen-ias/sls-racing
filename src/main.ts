@@ -46,6 +46,7 @@ import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
+import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
@@ -53,6 +54,8 @@ import { registerRoadsideCommands } from './world/roadsideCommands.ts';
 import { Vegetation } from './world/vegetation.ts';
 import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
+import { loadShops } from './world/shopGlb.ts';
+import { ShopLayer } from './world/shops.ts';
 import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
@@ -119,12 +122,15 @@ async function boot() {
   // Guard rails: drawn per tile; their colliders come with the tile physics.
   const rails = new RailLayer();
   rails.register();
+  const shops = new ShopLayer(index.world);
+  shops.register();
   const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
   view.scene.add(props.root);
   const landmarks = await Landmarks.fetch(RAPIER, world, TILES_URL, import.meta.env.BASE_URL, quality.shadows > 0);
   view.scene.add(landmarks.root);
+  const joints = await BridgeJoints.fetch(TILES_URL, index.world);
 
   const spawn = index.spawn;
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
@@ -161,6 +167,7 @@ async function boot() {
   bigMap.onClose = () => (input.mapOpen = false);
   $('minimap').addEventListener('click', () => { bigMap.toggle(true); input.mapOpen = true; });
   const weather = new WeatherSystem(quality, view);
+  weather.precipitation.lights.push(...carLights.heads, ...lampLights.pool);
   weather.onChange = (text) => navHud.toast(text);
   for (const c of weatherCommands(weather)) registerCommand(c);
   const routeLine = new RouteLine(RAPIER, world, nav, car.body);
@@ -183,6 +190,7 @@ async function boot() {
     if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
     peds.view.setVariants(set.peds);
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
+  loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
   peds.sim.events.knocked = (_, v) => {
     sound?.impact(Math.min(0.5, v / 30));
     input.rumble(0.5, 150);
@@ -207,6 +215,7 @@ async function boot() {
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
+    joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});
     await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
@@ -341,7 +350,9 @@ async function boot() {
   registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  peds.sim.shops = shops;
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
@@ -555,6 +566,7 @@ async function boot() {
     peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
+    shops.update(view.camera, view.daylight.daylight);
     vegetation.update(dt, view.camera, weather.weather);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
@@ -599,6 +611,7 @@ async function boot() {
     physDebug.update(dt);
     far.update(ip.x, ip.z, dt);
     landmarks.update(ip.x, ip.z);
+    joints.update(dt, ip.x, ip.y, ip.z, car.speed);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);

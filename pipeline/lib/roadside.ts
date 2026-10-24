@@ -291,10 +291,12 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
   return { props, rails, counts };
 }
 
-/** Bridges that get rails: rural bridges, motorway bridges and any bridge of a main road. */
+/**
+ * Bridges that get guard rails: fast roads (motorways to secondary roads, as roads.ts FAST), where the raised
+ * walkway with the pedestrian railing starts behind the rail. Other bridges have only the railing.
+ */
 function railed(w: Way) {
-  const cls = ROAD_CLASSES[w.tags.highway];
-  return !!cls && cls.rank >= 3 && w.tags.highway !== 'living_street';
+  return /^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link)$/.test(w.tags.highway);
 }
 
 /** Closes runs of false shorter than `max` between two true entries. */

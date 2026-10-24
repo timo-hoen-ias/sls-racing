@@ -1,3 +1,4 @@
+import type * as THREE from 'three';
 import { registerCommand } from '../debug/registry.ts';
 import type { Water, WaterSettings } from './water.ts';
 
@@ -18,6 +19,12 @@ export function registerWaterCommands(water: Water) {
     `Wasser: ${water.meshes.size} Flächen geladen · Spiegel ${water.mirrorActive ? `aktiv auf ${water.level.toFixed(1)} m` : st.mirror ? 'bereit (kein Wasser im Blick)' : 'aus (Himmel wird gespiegelt)'}\n` +
     `flow ${st.flow} · waves ${st.waves} · foam ${st.foam} · distortion ${st.distortion}${st.debugFlow ? ' · Fließrichtung sichtbar' : ''}`;
   registerCommand({ name: 'water', aliases: ['wasser'], help: 'Wasser-Einstellungen und Spiegel-Status anzeigen', run: () => status() });
+  registerCommand({
+    name: 'water.level',
+    aliases: ['wasser.spiegel'],
+    help: 'Prüft, ob die geladenen Wasserflächen eben sind: größte Stufe zwischen benachbarten Wasserpunkten, Gelände, das durch den Spiegel sticht, und ob die Kachel den geglätteten Wasserspiegel der Pipeline hat',
+    run: () => levelReport(water),
+  });
   const factor = (key: 'flow' | 'waves' | 'foam' | 'distortion', name: string, help: string, max: number) =>
     registerCommand({
       name,
@@ -61,4 +68,35 @@ export function registerWaterCommands(water: Water) {
       return `Fließrichtungs-Ansicht ${st.debugFlow ? 'an' : 'aus'}`;
     },
   });
+}
+
+/** Steepest step between neighbouring water samples and ground poking through the surface (water.level). */
+export function levelReport(water: Water) {
+  let worst = 0, worstTile = '-', poke = 0, old = 0;
+  for (const m of water.meshes) {
+    const pos = m.geometry.getAttribute('position');
+    const idx = m.geometry.getIndex();
+    const shore = m.geometry.getAttribute('shore');
+    const terrain = m.parent?.getObjectByName('terrain') as THREE.Mesh | undefined;
+    const tpos = terrain?.geometry.getAttribute('position');
+    if (!m.userData.smoothLevel) old++;
+    if (!idx || !shore) continue;
+    // Water samples only: the bank is meant to rise above the surface, separate ponds may sit higher.
+    const wet = (v: number) => shore.getX(v) > 0;
+    const seen = new Set<number>();
+    for (let i = 0; i < idx.count; i += 3)
+      for (let k = 0; k < 3; k++) {
+        const a = idx.getX(i + k), b = idx.getX(i + (k + 1) % 3);
+        if (!wet(a)) continue;
+        if (!seen.has(a)) {
+          seen.add(a);
+          if (tpos && tpos.getY(a) > pos.getY(a) + 0.01) poke++;
+        }
+        if (!wet(b)) continue;
+        const d = Math.abs(pos.getY(a) - pos.getY(b));
+        if (d > worst) { worst = d; worstTile = m.parent?.name.replace('tile ', '') ?? '-'; }
+      }
+  }
+  return `${water.meshes.size} Wasserflächen geladen · größte Stufe zwischen benachbarten Wasserpunkten (4 m) ${worst.toFixed(2)} m (${worstTile})\n` +
+    `Gelände sticht an ${poke} Wasserpunkten durch den Spiegel · ${old ? `${old} Kacheln ohne geglätteten Wasserspiegel (alte Kacheln: npm run world:build)` : 'alle Kacheln mit geglättetem Wasserspiegel'}`;
 }

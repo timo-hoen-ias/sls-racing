@@ -22,7 +22,8 @@
     "textures:build": "node tools/textures/build-textures.ts",
     "models:landmarks": "blender --background --factory-startup --python tools/blender/make_landmarks.py && for f in public/models/landmarks/*.raw.glb; do node tools/compress-model.ts \"$f\" \"${f%.raw.glb}.glb\"; done",
     "models:vegetation": "blender --background --factory-startup --python tools/blender/make_vegetation.py && node tools/compress-model.ts public/models/vegetation.raw.glb public/models/vegetation.glb",
-    "models:props": "blender --background --factory-startup --python tools/blender/make_props.py && node tools/compress-model.ts public/models/props.raw.glb public/models/props.glb"
+    "models:props": "blender --background --factory-startup --python tools/blender/make_props.py && node tools/compress-model.ts public/models/props.raw.glb public/models/props.glb",
+    "models:bridges": "blender --background --factory-startup --python tools/blender/make_bridges.py && for f in public/models/landmarks/bruecke-*.raw.glb; do node tools/compress-model.ts \"$f\" \"${f%.raw.glb}.glb\"; done"
   },
   "engines": {
     "node": ">=22.18"

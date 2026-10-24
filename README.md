@@ -116,6 +116,8 @@ Vegetation: `tools/blender/make_vegetation.py` baut Platane, Linde, Kastanie, Ah
 
 Straßenmöbel und Fußgänger: `tools/blender/make_props.py` baut `public/models/props.glb` (`npm run models:props`) mit allen Möbeln aus `propKinds.ts` (je `lod0`/`lod1`, lod1 unter 150 Dreiecken), Bushaltestelle mit Häuschen, Ampel mit getrennten Lampen (rot/gelb/grün an den Positionen aus `signalView.ts`), Verkehrsschildern nach StVO (Vorfahrtstraße, Vorfahrt, Vorfahrt achten, Stop, Einfahrt verboten, Tempo 30/50/70/100, Ortsschild, Zusatzzeichen, Fußgängerüberweg; Schilder-Atlas selbst gezeichnet und eingebettet) und vier Fußgängern (Mantel, Rock, Rucksack, Kind) in Einzelteilen mit den Drehpunkten aus `pedView.ts`, hellgrau zum Einfärben per Instanzfarbe. `src/world/propGlb.ts` lädt alles.
 
+Straßenbrücken: Deck, Rampen und Kollision baut die Pipeline (`public/tiles/bridges.json`). `tools/blender/make_bridges.py` setzt darauf für jede Brücke ab 30 m Länge Brüstung mit Gesims, Stahlgeländer und Pfeiler mit Querträger (`public/models/landmarks/bruecke-<way id>.glb`, Kollision nur außerhalb des Fahrbahnbands). `node tools/landmark-footprints.ts` trägt sie mit `bridge` und Deckhöhe `y` ins Manifest ein, `npm run models:bridges` baut sie (nach `npm run world:build`).
+
 Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 
 ## Aufbau

@@ -4,7 +4,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 
-interface Landmark { id: string; glb: string; e: number; n: number; heading: number; footprint: [number, number][] }
+interface Landmark { id: string; glb: string; e: number; n: number; heading: number; footprint: [number, number][]; y?: number; bridge?: number }
 const manifest: Landmark[] = JSON.parse(readFileSync(new URL('../pipeline/landmarks.json', import.meta.url), 'utf8'));
 const MATERIAL = /^(stone|plaster|roof|slate|copper|glass|wood)/;
 
@@ -26,8 +26,9 @@ describe('landmarks', () => {
     for (const l of manifest) {
       expect(existsSync(new URL(`../public/${l.glb}`, import.meta.url))).toBe(true);
       expect(l.e).toBeGreaterThan(330000);
-      expect(l.n).toBeGreaterThan(5460000);
-      // (e, n) is the area centroid of the footprint.
+      expect(l.n).toBeGreaterThan(5450000);
+      // (e, n) is the area centroid of the footprint (bridges: a point on the deck centreline, with y on the deck top).
+      if (l.bridge !== undefined) { expect(l.y).toBeDefined(); continue; }
       let a = 0, cx = 0, cy = 0;
       const [ox, oy] = l.footprint[0];
       const rel = l.footprint.map(([x, y]) => [x - ox, y - oy]);

@@ -189,6 +189,11 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
     },
   });
   registerCommand({
+    name: 'cam.snap',
+    help: 'Kamera sofort hinter das Auto setzen (passiert automatisch nach Teleport und Zurücksetzen)',
+    run: () => { c.cam.snap(); return 'Kamera zurückgesetzt'; },
+  });
+  registerCommand({
     name: 'cam.headbob',
     help: 'Kopfbewegung in der Cockpit-Kamera 0..1',
     args: '[0..1]',

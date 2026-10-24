@@ -28,7 +28,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; col
 body.touch #grip { display: none; }
 #info { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); top: calc(12px + env(safe-area-inset-top, 0px)); font: 12px/1.5 ui-monospace, Menlo, monospace; opacity: .75; white-space: pre; text-shadow: 0 1px 3px #000; }
 #attribution { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); font-size: 11px; opacity: .7; }
-#help { position: absolute; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); font-size: 13px; opacity: .75; text-align: center; max-width: 90vw; }
+/* Between minimap and rev counter and above the map credits, so neither overlaps it. */
+#help { position: absolute; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); font-size: 12px; line-height: 1.45; opacity: .75; text-align: center; width: max-content; max-width: max(320px, calc(100vw - 540px)); text-shadow: 0 1px 3px #000; }
 #start { pointer-events: auto; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font: 800 28px/1 inherit; font-family: inherit; padding: 16px 36px; background: var(--accent); color: #fff; border: 0; border-radius: 6px; cursor: pointer; box-shadow: 0 10px 30px #0008; }
 #start:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 #touch { position: fixed; inset: 0; pointer-events: none; }

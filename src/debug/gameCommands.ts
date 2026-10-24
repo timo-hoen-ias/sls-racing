@@ -109,7 +109,7 @@ export function registerGameCommands(g: GameContext, state: DebugState) {
       return `Teleport zu ${s.name}`;
     },
   });
-  registerCommand({ name: 'reset', help: 'Auto an die letzte sichere Stelle setzen (wie R)', run: () => { g.resetCar(); } });
+  registerCommand({ name: 'reset', help: 'Auto auf das nächste freie Straßenstück setzen (wie R)', run: () => { g.resetCar(); const t = car.body.translation(); return `Zurückgesetzt auf ${graph.snap(t.x, t.z, 25)?.edge.name || 'die nächste Straße'}`; } });
   registerCommand({
     name: 'flip', help: 'Auto an Ort und Stelle aufrichten',
     run: () => { const p = g.pos; car.reset({ x: p.x, y: p.y + 1.5, z: p.z }, car.heading()); },

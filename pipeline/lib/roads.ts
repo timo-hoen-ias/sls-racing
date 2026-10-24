@@ -52,7 +52,7 @@ export function isDrivable(tags: Record<string, string>) {
   return !!ROAD_CLASSES[tags.highway] && tags.tunnel !== 'yes' && tags.area !== 'yes' && tags.access !== 'no';
 }
 
-const isBridge = (tags: Record<string, string>) => !!tags.bridge && tags.bridge !== 'no';
+export const isBridge = (tags: Record<string, string>) => !!tags.bridge && tags.bridge !== 'no';
 
 export function densify(pts: [number, number][], step = STEP): [number, number][] {
   const out: [number, number][] = [pts[0]];
@@ -66,18 +66,28 @@ export function densify(pts: [number, number][], step = STEP): [number, number][
   return out;
 }
 
-/** Road surface height along a way: draped on the terrain, or a straight span for bridges. */
+/** Road surface height along a way: draped on the terrain, or a straight span for bridges, plus any lift. */
 function surface(way: Way, height: (e: number, n: number) => number) {
   const cls = ROAD_CLASSES[way.tags.highway];
   const lift = ROAD_LIFT + cls.rank * 0.008;
   const pts = way.pts;
   const h0 = height(...pts[0]);
   const h1 = height(...pts[pts.length - 1]);
-  let len = 0;
-  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const len = cum[cum.length - 1];
+  const raise = way.raise;
+  let seg = 0;
+  const raised = (dist: number) => {
+    if (!raise) return 0;
+    if (dist < cum[seg]) seg = 0;
+    while (seg < cum.length - 2 && dist > cum[seg + 1]) seg++;
+    const t = Math.min(1, Math.max(0, (dist - cum[seg]) / (cum[seg + 1] - cum[seg] || 1)));
+    return raise[seg] + (raise[seg + 1] - raise[seg]) * t;
+  };
   return isBridge(way.tags)
-    ? (_e: number, _n: number, dist: number) => h0 + (h1 - h0) * (dist / (len || 1)) + 0.4
-    : (e: number, n: number) => height(e, n) + lift;
+    ? (_e: number, _n: number, dist: number) => h0 + (h1 - h0) * (dist / (len || 1)) + 0.4 + raised(dist)
+    : (e: number, n: number, dist: number) => height(e, n) + lift + raised(dist);
 }
 
 /** Surface height at each original node of a way (for the road graph). */
@@ -172,7 +182,20 @@ export function buildRoads(
       };
       const hw = width / 2;
       strip(tile.roads, -hw, hw, [a.y, a.y], [b.y, b.y], (p, s) => [s, p.dist / width]);
-      if (bridge) strip(tile.collide, -hw - 0.5, hw + 0.5, [a.y, a.y], [b.y, b.y]);
+      // Lifted road on an embankment: own collision, and retaining walls down to the terrain.
+      const above = !bridge && way.raise ? Math.max(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) : 0;
+      if (bridge || above > ROAD_LIFT + 0.1) {
+        // Where a deck or ramp is close to the ground, sink its collision into the terrain so its edge is no kerb.
+        const cy = (p: typeof a) => p.y - Math.max(0, 0.6 - (p.y - height(p.e, p.n)));
+        strip(tile.collide, -hw - 0.5, hw + 0.5, [cy(a), cy(a)], [cy(b), cy(b)]);
+      }
+      if (above > 0.6) {
+        for (const side of [1, -1]) {
+          const o = side * (hw + 0.5);
+          const foot = (p: typeof a) => height(p.e - p.dy * o, p.n + p.dx * o) - 0.3;
+          wall(tile.sidewalks, off(a, o), off(b, o), foot(a), a.y, foot(b), b.y, side > 0);
+        }
+      }
       // Dashes: 3 m line, 6 m gap.
       if (cls.centreLine && way.tags.oneway !== 'yes' && Math.floor(a.dist / 9) === Math.floor(b.dist / 9) && a.dist % 9 < 3) {
         strip(tile.markings, -0.07, 0.07, [a.y + 0.02, a.y + 0.02], [b.y + 0.02, b.y + 0.02]);

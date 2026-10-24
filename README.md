@@ -13,12 +13,15 @@ npm run world:fixture   # synthetisches Testgelände, braucht kein Internet
 npm run dev             # http://localhost:5173
 ```
 
-Echte Stadt (braucht Zugriff auf overpass-api.de und s3.amazonaws.com):
+Echte Stadt (braucht Zugriff auf download.geofabrik.de und s3.amazonaws.com):
 
 ```bash
-npm run world:fetch     # lädt OSM und Gelände nach data/raw/
-npm run world:build     # baut Kacheln nach public/tiles/
+npm run world:fetch     # lädt den OSM-Extrakt (Geofabrik Saarland) und das Gelände nach data/raw/
+npm run world:build     # schneidet die Region aus und baut Kacheln nach public/tiles/
+npm run world:drivetest # Autopilot fährt echte Straßen ab und meldet Stellen, an denen er hängen bleibt
 ```
+
+`world:fetch` lädt einen PBF-Extrakt (Liste in `pipeline/regions/<region>.json`, BBBike als Ersatz) statt Overpass zu fragen, weil die öffentlichen Overpass-Server oft überlastet sind. Mit `node pipeline/fetch.ts saarlouis --overpass --force` geht es weiterhin über Overpass.
 
 Ohne lokalen Netzzugang baut der GitHub-Workflow **World build** die Kacheln und stellt sie als Artefakt bereit.
 

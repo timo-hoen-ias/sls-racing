@@ -5,7 +5,7 @@
 // Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.json
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import {
-  Ground, TERRAIN_N, TERRAIN_STEP, encode, tileKey, utmToLocal,
+  Ground, TERRAIN_N, TERRAIN_STEP, encode, localToUtm, tileKey, utmToLocal,
   type TileData, type WorldIndex,
 } from '../src/world/format.ts';
 import { buildBuildings } from './lib/buildings.ts';
@@ -14,6 +14,7 @@ import { GroundIndex, rand } from './lib/ground.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
+import { liftOverpasses } from './lib/overpasses.ts';
 import { buildRoads } from './lib/roads.ts';
 import { flatSampler, terrariumSampler, type HeightSampler } from './lib/terrain.ts';
 import { TileMap } from './lib/tilebuf.ts';
@@ -55,6 +56,8 @@ function main() {
 
   const osm = readOsm(merged, project);
   const tiles = new TileMap(info.tileSize);
+  const over = liftOverpasses(osm.ways, height);
+  console.log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
   const samples = buildRoads(osm.ways, info, height, tiles, junctions);
   const nBuildings = buildBuildings(osm.polygons, info, height, tiles);
@@ -77,6 +80,13 @@ function main() {
 
   const ground = new GroundIndex(osm.polygons);
   const onRoad = new RoadMask(osm.ways);
+  // Lamps stand beside their own road; drop the ones that end up on another road's lanes.
+  const onLanes = new RoadMask(osm.ways, -0.5);
+  const offLanes = (lamps: number[]) => {
+    const out: number[] = [];
+    for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
+    return out;
+  };
   const treesByTile = new Map<string, number[]>();
   const addTree = (e: number, n: number, s: number) => {
     const [x, z] = utmToLocal(info, e, n);
@@ -119,7 +129,8 @@ function main() {
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
       sidewalks: b?.sidewalks.pack(),
     };
-    if (b?.lamps.length) tile.lamps = encode(new Float32Array(b.lamps.map((v) => Math.round(v * 100) / 100)));
+    const lamps = offLanes(b?.lamps ?? []);
+    if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const trees = treesByTile.get(k);
     if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
     const json = JSON.stringify(tile);

@@ -20,6 +20,8 @@ jobs:
       - name: Download OSM and terrain
         run: npm run world:fetch
       - run: npm run world:build
+      - name: Drive test (autopilot on 200 real roads)
+        run: npm run world:drivetest -- --routes=200
       - name: Summary
         run: |
           echo "### Welt-Kacheln" >> $GITHUB_STEP_SUMMARY

@@ -9,8 +9,10 @@ import {
 } from '../src/world/format.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { readOsm } from './lib/osm.ts';
-import { loadWorld, paths } from './lib/region.ts';
-import { densify, isDrivable, ROAD_CLASSES } from './lib/roads.ts';
+import { liftOverpasses } from './lib/overpasses.ts';
+import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
+import { densify, isDrivable, roadSurfaceHeights, ROAD_CLASSES } from './lib/roads.ts';
+import { flatSampler, terrariumSampler } from './lib/terrain.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -66,6 +68,12 @@ function addColliders(world: RAPIER.World, t: TileData) {
       kinds.set(world.createCollider(RAPIER.ColliderDesc.cylinder(1.6 * sc, 0.3 * sc).setTranslation(x, y + 1.4 * sc, z), body).handle, 'tree');
     }
   }
+  if (t.lamps) {
+    const l = decodeF32(t.lamps);
+    for (let i = 0; i < l.length; i += 4) {
+      kinds.set(world.createCollider(RAPIER.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i], l[i + 1] + 3.5, l[i + 2]), body).handle, 'lamp');
+    }
+  }
 }
 
 /** Ground height under (x, z), interpolated on the same triangles as the terrain mesh. */
@@ -85,7 +93,7 @@ function groundAt(x: number, z: number): number | undefined {
 
 interface Result { ok: boolean; why?: string; at?: [number, number]; dist: number; len: number }
 
-function driveRoute(id: number, name: string, pts: [number, number][]): Result {
+function driveRoute(pts: [number, number][], startY: number): Result {
   const route = densify(pts.map(([e, n]) => utmToLocal(W, e, n)), 4);
   const len = route.reduce((s, p, i) => (i ? s + Math.hypot(p[0] - route[i - 1][0], p[1] - route[i - 1][1]) : 0), 0);
   // Load every tile within 64 m of the route.
@@ -98,7 +106,7 @@ function driveRoute(id: number, name: string, pts: [number, number][]): Result {
 
   const [sx, sz] = route[0];
   const heading0 = Math.atan2(route[1][0] - sx, -(route[1][1] - sz));
-  const car = new CarPhysics(RAPIER, world, { x: sx, y: (groundAt(sx, sz) ?? 0) + 1.2, z: sz }, heading0);
+  const car = new CarPhysics(RAPIER, world, { x: sx, y: startY + 1.2, z: sz }, heading0);
   let target = 1;
   let stuck = 0;
   let travelled = 0;
@@ -142,7 +150,16 @@ function driveRoute(id: number, name: string, pts: [number, number][]): Result {
     const fail = (why: string): Result => ({ ok: false, why, at: [q.x, q.z], dist: travelled, len });
     if (stuck > 180) {
       const hit = new Set<string>();
-      world.contactPairsWith(car.body.collider(0), (o) => { hit.add(kinds.get(o.handle) ?? '?'); });
+      world.contactPairsWith(car.body.collider(0), (o) => {
+        hit.add(kinds.get(o.handle) ?? '?');
+        if (TRACE) world.contactPair(car.body.collider(0), o, (m) => {
+          for (let k = 0; k < m.numContacts(); k++) {
+            const c = m.localContactPoint2(k)!;
+            const nrm = m.normal();
+            console.log(`contact ${kinds.get(o.handle)} at ${c.x.toFixed(1)},${c.y.toFixed(2)},${c.z.toFixed(1)} normal ${nrm.x.toFixed(2)},${nrm.y.toFixed(2)},${nrm.z.toFixed(2)} ground ${groundAt(c.x, c.z)?.toFixed(2)}`);
+          }
+        });
+      });
       return fail(`stuck${hit.size ? ` on ${[...hit].join('+')}` : ''}`);
     }
     if (upY < 0.3) return fail('flipped');
@@ -157,8 +174,14 @@ function driveRoute(id: number, name: string, pts: [number, number][]): Result {
 
 async function main() {
   await RAPIER.init();
-  const { project } = loadWorld();
+  const { cfg, project } = loadWorld();
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
+  // Road heights as the build computes them, so the car starts on its road (which may be lifted).
+  const terrain = loadRegion(region).terrain;
+  const sampler = terrain.source === 'terrarium' ? terrariumSampler(paths.terrain, terrain.zoom) : flatSampler();
+  const toLonLat = unproject(cfg.zone);
+  const height = (e: number, n: number) => sampler.at(...toLonLat(e, n));
+  liftOverpasses(osm.ways, height);
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
   let candidates = osm.ways.filter((w) =>
@@ -174,7 +197,7 @@ async function main() {
   let ok = 0;
   const fails: string[] = [];
   for (const { w } of pool) {
-    const res = driveRoute(w.id, w.tags.name ?? '', w.pts);
+    const res = driveRoute(w.pts, roadSurfaceHeights(w, height)[0]);
     if (res.ok) ok++;
     else {
       const [e, n] = [res.at![0] + W.originE, -res.at![1] + W.originN];

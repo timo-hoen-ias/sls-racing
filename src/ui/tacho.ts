@@ -31,25 +31,37 @@ export interface TachoReading {
 }
 
 export class Tacho {
-  private needle: SVGGElement;
-  private gear: HTMLElement;
-  private speed: HTMLElement;
-  private nitroArc: SVGPathElement;
-  private nitroLen: number;
-  private shiftLight: SVGCircleElement;
-  private mode: SVGTextElement;
+  private needle!: SVGGElement;
+  private gear!: HTMLElement;
+  private speed!: HTMLElement;
+  private nitroArc!: SVGPathElement;
+  private nitroLen!: number;
+  private shiftLight!: SVGCircleElement;
+  private mode!: SVGTextElement;
   private root: HTMLElement;
   private shown = 0;
   private burn = 0;
   private last = { kmh: -1, gear: '', nitro: -1, shift: false, burn: -1, mode: '' };
 
-  private maxRpm: number;
-  private redRpm: number;
-  private unitEl: HTMLElement;
+  private maxRpm!: number;
+  private redRpm!: number;
+  private unitEl!: HTMLElement;
   private mph = false;
 
   constructor(root: HTMLElement, maxRpm: number, redRpm: number) {
     this.root = root;
+    this.build(maxRpm, redRpm);
+  }
+
+  /** Another engine (car.select): redraws the scale and the red zone. */
+  setRange(maxRpm: number, redRpm: number) {
+    this.build(maxRpm, redRpm);
+    this.unitEl.textContent = this.mph ? 'mph' : 'km/h';
+    this.last = { kmh: -1, gear: '', nitro: -1, shift: false, burn: -1, mode: '' };
+  }
+
+  private build(maxRpm: number, redRpm: number) {
+    const root = this.root;
     this.redRpm = redRpm;
     const scaleMax = Math.ceil(maxRpm / 1000) * 1000;
     const v = (rpm: number) => rpm / scaleMax;

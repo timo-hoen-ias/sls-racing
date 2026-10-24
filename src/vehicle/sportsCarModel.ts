@@ -182,6 +182,16 @@ export interface SportsCarModel {
   exhausts: THREE.Vector3[];
   headlights: THREE.Vector3[];
   makeWheel(side: 1 | -1): { pivot: THREE.Group; spin: THREE.Group };
+  /** Dimensions the GLB states in the extras of its "car" node (newer car models); the physics follows them. */
+  geometry?: CarGeometry;
+}
+
+/** Wheel positions (z, + = forward), track (centre to centre), wheel radius and width, body length and width (m). */
+export interface CarGeometry {
+  name?: string;
+  wheel: { front: number; rear: number; track: number; radius: number; width: number };
+  length: number;
+  width: number;
 }
 
 export function buildSportsCar(color = '#c0141c'): SportsCarModel {

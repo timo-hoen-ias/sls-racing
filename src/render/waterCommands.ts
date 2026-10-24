@@ -22,7 +22,7 @@ export function registerWaterCommands(water: Water) {
   registerCommand({
     name: 'water.level',
     aliases: ['wasser.spiegel'],
-    help: 'Prüft, ob die geladenen Wasserflächen eben sind: Höhenunterschied je Kachel, Gelände, das durch den Spiegel sticht, und ob die Kachel den geglätteten Wasserspiegel der Pipeline hat',
+    help: 'Prüft, ob die geladenen Wasserflächen eben sind: größte Stufe zwischen benachbarten Wasserpunkten, Gelände, das durch den Spiegel sticht, und ob die Kachel den geglätteten Wasserspiegel der Pipeline hat',
     run: () => levelReport(water),
   });
   const factor = (key: 'flow' | 'waves' | 'foam' | 'distortion', name: string, help: string, max: number) =>
@@ -70,7 +70,7 @@ export function registerWaterCommands(water: Water) {
   });
 }
 
-/** Spread of the water surface per tile and ground poking through it (water.level). */
+/** Steepest step between neighbouring water samples and ground poking through the surface (water.level). */
 export function levelReport(water: Water) {
   let worst = 0, worstTile = '-', poke = 0, old = 0;
   for (const m of water.meshes) {
@@ -80,18 +80,23 @@ export function levelReport(water: Water) {
     const terrain = m.parent?.getObjectByName('terrain') as THREE.Mesh | undefined;
     const tpos = terrain?.geometry.getAttribute('position');
     if (!m.userData.smoothLevel) old++;
-    if (!idx) continue;
-    const used = new Set<number>();
-    for (let i = 0; i < idx.count; i++) used.add(idx.getX(i));
-    let lo = Infinity, hi = -Infinity;
-    for (const v of used) {
-      const y = pos.getY(v);
-      lo = Math.min(lo, y); hi = Math.max(hi, y);
-      // Water samples only: the bank is meant to rise above the surface.
-      if (tpos && shore && shore.getX(v) > 0 && tpos.getY(v) > y + 0.01) poke++;
-    }
-    if (hi - lo > worst) { worst = hi - lo; worstTile = m.parent?.name.replace('tile ', '') ?? '-'; }
+    if (!idx || !shore) continue;
+    // Water samples only: the bank is meant to rise above the surface, separate ponds may sit higher.
+    const wet = (v: number) => shore.getX(v) > 0;
+    const seen = new Set<number>();
+    for (let i = 0; i < idx.count; i += 3)
+      for (let k = 0; k < 3; k++) {
+        const a = idx.getX(i + k), b = idx.getX(i + (k + 1) % 3);
+        if (!wet(a)) continue;
+        if (!seen.has(a)) {
+          seen.add(a);
+          if (tpos && tpos.getY(a) > pos.getY(a) + 0.01) poke++;
+        }
+        if (!wet(b)) continue;
+        const d = Math.abs(pos.getY(a) - pos.getY(b));
+        if (d > worst) { worst = d; worstTile = m.parent?.name.replace('tile ', '') ?? '-'; }
+      }
   }
-  return `${water.meshes.size} Wasserflächen geladen · größter Höhenunterschied in einer Kachel ${worst.toFixed(2)} m (${worstTile})\n` +
+  return `${water.meshes.size} Wasserflächen geladen · größte Stufe zwischen benachbarten Wasserpunkten (4 m) ${worst.toFixed(2)} m (${worstTile})\n` +
     `Gelände sticht an ${poke} Wasserpunkten durch den Spiegel · ${old ? `${old} Kacheln ohne geglätteten Wasserspiegel (alte Kacheln: npm run world:build)` : 'alle Kacheln mit geglättetem Wasserspiegel'}`;
 }

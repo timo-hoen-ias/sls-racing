@@ -15,6 +15,7 @@ import { Footprints, isTrafficStructure, lod2Buildings, LOD2_ATTRIBUTION, type L
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
+import { type ShopBuilding, buildShops } from './lib/shops.ts';
 import { signalJunctions } from './lib/signals.ts';
 import { RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
@@ -90,8 +91,10 @@ function main() {
     const r = b.ground[0] ?? [];
     return !r.length || !used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`);
   };
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) });
+  const shopBuildings: ShopBuilding[] = [];
+  const onBuilding = (b: ShopBuilding) => shopBuildings.push(b);
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)), onBuilding });
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM`);
 
   // Tiles: everything with content, every tile inside a boundary, plus a ring of terrain around it.
@@ -175,6 +178,8 @@ function main() {
   }
   const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
+  const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
+  console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
@@ -234,6 +239,8 @@ function main() {
     if (crowns?.some((c) => c > 0)) tile.treeCrowns = encode(new Uint8Array(crowns));
     const bushes = bushesByTile.get(k);
     if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
+    const tileShops = shops.tiles.get(k);
+    if (tileShops) tile.shops = encode(new Float32Array(tileShops));
     const tileProps = props.tiles.get(k);
     if (tileProps) tile.props = encode(new Float32Array(tileProps));
     // Gzipped here because static hosting does not compress application/octet-stream; the client inflates it.

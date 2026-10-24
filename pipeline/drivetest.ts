@@ -3,10 +3,12 @@
 //   node pipeline/drivetest.ts [region] [--routes=60] [--seed=1] [--way=<osm id>]
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import {
-  TERRAIN_N, TERRAIN_STEP, Ground, decodeF32, decodeU32, decodeU8, tileKey, tileOfLocal, tileOriginLocal, utmToLocal,
-  type TileData, type WorldIndex,
+  TERRAIN_N, TERRAIN_STEP, TileContent, isGzip, tileKey, tileOfLocal, tileOriginLocal, utmToLocal, type WorldIndex,
 } from '../src/world/format.ts';
+import { addTileColliders } from '../src/world/tileColliders.ts';
+import { terrainHeights } from '../src/world/tileBuild.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { readOsm } from './lib/osm.ts';
 import { liftOverpasses } from './lib/overpasses.ts';
@@ -24,11 +26,13 @@ const STEP = 1 / 60;
 
 const index: WorldIndex = JSON.parse(readFileSync(`${paths.out}index.json`, 'utf8'));
 const W = index.world;
-const tileCache = new Map<string, TileData | null>();
-function tile(k: string): TileData | null {
+const tileCache = new Map<string, TileContent | null>();
+function tile(k: string): TileContent | null {
   if (!tileCache.has(k)) {
-    const f = `${paths.out}t/${k}.json`;
-    tileCache.set(k, existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null);
+    const f = `${paths.out}t/${k}.bin`;
+    const raw = existsSync(f) ? readFileSync(f) : null;
+    const buf = raw && isGzip(raw) ? gunzipSync(raw) : raw;
+    tileCache.set(k, buf ? new TileContent(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer) : null);
   }
   return tileCache.get(k)!;
 }
@@ -36,44 +40,9 @@ function tile(k: string): TileData | null {
 /** What each collider is, for failure reports. */
 const kinds = new Map<number, string>();
 
-/** Same colliders as WorldStreamer.addTile. */
-function addColliders(world: RAPIER.World, t: TileData) {
-  const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  const [ox, oz] = tileOriginLocal(W, t.ix, t.iy);
-  const h = decodeF32(t.terrain);
-  const g = decodeU8(t.ground);
-  const N = TERRAIN_N;
-  const pos = new Float32Array(N * N * 3);
-  for (let r = 0; r < N; r++)
-    for (let c = 0; c < N; c++) {
-      const i = r * N + c;
-      pos.set([ox + c * TERRAIN_STEP, h[i] - (g[i] === Ground.water ? 0.6 : 0), oz + r * TERRAIN_STEP], i * 3);
-    }
-  const idx = new Uint32Array((N - 1) * (N - 1) * 6);
-  let k = 0;
-  for (let r = 0; r < N - 1; r++)
-    for (let c = 0; c < N - 1; c++) {
-      const a = r * N + c, b = a + 1, d = a + N, e = d + 1;
-      idx.set([a, d, b, b, d, e], k);
-      k += 6;
-    }
-  kinds.set(world.createCollider(RAPIER.ColliderDesc.trimesh(pos, idx).setFriction(0.9), body).handle, 'terrain');
-  for (const [kind, m] of [['building', t.buildings], ['bridge', t.collide]] as const) {
-    if (m?.idx) kinds.set(world.createCollider(RAPIER.ColliderDesc.trimesh(decodeF32(m.pos), decodeU32(m.idx)).setFriction(0.6), body).handle, kind);
-  }
-  if (t.trees) {
-    const tr = decodeF32(t.trees);
-    for (let i = 0; i < tr.length; i += 4) {
-      const [x, y, z, sc] = [tr[i], tr[i + 1], tr[i + 2], tr[i + 3]];
-      kinds.set(world.createCollider(RAPIER.ColliderDesc.cylinder(1.6 * sc, 0.3 * sc).setTranslation(x, y + 1.4 * sc, z), body).handle, 'tree');
-    }
-  }
-  if (t.lamps) {
-    const l = decodeF32(t.lamps);
-    for (let i = 0; i < l.length; i += 4) {
-      kinds.set(world.createCollider(RAPIER.ColliderDesc.cylinder(3.5, 0.12).setTranslation(l[i], l[i + 1] + 3.5, l[i + 2]), body).handle, 'lamp');
-    }
-  }
+/** Same colliders as the game (WorldStreamer → addTileColliders). */
+function addColliders(world: RAPIER.World, t: TileContent) {
+  addTileColliders(RAPIER, world, t, W, (c, kind) => kinds.set(c.handle, kind));
 }
 
 /** Ground height under (x, z), interpolated on the same triangles as the terrain mesh. */
@@ -82,7 +51,7 @@ function groundAt(x: number, z: number): number | undefined {
   const t = tile(tileKey(ix, iy));
   if (!t) return undefined;
   const [ox, oz] = tileOriginLocal(W, ix, iy);
-  const h = decodeF32(t.terrain);
+  const h = terrainHeights(t);
   const fx = (x - ox) / TERRAIN_STEP, fz = (z - oz) / TERRAIN_STEP;
   const c = Math.min(TERRAIN_N - 2, Math.floor(fx)), r = Math.min(TERRAIN_N - 2, Math.floor(fz));
   const u = fx - c, v = fz - r;

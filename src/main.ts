@@ -21,6 +21,7 @@ import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
 import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
 import { registerCommand, runCommand } from './debug/registry.ts';
+import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
@@ -37,6 +38,8 @@ import { Traffic } from './traffic/traffic.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { Pedestrians } from './peds/peds.ts';
 import { WorldStreamer } from './world/streamer.ts';
+import { registerStreamCommands } from './world/streamCommands.ts';
+import { PhysicsDebugView } from './debug/physicsDebug.ts';
 import { weatherCommands } from './weather/commands.ts';
 import { patchWorldMaterials } from './weather/weatherMaterials.ts';
 import { FacadeControl } from './render/facades.ts';
@@ -226,11 +229,22 @@ async function boot() {
       worldReady = false;
     },
   }, debugState);
+  // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
+  view.renderer.info.autoReset = false;
+  const perf = new PerfMonitor($('perf'), view.renderer);
+  perf.addSource('Kacheln', () => streamer.statsLine());
+  perf.addSource('Physik', () => `${world.colliders.len()} Kollider · ${quality.physicsHz} Hz`);
+  const physDebug = new PhysicsDebugView(world);
+  view.scene.add(physDebug.lines);
+  registerPerfCommands(perf, { streamer, colliders: () => world.colliders.len(), showColliders: (v) => physDebug.setVisible(v), print: (t) => debug.print(t, 'info') });
+  registerStreamCommands(streamer, quality, () => (hold ?? ip));
+  if (new URLSearchParams(location.search).has('perf')) perf.setVisible(true);
   // ?cmd=day;nitro.infinite runs commands at startup.
   const bootCmd = new URLSearchParams(location.search).get('cmd');
   if (bootCmd) debug.exec(bootCmd);
 
   const frame = (now: number) => {
+    perf.tick(Math.max(0, now - last));
     // The first rAF timestamp can predate performance.now() at boot.
     const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
     last = now;
@@ -250,9 +264,10 @@ async function boot() {
     }
 
     // Hold the car until the ground under it exists.
+    perf.begin('stream');
     if (hold) {
       const h = hold;
-      streamer.update(h.x, h.z);
+      streamer.update(h.x, h.z, true);
       // Give fresh colliders a couple of physics steps before casting against them.
       if (streamer.isLoadedAround(h.x, h.z)) h.frames++;
       if (h.frames > 2 && h.y === undefined) h.y = (groundAt(h.x, h.z) ?? graph.snap(h.x, h.z, 200)?.y ?? car.body.translation().y) + 1;
@@ -271,6 +286,7 @@ async function boot() {
       const t = car.body.translation();
       streamer.update(t.x, t.z);
     }
+    perf.end('stream');
 
     vehicleDebug.update();
     weather.update(dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
@@ -280,6 +296,7 @@ async function boot() {
     else frozenAt = null;
     // The physics holds still during a replay; the car carries on where it was afterwards.
     acc = replay.active ? 0 : acc + dt * debugState.timeScale;
+    perf.begin('physik');
     while (acc >= STEP) {
       prev.p.copy(curr.p);
       prev.q.copy(curr.q);
@@ -299,6 +316,7 @@ async function boot() {
       prevVel.x = lv.x; prevVel.y = lv.y; prevVel.z = lv.z;
       acc -= STEP;
     }
+    perf.end('physik');
     if (debugState.infiniteNitro) car.nitro = 1;
     const alpha = acc / STEP;
     ip.lerpVectors(prev.p, curr.p, alpha);
@@ -391,12 +409,18 @@ async function boot() {
     bigMap.setCar(ip.x, ip.z, heading);
     if (bigMap.open && (mapTimer -= dt) <= 0) { mapTimer = 0.5; bigMap.draw(); }
     routeLine.update(dt);
+    physDebug.update(dt);
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);
     lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
     boostFx += ((car.boosting ? 1 : 0) - boostFx) * (1 - Math.exp(-dt * 5));
+    perf.begin('render');
+    perf.gpuBegin();
+    view.renderer.info.reset();
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
+    perf.gpuEnd();
+    perf.end('render');
 
     const dtr = car.drivetrain;
     if (rs) {

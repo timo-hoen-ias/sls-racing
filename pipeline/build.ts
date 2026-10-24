@@ -126,8 +126,10 @@ function main() {
     const l = r.boundary.type === 'fixture' ? undefined : loadLidar(r.id);
     if (l) { coverage.push(...l.coverage); for (const t of l.trees) measured.push(t); }
   }
+  // Trunks keep clear of the carriageway edge too (tracks are narrow and the car must not clip them).
+  const nearLanes = new RoadMask(osm.ways, 0.5);
   const lidar = placeLidarTrees(coverage, measured, {
-    skip: (e, n) => onLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
+    skip: (e, n) => nearLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
     tagsAt: (e, n) => ground.tagsAt(e, n), mapped, rand,
   });
   for (const t of lidar.trees) addTree(t.e, t.n, t.scale, t.kind, t.crown);

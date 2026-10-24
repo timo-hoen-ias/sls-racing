@@ -1,0 +1,32 @@
+:root { color-scheme: dark; --hud: #e9eef7; --accent: #3d8bff; --nitro: #39c6ff; font-family: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e13; color: var(--hud); touch-action: none; user-select: none; -webkit-user-select: none; }
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#hud { position: fixed; inset: 0; pointer-events: none; }
+#loading { position: absolute; top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%; transform: translateX(-50%); font-size: 15px; background: #0009; padding: 6px 14px; border-radius: 4px; }
+#speedo { position: absolute; right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(24px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: baseline; gap: 6px; text-shadow: 0 2px 8px #000a; }
+#speed { font-size: 64px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; min-width: 3ch; text-align: right; }
+#speedo small { font-size: 16px; opacity: .8; }
+#gear { font-size: 26px; font-weight: 800; margin-left: 10px; color: var(--accent); }
+#nitro { position: absolute; right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(100px + env(safe-area-inset-bottom, 0px)); width: 200px; height: 10px; background: #0008; border: 1px solid #fff3; }
+#nitro-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #1f6fff, var(--nitro)); transform-origin: left; }
+#nitro label { position: absolute; right: 0; top: -18px; font-size: 12px; letter-spacing: .14em; opacity: .85; }
+#info { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); top: calc(12px + env(safe-area-inset-top, 0px)); font: 12px/1.5 ui-monospace, Menlo, monospace; opacity: .75; white-space: pre; text-shadow: 0 1px 3px #000; }
+#attribution { position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); font-size: 11px; opacity: .7; }
+#help { position: absolute; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); font-size: 13px; opacity: .75; text-align: center; max-width: 90vw; }
+#start { pointer-events: auto; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font: 800 28px/1 inherit; font-family: inherit; padding: 16px 36px; background: var(--accent); color: #fff; border: 0; border-radius: 6px; cursor: pointer; box-shadow: 0 10px 30px #0008; }
+#start:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+#touch { position: fixed; inset: 0; pointer-events: none; }
+#touch button { pointer-events: auto; position: absolute; border: 2px solid #fff6; background: #0006; color: #fff; font: 700 15px inherit; font-family: inherit; border-radius: 50%; width: 76px; height: 76px; touch-action: none; }
+#touch button.on { background: #3d8bffaa; border-color: #fff; }
+#t-gas { right: calc(20px + env(safe-area-inset-right, 0px)); bottom: calc(24px + env(safe-area-inset-bottom, 0px)); width: 92px !important; height: 92px !important; }
+#t-brake { right: calc(124px + env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+#t-nitro { right: calc(34px + env(safe-area-inset-right, 0px)); bottom: calc(130px + env(safe-area-inset-bottom, 0px)); width: 64px !important; height: 64px !important; }
+#t-hand { right: calc(132px + env(safe-area-inset-right, 0px)); bottom: calc(110px + env(safe-area-inset-bottom, 0px)); width: 60px !important; height: 60px !important; }
+#steer-zone { pointer-events: auto; position: absolute; left: calc(16px + env(safe-area-inset-left, 0px)); bottom: calc(40px + env(safe-area-inset-bottom, 0px)); width: 220px; height: 110px; border-radius: 55px; background: #0005; border: 2px solid #fff4; touch-action: none; }
+#steer-knob { position: absolute; left: 50%; top: 50%; width: 70px; height: 70px; margin: -35px 0 0 -35px; border-radius: 50%; background: #fff3; border: 2px solid #fff9; }
+body.touch #help { display: none; }
+body.touch #speedo { bottom: auto; right: auto; left: 50%; transform: translateX(-50%); top: calc(10px + env(safe-area-inset-top, 0px)); }
+body.touch #speed { font-size: 44px; }
+body.touch #nitro { bottom: auto; right: auto; left: 50%; transform: translateX(-50%); top: calc(62px + env(safe-area-inset-top, 0px)); width: 160px; }
+body.touch #nitro label { display: none; }
+body.touch #info { font-size: 10px; }

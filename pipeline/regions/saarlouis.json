@@ -1,0 +1,8 @@
+{
+  "id": "saarlouis",
+  "name": "Saarlouis (66740)",
+  "boundary": { "type": "postal_code", "value": "66740" },
+  "marginMeters": 150,
+  "terrain": { "source": "terrarium", "zoom": 14 },
+  "spawn": { "lat": 49.31335, "lon": 6.75165 }
+}

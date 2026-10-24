@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0b0e13" />
+  <title>SLS Racing</title>
+  <link rel="stylesheet" href="/src/ui/hud.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud">
+    <div id="loading">Lade Saarlouis …</div>
+    <div id="speedo"><span id="speed">0</span><small>km/h</small><span id="gear">N</span></div>
+    <div id="nitro"><div id="nitro-fill"></div><label>NITRO</label></div>
+    <div id="info"></div>
+    <div id="attribution"></div>
+    <button id="start" type="button">Losfahren</button>
+    <div id="help">W/S oder Pfeile: Gas/Bremse · A/D: Lenken · Shift: Nitro · Leertaste: Handbremse · R: Zurücksetzen · C: Kamera · M: Ton</div>
+  </div>
+  <div id="touch" hidden>
+    <div id="steer-zone"><div id="steer-knob"></div></div>
+    <button id="t-hand" type="button">⟲</button>
+    <button id="t-nitro" type="button">N₂O</button>
+    <button id="t-brake" type="button">Bremse</button>
+    <button id="t-gas" type="button">Gas</button>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# Builds the real world tiles from OpenStreetMap and terrain data.
+# Runs on GitHub's runners because they can reach Overpass; the result is uploaded as an artifact
+# (later: synced to Cloudflare R2).
+name: World build
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['pipeline/**', 'src/world/format.ts']
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Download OSM and terrain
+        run: npm run world:fetch
+      - run: npm run world:build
+      - name: Summary
+        run: |
+          echo "### Welt-Kacheln" >> $GITHUB_STEP_SUMMARY
+          echo "Dateien: $(ls public/tiles/t | wc -l), Größe: $(du -sh public/tiles | cut -f1)" >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: world-tiles
+          path: public/tiles
+          retention-days: 14

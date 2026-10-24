@@ -1,0 +1,8 @@
+{
+  "id": "fixture",
+  "name": "Testgelände (synthetisch)",
+  "boundary": { "type": "fixture" },
+  "marginMeters": 100,
+  "terrain": { "source": "flat" },
+  "spawn": { "lat": 49.31335, "lon": 6.75165 }
+}

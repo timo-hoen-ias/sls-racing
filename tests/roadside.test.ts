@@ -164,4 +164,26 @@ describe('roadside', () => {
     // No rail point within the junction mouth at x 1200.
     for (const r of out.rails.runs) for (const p of r.pts) if (Math.abs(p.n) < 12) expect(Math.abs(p.e - 1200)).toBeGreaterThan(5);
   });
+
+  it('builds one double rail in a narrow median, single rails beside a wide one', () => {
+    const tags = { highway: 'motorway', oneway: 'yes', lanes: '2' };
+    // Two carriageways 15 m apart (centre to centre) from x 0 to 400, then 40 m apart.
+    const east = way(1, tags, [[0, 0], [400, 0]]);
+    const west = way(2, tags, [[400, 15], [0, 15]]);
+    const eastFar = way(3, tags, [[2000, 0], [2400, 0]]);
+    const westFar = way(4, tags, [[2400, 40], [2000, 40]]);
+    const all = [east, west, eastFar, westFar];
+    planKerbs(all, []);
+    const out = buildRoadside(all, { world, height: () => 0, onLanes: () => false });
+    const double = out.rails.runs.filter((r) => r.flags & RAIL_FLAGS.double);
+    expect(double.length).toBe(1);
+    // In the middle of the median, built once (by the lower id), nearly the whole length.
+    for (const p of double[0].pts) expect(p.n).toBeCloseTo(7.5, 1);
+    expect(double[0].length).toBeGreaterThan(380);
+    expect(out.counts.medianKm).toBeGreaterThan(0.3);
+    // No single rails on the median side of the close pair; the far pair keeps a single rail each side.
+    const single = out.rails.runs.filter((r) => !(r.flags & RAIL_FLAGS.double));
+    expect(single.some((r) => r.pts[0].e < 500 && r.pts.every((p) => p.n > 0 && p.n < 15))).toBe(false);
+    expect(single.filter((r) => r.pts[0].e > 1500 && r.pts.every((p) => p.n > 0 && p.n < 40)).length).toBe(2);
+  });
 });

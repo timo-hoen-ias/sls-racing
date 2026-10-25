@@ -239,7 +239,7 @@ function main() {
   }
   const railTiles = roadside.rails.tiles();
   const rc = roadside.counts;
-  console.log(`Roadside: ${rc.railKm} km guard rail (${rc.motorway} motorway, ${rc.bridges} bridge, ${rc.mapped} mapped runs, ${rc.embankments} embankment roads), ${rc.posts} delineators, ${rc.chevrons} chevron boards`);
+  console.log(`Roadside: ${rc.railKm} km guard rail (${rc.motorway} motorway, ${rc.medianKm} km double median, ${rc.bridges} bridge, ${rc.mapped} mapped runs, ${rc.embankments} embankment roads), ${rc.posts} delineators, ${rc.chevrons} chevron boards`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });

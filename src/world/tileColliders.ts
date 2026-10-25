@@ -4,6 +4,7 @@ import { TERRAIN_N, type TileContent, type WorldInfo, tileOriginLocal } from './
 import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
 import { terrainHeights } from './tileBuild.ts';
 import { addRailColliders } from './guardRail.ts';
+import { addHouseColliders } from './houseColliders.ts';
 
 export type ColliderKind = 'terrain' | 'building' | 'bridge' | 'road' | 'tree' | 'lamp' | 'rail';
 
@@ -74,6 +75,8 @@ export function tileColliderSteps(
   });
   // Guard rails: boxes along the beam (guardRail.ts), the same in the game and the drive test.
   if (t.has('rails')) steps.push(() => addRailColliders(R, world, body, t.f32('rails'), (c) => onCollider?.(c, 'rail', 0)));
+  // Designed houses as boxes, garden fences, walls and hedges along their pieces (houseColliders.ts).
+  if (t.has('houses') || t.has('gardens')) steps.push(() => addHouseColliders(R, world, body, t.has('houses') ? t.f32('houses') : undefined, t.has('gardens') ? t.f32('gardens') : undefined, (c, garden) => onCollider?.(c, garden ? 'rail' : 'building', 0)));
   return { body, steps };
 }
 

@@ -208,7 +208,7 @@ async function main() {
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   // Road heights as the build computes them, so the car starts on its road (which may be lifted).
   const regions = [loadRegion(region)];
-  const height = terrainHeight(regions, unproject(cfg.zone));
+  const height = terrainHeight(regions, unproject(cfg.zone), undefined, osm.polygons);
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
   const ramps = planRamps(osm.ways);
   roadHeights(osm.ways, regions, height);

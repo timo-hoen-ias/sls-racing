@@ -1,20 +1,30 @@
 // Height profiles of roads. Draping a road straight onto 1 m terrain copies every flaw of the data into the
 // driving surface: OSM lines that run a metre off the road onto an embankment slope, kerbs, ditches, the
 // slope at a bridge end. Real roads are smooth, so each road gets a profile sampled from the terrain,
-// filtered, and pinned to one height per node so that roads meeting at a node (and bridges) meet exactly.
+// filtered, and pinned to one height per shared node so that roads meeting at a node (and bridges) meet exactly.
+// The laser terrain also has small measuring errors (a few centimetres to decimetres over 10–30 m) that a
+// short filter keeps as bumps; real roads are built with long vertical curves, so the profile is smoothed
+// over a length that grows with the road class.
 import { SYNTHETIC_NODE, type Way } from './osm.ts';
 import { ROAD_CLASSES, densify, isBridge, isDrivable, roadWidth } from './roads.ts';
 
 /** Spacing of profile samples (m). */
 export const PROFILE_STEP = 2;
-/** Half window of the median filter, and of the smoothing after it (samples). */
-const MEDIAN = 3, SMOOTH = 3;
+/** Half window of the median filter (samples). */
+const MEDIAN = 3;
+/** Gaussian smoothing after the median (sigma, m): long on fast roads with big vertical curves, shorter in town. */
+export function profileSigma(highway: string) {
+  const rank = ROAD_CLASSES[highway]?.rank ?? 0;
+  return rank >= 8 ? 28 : rank >= 5 ? 16 : rank >= 2 ? 11 : 8;
+}
+/** Shortest reach (m) over which a node correction fades out along the road. */
+const PIN_REACH = 24;
 /** Dips narrower than about twice this (samples) are filled: culverts and stream beds the road crosses on fill. */
 const CLOSE = 4;
 /** Node heights come from the terrain this far along each road from the node (m). */
 const NODE_REACH = 6;
 /** Steepest ramp used to bring a profile to its node height (rise per metre). */
-const RAMP_GRADE = 0.05;
+const RAMP_GRADE = 0.04;
 /** Past the junction plateau the road blends back into its own profile over this length (m). */
 const JUNCTION_BLEND = 10;
 /** A junction plateau tilts with the grade of its main road, up to this much (rise per metre). */
@@ -29,7 +39,53 @@ const median = (vs: number[]) => {
 
 const win = (vs: number[], k: number, r: number) => vs.slice(Math.max(0, k - r), k + r + 1);
 
-export interface ProfileReport { roads: number; nodes: number; maxCorrection: number }
+export interface ProfileReport { roads: number; nodes: number; maxCorrection: number; roughness: Roughness }
+
+/** How bumpy profiles are: the largest and the mean deviation from a 40 m running mean, in metres. */
+export interface Roughness { max: number; mean: number }
+
+/**
+ * Gaussian smoothing of samples at distances `d` (sigma in m) as a locally weighted straight-line fit, so a
+ * steady grade passes unchanged, also at the ends where the window is one-sided.
+ */
+export function gaussSmooth(ys: ArrayLike<number>, d: ArrayLike<number>, sigma: number): number[] {
+  const n = ys.length, out = new Array<number>(n);
+  const r = 3 * sigma;
+  let lo = 0;
+  for (let k = 0; k < n; k++) {
+    while (d[lo] < d[k] - r) lo++;
+    let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let j = lo; j < n && d[j] <= d[k] + r; j++) {
+      const x = d[j] - d[k], w = Math.exp(-0.5 * (x / sigma) ** 2);
+      sw += w; sx += w * x; sy += w * ys[j]; sxx += w * x * x; sxy += w * x * ys[j];
+    }
+    const det = sw * sxx - sx * sx;
+    // Value of the fitted line at x = 0; a plain weighted mean where the window is too short for a line.
+    out[k] = det > 1e-9 * sw * sw ? (sy * sxx - sx * sxy) / det : sy / sw;
+  }
+  return out;
+}
+
+/** Bumps along road profiles: deviation of each sample from the 40 m running mean around it. */
+export function profileRoughness(ways: Way[]): Roughness {
+  let max = 0, sum = 0, cnt = 0;
+  for (const w of ways) {
+    const p = w.profile;
+    if (!p || p.y.length < 12) continue;
+    const { dist: d, y } = p;
+    const len = d[d.length - 1];
+    let lo = 0, hi = 0, acc = 0;
+    for (let k = 0; k < y.length; k++) {
+      // Only samples with the full window, away from the ends where junctions shape the profile.
+      if (d[k] < 20 || d[k] > len - 20) continue;
+      while (hi < y.length && d[hi] <= d[k] + 20) acc += y[hi++];
+      while (d[lo] < d[k] - 20) acc -= y[lo++];
+      const dev = Math.abs(y[k] - acc / (hi - lo));
+      max = Math.max(max, dev); sum += dev; cnt++;
+    }
+  }
+  return { max, mean: cnt ? sum / cnt : 0 };
+}
 
 /**
  * Sets `way.profile` (terrain height every PROFILE_STEP metres along the way, filtered and pinned to node
@@ -68,14 +124,28 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     dists.set(w, d);
   }
 
-  // One height per node: the median of the terrain near it along every road through it, or the deck.
+  // Median (removes kerbs and ditch edges), then a Gaussian over a length by road class (removes the
+  // measuring noise, keeps hills).
+  const smoothed = new Map<Way, number[]>();
+  for (const w of roads) {
+    const { ys } = raw.get(w)!;
+    const med = ys.map((_, k) => median(win(ys, k, MEDIAN)));
+    smoothed.set(w, gaussSmooth(med, dists.get(w)!, profileSigma(w.tags.highway)));
+  }
+
+  // One height per node shared by several roads (or by one road twice): the median of the smoothed profiles
+  // near it along every road through it, or the deck. Nodes on one road only need no pin: the profile runs
+  // smoothly through them.
+  const uses = new Map<number, number>();
+  for (const w of roads) for (const id of w.ids) uses.set(id, (uses.get(id) ?? 0) + 1);
   const near = new Map<number, number[]>();
   for (const w of roads) {
-    const { ys, nodeAt } = raw.get(w)!;
+    const { nodeAt } = raw.get(w)!;
+    const ys = smoothed.get(w)!;
     const d = dists.get(w)!;
     w.ids.forEach((id, i) => {
-      // Points the pipeline added only shape the line; the profile runs smoothly through them.
-      if (anchors.has(id) || id < SYNTHETIC_NODE) return;
+      // Points the pipeline added only shape the line.
+      if (anchors.has(id) || id < SYNTHETIC_NODE || (uses.get(id) ?? 0) < 2) return;
       if (!near.has(id)) near.set(id, []);
       const list = near.get(id)!;
       for (let k = 0; k < ys.length; k++) if (Math.abs(d[k] - nodeAt[i]) <= NODE_REACH) list.push(ys[k]);
@@ -103,31 +173,29 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
   for (const w of roads) {
     const { ys, nodeAt } = raw.get(w)!;
     const d = dists.get(w)!;
-    // Median, then a moving average: removes kerbs and ditch edges, keeps hills.
-    const med = ys.map((_, k) => median(win(ys, k, MEDIAN)));
-    const smooth = med.map((_, k) => {
-      const s = med.slice(Math.max(0, k - SMOOTH), k + SMOOTH + 1);
-      return s.reduce((a, b) => a + b, 0) / s.length;
-    });
-    // Ramp the profile onto each node height: full correction at the node, fading out along the road.
+    const smooth = smoothed.get(w)!;
+    // Ramp the profile onto each pinned node height: full correction at the node, fading out smoothly along
+    // the road (never past the next pinned node, so each pin holds exactly).
+    const pins = w.ids.flatMap((id, i) => (nodeH.has(id) ? [i] : []));
     const prof = smooth.slice();
-    for (let i = 0; i < w.ids.length; i++) {
-      if (!nodeH.has(w.ids[i])) continue;
+    pins.forEach((i, pi) => {
       const target = nodeH.get(w.ids[i])!;
       const k0 = d.findIndex((v) => v >= nodeAt[i] - 1e-6);
       const delta = target - smooth[k0];
       maxCorrection = Math.max(maxCorrection, Math.abs(delta));
-      const before = i > 0 ? nodeAt[i] - nodeAt[i - 1] : 0;
-      const after = i < w.ids.length - 1 ? nodeAt[i + 1] - nodeAt[i] : 0;
-      const reach = Math.max(8, Math.abs(delta) / RAMP_GRADE);
+      const before = pi > 0 ? nodeAt[i] - nodeAt[pins[pi - 1]] : 0;
+      const after = pi < pins.length - 1 ? nodeAt[pins[pi + 1]] - nodeAt[i] : 0;
+      // Smoothstep fade: its steepest grade is 1.5 × delta / reach.
+      const reach = Math.max(PIN_REACH, (1.5 * Math.abs(delta)) / RAMP_GRADE);
       for (let k = 0; k < prof.length; k++) {
         const off = d[k] - nodeAt[i];
+        if (Math.abs(off) < 1e-6) { prof[k] += delta; continue; }
         const span = off < 0 ? Math.min(reach, before) : Math.min(reach, after);
-        if (!span && off !== 0) continue;
-        const t = off === 0 ? 1 : 1 - Math.abs(off) / span;
-        if (t > 0) prof[k] += delta * t;
+        if (!span) continue;
+        const t = 1 - Math.abs(off) / span;
+        if (t > 0) prof[k] += delta * t * t * (3 - 2 * t);
       }
-    }
+    });
     pinned.set(w, prof);
   }
 
@@ -228,5 +296,5 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
       }
     });
   }
-  return { roads: roads.length, nodes: nodeH.size, maxCorrection };
+  return { roads: roads.length, nodes: nodeH.size, maxCorrection, roughness: profileRoughness(roads) };
 }

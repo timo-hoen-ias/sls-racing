@@ -38,6 +38,12 @@ export class Daylight {
   readonly ambBottom = new THREE.Color();
   /** Sky light (environment map) strength factor; lower = deeper shadows (sky.env). */
   envScale = 1;
+  /** Sun light strength factor (sky.sun). */
+  sunScale = 1;
+  /** Hemisphere fill light factor (sky.ambient). */
+  ambientScale = 1;
+  /** Tone-mapping exposure factor on top of the eye adaptation (sky.exposure). */
+  exposureScale = 1;
   /** 0 at night, 1 in full daylight. */
   daylight = 1;
   /** Sun strength for clouds, god rays and flare (0 once it has set). */
@@ -135,6 +141,11 @@ export class Daylight {
     this.stars.position.copy(t);
   }
 
+  /** Re-applies the lighting after a debug factor changed. */
+  refresh() {
+    this.apply();
+  }
+
   private apply() {
     const s = sunDirection(this.hours, this.sunDir);
     const el = s.y;
@@ -147,8 +158,8 @@ export class Daylight {
 
     const u = this.sky.material.uniforms;
     u.sunPosition.value.copy(s);
-    u.turbidity.value = lerp(lerp(4, 8, golden), 14, oc);
-    u.rayleigh.value = lerp(lerp(1.4, 2.4, golden), 0.8, oc);
+    u.turbidity.value = lerp(lerp(2.6, 8, golden), 14, oc);
+    u.rayleigh.value = lerp(lerp(1.9, 2.4, golden), 0.8, oc);
 
     // Sun by day; a cold moon high in the south-east by night, so shadows never vanish.
     const night = 1 - this.daylight;
@@ -157,10 +168,10 @@ export class Daylight {
     this.sunColor.setRGB(1, lerp(0.95, 0.62, golden), lerp(0.86, 0.38, golden));
     const moon = new THREE.Color(0.55, 0.65, 0.9);
     this.sun.color.copy(this.sunColor).lerp(moon, el > -0.04 ? 0 : 1);
-    this.sun.intensity = el > -0.04 ? 2.2 * this.sunIntensity * lerp(1, 0.7, golden) : 0.12 * (1 - oc);
+    this.sun.intensity = (el > -0.04 ? 3.4 * this.sunIntensity * lerp(1, 0.7, golden) : 0.12 * (1 - oc)) * this.sunScale;
     this.hemi.color.setRGB(lerp(0.12, 0.81, this.daylight), lerp(0.16, 0.88, this.daylight), lerp(0.3, 0.96, this.daylight));
     this.hemi.groundColor.setRGB(lerp(0.04, 0.36, this.daylight), lerp(0.04, 0.33, this.daylight), lerp(0.05, 0.25, this.daylight));
-    this.hemi.intensity = lerp(0.25, 0.35, this.daylight);
+    this.hemi.intensity = lerp(0.25, 0.2, this.daylight) * this.ambientScale;
 
     // Horizon colour: bright blue-grey by day, warm at dusk, deep blue at night.
     const day = new THREE.Color(0.72, 0.79, 0.86);
@@ -177,9 +188,11 @@ export class Daylight {
     this.ambTop.setRGB(0.42, 0.52, 0.68).lerp(new THREE.Color(0.55, 0.42, 0.45), golden * 0.6).multiplyScalar(lerp(0.05, 1, this.daylight));
     this.ambBottom.setRGB(0.22, 0.25, 0.3).lerp(new THREE.Color(0.35, 0.22, 0.18), golden * 0.6).multiplyScalar(lerp(0.05, 1, this.daylight));
 
+    // Sunlight against sky light about 4:1 on a clear day, like outdoors: sunny sides bright,
+    // shaded sides clearly darker. Under clouds the sun fades and the sky light takes over.
     // Darker scenes get more exposure, like an eye adapting.
-    this.renderer.toneMappingExposure = lerp(1.7, 0.8, this.daylight);
-    this.scene.environmentIntensity = lerp(0.12, 0.35, this.daylight) * this.envScale;
+    this.renderer.toneMappingExposure = lerp(1.7, 0.72, this.daylight) * this.exposureScale;
+    this.scene.environmentIntensity = lerp(0.12, 0.16, this.daylight) * this.envScale;
 
     // Re-render the environment only when the sun has moved noticeably.
     if (this.envDir.distanceToSquared(s) > 0.0004 || Math.abs(this.envOvercast - oc) > 0.05) {

@@ -89,10 +89,23 @@ export function registerRenderCommands(view: SceneSetup) {
     args: '[faktor]',
     help: 'Stärke des Himmelslichts (Umgebungslicht). Kleiner = kräftigere Schatten und mehr Kontrast',
     run: ([a]) => {
-      if (a) d.envScale = parseNum(a, 0, 3);
+      if (a) { d.envScale = parseNum(a, 0, 3); d.refresh(); }
       return `sky.env = ${d.envScale}`;
     },
   });
+  const lightFactor = (name: string, key: 'sunScale' | 'ambientScale' | 'exposureScale', help: string) =>
+    registerCommand({
+      name,
+      args: '[faktor]',
+      help,
+      run: ([a]) => {
+        if (a) { d[key] = parseNum(a, 0, 5); d.refresh(); }
+        return `${name} = ${d[key]} (Sonne ${d.sun.intensity.toFixed(2)} · Himmel ${view.scene.environmentIntensity.toFixed(2)} · Füllicht ${d.hemi.intensity.toFixed(2)} · Belichtung ${view.renderer.toneMappingExposure.toFixed(2)})`;
+      },
+    });
+  lightFactor('sky.sun', 'sunScale', 'Stärke des Sonnenlichts (Faktor, Standard 1). Größer = hellere Sonnenseiten und härtere Schatten');
+  lightFactor('sky.ambient', 'ambientScale', 'Stärke des Fülllichts (Halbkugel-Licht, Faktor, Standard 1). Kleiner = dunklere Schattenseiten');
+  lightFactor('sky.exposure', 'exposureScale', 'Belichtung als Faktor auf die Augenanpassung (Standard 1); bleibt auch beim Tageszyklus erhalten');
   registerCommand({
     name: 'fx.shadowdist',
     args: '[m]',
@@ -123,6 +136,18 @@ export function registerRenderCommands(view: SceneSetup) {
         return `${name} = ${st[key]}`;
       },
     });
+  const grade = (key: 'contrast' | 'saturation', name: string, help: string) =>
+    registerCommand({
+      name,
+      args: '[faktor]',
+      help: `${help} (Standard ${st[key]}, 1 = unverändert)`,
+      run: ([a]) => {
+        if (a) st[key] = parseNum(a, 0, 3);
+        return `${name} = ${st[key]}`;
+      },
+    });
+  grade('contrast', 'fx.contrast', 'Kontrast um Mittelgrau vor dem Tone-Mapping: dunklere Schatten, hellere Lichter');
+  grade('saturation', 'fx.saturation', 'Farbsättigung vor dem Tone-Mapping (0 = grau)');
   factor('fog', 'fx.fog', 'Distance Fog: Dunst zum Horizont, passt sich der Sichtweite an', 20);
   factor('ssr', 'fx.ssr', 'Spiegelungen auf nasser Straße und in Pfützen (Screen-Space Reflections)', 3);
   registerCommand({

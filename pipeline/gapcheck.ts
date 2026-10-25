@@ -15,6 +15,7 @@ import { halfWidthAt, halfWidths } from './lib/overlap.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile } from './lib/region.ts';
 import { auxLoss, isDrivable, roadProfile } from './lib/roads.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
+import { matchLevels } from './lib/levels.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
 import { smoothBends } from './lib/smooth.ts';
 import { roadSection } from '../src/world/roadSpec.ts';
@@ -60,6 +61,7 @@ async function main() {
   const ramps = planRamps(osm.ways);
   roadHeights(osm.ways, regions, height);
   matchRampHeights(ramps);
+  matchLevels(osm.ways, height);
 
   // Wheel tracks 1 m inside the usable road edges (narrower where a road at another height runs alongside).
   const halves = halfWidths(osm.ways, height, W);

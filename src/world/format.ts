@@ -40,8 +40,8 @@ export interface WorldIndex {
   attribution: string[];
   /** Road profile the tiles were built with (roadSpec.ts); missing in builds before it existed (real widths). */
   roadProfile?: 'game' | 'real';
-  /** Game profile (S2): rounded junction corners and smoothed kinks in the build. */
-  roadShape?: { corners: number; bends: number };
+  /** Game profile (S2): rounded junction corners, smoothed kinks and ways drawn as splines (with the points added). */
+  roadShape?: { corners: number; bends: number; curves?: number; curvePoints?: number };
 }
 
 /** A packed mesh. Arrays are base64-encoded little-endian typed arrays. */

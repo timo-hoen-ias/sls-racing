@@ -3,6 +3,7 @@
   "name": "Saarlouis (66740)",
   "boundary": { "type": "postal_code", "value": "66740" },
   "marginMeters": 150,
+  "roadProfile": "game",
   "osm": {
     "extracts": [
       "https://download.geofabrik.de/europe/germany/saarland-latest.osm.pbf",

@@ -16,7 +16,7 @@ import { loadRegion, loadWorld, paths, unproject, useRoadProfile } from './lib/r
 import { auxLoss, isDrivable, roadProfile } from './lib/roads.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
-import { smoothBends } from './lib/smooth.ts';
+import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { roadSection } from '../src/world/roadSpec.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
@@ -55,6 +55,7 @@ async function main() {
   const height = terrainHeight(regions, unproject(cfg.zone), undefined, osm.polygons);
   // The same rounded bends as the build (game road profile).
   smoothBends(osm.ways, new Set(osm.points.map((p) => p.id)));
+  splineCurves(osm.ways);
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
   separateCarriageways(osm.ways);
   const ramps = planRamps(osm.ways);

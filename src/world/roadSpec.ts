@@ -35,17 +35,18 @@ const SECTIONS: Record<string, ClassSection> = {
 };
 
 /**
- * Road profile (S1, fun racer): "game" widens every carriageway by a factor per class (residential lanes 3.0 →
- * 3.6 m, main roads 3.5 → 4.0 m, motorways 3.75 → 4.25 m); "real" keeps the guideline widths. The data stays
+ * Road profile (S1, fun racer; the default since timo's final road pass, 2026-10-25): "game" widens every
+ * carriageway by a factor per class (residential lanes 3.0 → 4.05 m, main roads 3.5 → 4.4 m, motorways
+ * 3.75 → 4.3 m); "real" keeps the guideline widths. The data stays
  * 1:1, only the carriageways grow, up to the street space between the houses (tag sls:street from ALKIS)
  * minus narrow sidewalks. The pipeline builds with one profile (useRoadProfile in pipeline/lib/region.ts) and
  * writes it into index.json.
  */
 export type RoadProfile = 'game' | 'real';
 export const GAME_WIDEN: Record<string, number> = {
-  motorway: 1.13, trunk: 1.14, primary: 1.14, secondary: 1.16, tertiary: 1.18,
-  motorway_link: 1.1, trunk_link: 1.1, primary_link: 1.12, secondary_link: 1.12, tertiary_link: 1.12,
-  unclassified: 1.2, residential: 1.2, living_street: 1.15, service: 1.1,
+  motorway: 1.15, trunk: 1.2, primary: 1.25, secondary: 1.25, tertiary: 1.3,
+  motorway_link: 1.15, trunk_link: 1.15, primary_link: 1.2, secondary_link: 1.2, tertiary_link: 1.2,
+  unclassified: 1.35, residential: 1.35, living_street: 1.3, service: 1.25,
 };
 /** Narrowest sidewalk left beside a widened carriageway, metres. */
 export const MIN_SIDEWALK = 1.2;

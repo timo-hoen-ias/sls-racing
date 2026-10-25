@@ -498,6 +498,12 @@ export class Game {
     };
   }
 
+  /** Progress for the big map's bar (U2). */
+  mapStats() {
+    const d = this.discovery, medals = Object.values(this.save.data.events).filter((x) => x.medal > 0).length;
+    return `Stadtteile ${d.districtsFound}/${d.districts.length} · Aussichtspunkte ${d.viewpointsFound}/${d.viewpoints.length} · Sammelstücke ${this.collectibles.count}/${this.collectibles.tokens.length} · Events mit Medaille ${medals}/${this.events.length}`;
+  }
+
   /** District names for the map: found ones bright, the others as "?". */
   areas(): { name: string; x: number; z: number; found: boolean }[] {
     return this.discovery.districts.map((dd: District) => ({ ...dd, found: this.discovery.found.has(`district:${dd.name}`) }));
@@ -649,9 +655,9 @@ export class Game {
   /** Map icons: every event start, coloured by kind, ringed by the best medal. */
   markers(): MapMarker[] {
     return [
-      ...this.events.map((e) => ({ x: e.start.x, z: e.start.z, color: hex(TYPE_COLORS[e.type]), medal: this.save.data.events[e.id]?.medal, big: RACE_TYPES.has(e.type) })),
-      ...this.places.map((p) => ({ x: p.x, z: p.z, color: p.color, big: true })),
-      ...this.discovery.viewpoints.map((v) => ({ x: v.x, z: v.z, color: this.discovery.found.has(`view:${v.id}`) ? '#ffd60a' : '#7d8794' })),
+      ...this.events.map((e) => ({ x: e.start.x, z: e.start.z, color: hex(TYPE_COLORS[e.type]), medal: this.save.data.events[e.id]?.medal, big: RACE_TYPES.has(e.type), group: RACE_TYPES.has(e.type) ? 'race' as const : 'skill' as const })),
+      ...this.places.map((p) => ({ x: p.x, z: p.z, color: p.color, big: true, group: 'place' as const })),
+      ...this.discovery.viewpoints.map((v) => ({ x: v.x, z: v.z, color: this.discovery.found.has(`view:${v.id}`) ? '#ffd60a' : '#7d8794', group: 'view' as const })),
     ];
   }
 

@@ -209,3 +209,8 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 /* First-minutes hints (E8) */
 #tutorial-hint { position: absolute; left: 50%; top: calc(12px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); max-width: min(520px, 52vw); text-align: center; background: #0b1520e0; border: 1px solid #38b6ff88; border-radius: 8px; padding: 6px 12px; font-size: 14px; font-weight: 600; text-shadow: 0 1px 3px #000; }
 #tutorial-hint b { color: #38b6ff; margin-right: 6px; }
+
+/* Big map filter chips (U2) */
+#map-bar .map-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+#map-bar .map-chip { font: 600 13px system-ui, sans-serif; padding: 5px 10px; border-radius: 14px; border: 1px solid #3d4a5c; background: transparent; color: #8b97a6; cursor: pointer; }
+#map-bar .map-chip.on { background: #1f6feb33; border-color: #3d8bff; color: #e8f1ff; }

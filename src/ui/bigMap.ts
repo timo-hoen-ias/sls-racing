@@ -1,6 +1,7 @@
+import { registerCommand } from '../debug/registry.ts';
 import type { Navigation } from '../nav/navigation.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
-import { MAP_COLORS, type MapMarker, drawMarkers, drawCar, drawFlag, drawRoads, drawRoute } from './mapDraw.ts';
+import { MAP_COLORS, MARKER_GROUPS, type MapMarker, type MarkerGroup, drawMarkers, drawCar, drawFlag, drawRoads, drawRoute } from './mapDraw.ts';
 
 /** Full-screen north-up map: drag to pan, wheel or pinch to zoom, tap a street to set the destination. */
 export class BigMap {
@@ -12,6 +13,10 @@ export class BigMap {
   private nav: Navigation;
   /** Event markers (U2), set by the game. */
   markers?: () => MapMarker[];
+  /** Progress line for the bar (U2): districts, collectibles … */
+  stats?: () => string;
+  /** Marker groups switched off with the filter chips. */
+  readonly hidden = new Set<MarkerGroup>();
   /** Districts (W5): name at their centre, "?" until found. */
   areas?: () => { name: string; x: number; z: number; found: boolean }[];
   private cx = 0;
@@ -70,8 +75,42 @@ export class BigMap {
     addEventListener('keydown', (e) => {
       if (this.open && e.code === 'Enter' && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); this.teleport(); }
     });
+    // Filter chips for the markers (U2).
+    const bar = root.querySelector('#map-bar');
+    if (bar) {
+      const chips = document.createElement('span');
+      chips.className = 'map-chips';
+      for (const [g, label] of Object.entries(MARKER_GROUPS) as [MarkerGroup, string][]) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.className = 'map-chip on';
+        b.dataset.group = g;
+        b.addEventListener('click', () => this.filter(g, this.hidden.has(g)));
+        chips.append(b);
+      }
+      bar.prepend(chips);
+    }
+    const groups = Object.keys(MARKER_GROUPS) as MarkerGroup[];
+    registerCommand({
+      name: 'map.filter', help: 'Kartenmarker einer Gruppe ein- oder ausblenden (ohne Argument: Stand)', args: '[race|skill|place|view] [on|off]',
+      complete: (a) => (a.length <= 1 ? groups : ['on', 'off']),
+      run: ([g, v]) => {
+        if (g) {
+          if (!groups.includes(g as MarkerGroup)) throw new Error(`unbekannte Gruppe "${g}" (${groups.join(', ')})`);
+          this.filter(g as MarkerGroup, v ? v === 'on' : this.hidden.has(g as MarkerGroup));
+        }
+        return groups.map((x) => `${MARKER_GROUPS[x]}: ${this.hidden.has(x) ? 'aus' : 'an'}`).join('\n');
+      },
+    });
     root.querySelector('#map-center')!.addEventListener('click', () => { this.cx = this.car.x; this.cz = this.car.z; this.draw(); });
     addEventListener('resize', () => this.open && this.draw());
+  }
+
+  /** Shows or hides one marker group and updates its chip. */
+  filter(g: MarkerGroup, show: boolean) {
+    if (show) this.hidden.delete(g); else this.hidden.add(g);
+    this.root.querySelector(`.map-chip[data-group="${g}"]`)?.classList.toggle('on', show);
+    if (this.open) this.draw();
   }
 
   toggle(open = !this.open) {
@@ -80,6 +119,7 @@ export class BigMap {
     if (open) {
       this.cx = this.car.x;
       this.cz = this.car.z;
+      if (this.stats) this.root.querySelector('#map-hint')!.textContent = this.stats();
       this.draw();
     } else this.onClose?.();
   }
@@ -135,7 +175,7 @@ export class BigMap {
     ctx.translate(-this.cx, -this.cz);
     const radius = Math.hypot(w, h) / 2 / k;
     drawRoads(ctx, this.graph, this.cx, this.cz, radius, k);
-    if (this.markers) drawMarkers(ctx, this.markers(), this.cx, this.cz, radius, k);
+    if (this.markers) drawMarkers(ctx, this.markers().filter((m) => !m.group || !this.hidden.has(m.group)), this.cx, this.cz, radius, k);
     if (this.nav.route) drawRoute(ctx, this.nav.route, this.nav.progress, k);
     if (this.nav.destination) drawFlag(ctx, this.nav.destination.x, this.nav.destination.z, k);
     drawCar(ctx, this.car.x, this.car.z, this.car.heading, k);

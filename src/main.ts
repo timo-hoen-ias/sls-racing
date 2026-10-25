@@ -534,6 +534,7 @@ async function boot() {
   void game.load();
   minimap.markers = bigMap.markers = () => game.markers();
   bigMap.areas = () => game.areas();
+  bigMap.stats = () => game.mapStats();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.

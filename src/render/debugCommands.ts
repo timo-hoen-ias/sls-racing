@@ -93,6 +93,15 @@ export function registerRenderCommands(view: SceneSetup) {
       return `sky.env = ${d.envScale}`;
     },
   });
+  registerCommand({
+    name: 'sky.brightness',
+    args: '[faktor]',
+    help: 'Helligkeit von Himmel, Himmelslicht und Dunstfarbe (Standard 0.55). Kleiner = blauerer Himmel, weniger weißer Dunst',
+    run: ([a]) => {
+      if (a) { d.skyGain.value = parseNum(a, 0.05, 3); d.refresh(); }
+      return `sky.brightness = ${d.skyGain.value}`;
+    },
+  });
   const lightFactor = (name: string, key: 'sunScale' | 'ambientScale' | 'exposureScale', help: string) =>
     registerCommand({
       name,

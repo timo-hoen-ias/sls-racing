@@ -38,6 +38,10 @@ export class Daylight {
   readonly ambBottom = new THREE.Color();
   /** Sky light (environment map) strength factor; lower = deeper shadows (sky.env). */
   envScale = 1;
+  /** Brightness of the sky dome, its light and the haze colour (sky.brightness). */
+  readonly skyGain = { value: 0.55 };
+  /** Sky shader uniform: skyGain, brighter under clouds (an overcast sky is a bright grey). */
+  private skyGainU = { value: 0.55 };
   /** Sun light strength factor (sky.sun). */
   sunScale = 1;
   /** Hemisphere fill light factor (sky.ambient). */
@@ -67,6 +71,7 @@ export class Daylight {
   private envDir = new THREE.Vector3(0, -2, 0);
   private envRT?: THREE.WebGLRenderTarget;
   private envOvercast = 0;
+  private envGain = 0;
   private target?: number;
   private stars: THREE.Points;
 
@@ -80,6 +85,11 @@ export class Daylight {
     u.rayleigh.value = 1.4;
     u.mieCoefficient.value = 0.004;
     u.mieDirectionalG.value = 0.8;
+    // Sky brightness (sky.brightness): the physical sky is far brighter than lit walls at this exposure
+    // and washed the picture out. Scales the sky, the sky light and the fog colour lookups together.
+    const m = this.sky.material;
+    m.uniforms.uSkyGain = this.skyGainU;
+    m.fragmentShader = `uniform float uSkyGain;\n${m.fragmentShader.replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * uSkyGain, 1.0 );')}`;
     scene.add(this.sky);
     this.envSky = this.sky.clone();
     this.envSky.material = this.sky.material;
@@ -157,6 +167,7 @@ export class Daylight {
     this.sunIntensity *= 1 - 0.85 * oc;
 
     const u = this.sky.material.uniforms;
+    this.skyGainU.value = this.skyGain.value * lerp(1, 1.6, oc);
     u.sunPosition.value.copy(s);
     u.turbidity.value = lerp(lerp(2.6, 8, golden), 14, oc);
     u.rayleigh.value = lerp(lerp(1.9, 2.4, golden), 0.8, oc);
@@ -192,10 +203,11 @@ export class Daylight {
     // shaded sides clearly darker. Under clouds the sun fades and the sky light takes over.
     // Darker scenes get more exposure, like an eye adapting.
     this.renderer.toneMappingExposure = lerp(1.7, 0.72, this.daylight) * this.exposureScale;
-    this.scene.environmentIntensity = lerp(0.12, 0.16, this.daylight) * this.envScale;
+    this.scene.environmentIntensity = lerp(0.18, 0.24, this.daylight) * this.envScale;
 
     // Re-render the environment only when the sun has moved noticeably.
-    if (this.envDir.distanceToSquared(s) > 0.0004 || Math.abs(this.envOvercast - oc) > 0.05) {
+    if (this.envDir.distanceToSquared(s) > 0.0004 || Math.abs(this.envOvercast - oc) > 0.05 || Math.abs(this.envGain - this.skyGainU.value) > 0.03) {
+      this.envGain = this.skyGainU.value;
       this.envDir.copy(s);
       this.envOvercast = oc;
       this.envRT?.dispose();

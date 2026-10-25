@@ -41,8 +41,19 @@ export const houseIndex = (id: string) => HOUSE_MODELS.findIndex((m) => m.id ===
 /** Surface codes in the models' uv.x (keep in sync with SURF in make_houses.py). */
 export const SURFACE = {
   paint: 0, plaster: 1, rough: 2, brick: 3, concrete: 4, clay: 5, slate: 6, gravel: 7, metal: 8, wood: 9, glass: 10,
-  stone: 11, foliage: 12, lawn: 13, paving: 14, kies: 15, timber: 16,
+  stone: 11, foliage: 12, lawn: 13, paving: 14, kies: 15, timber: 16, seam: 17,
 } as const;
+
+/** Tint codes in the models' uv.y (keep in sync with T_* in make_houses.py): what the game varies per house. */
+export const TINT = { fixed: 0, wall: 1, roof: 2, shutter: 3, door: 4 } as const;
+
+/** Roof shades (linear multipliers on the tile colour), picked per house by its seed. */
+export const ROOF_SHADES: [number, number, number][] = [
+  [1, 1, 1], [1, 1, 1], [0.78, 0.68, 0.64], [0.55, 0.5, 0.5], [1.12, 0.98, 0.88], [0.86, 0.86, 0.9],
+];
+/** Shutter and door colours (sRGB hex), picked per house by its seed; null keeps the model's own colour. */
+export const SHUTTER_COLOURS: (number | null)[] = [null, null, 0x2f5a3c, 0x3a5470, 0x7a2a2a, 0x8a8c88, 0xece8de, 0x5a4a3a];
+export const DOOR_COLOURS: (number | null)[] = [null, null, 0x2c2e31, 0x7a1e22, 0x24406a, 0x2f4a36, 0xe8e6e0, 0x6a4a2e];
 
 /** Wall colours per style (sRGB hex), multiplied onto the model's light wall colour where it is tintable. */
 export const TINTS: Record<HouseStyle, number[]> = {

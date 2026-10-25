@@ -66,7 +66,7 @@ export function registerWorldCommands(g: WorldCommandContext) {
 
   registerCommand({
     name: 'road.profile', help: 'Straßenprofil der Kacheln: game (breitere Fahrbahnen, Fun-Racer) oder real. Neu bauen mit SLS_ROAD_PROFILE=real npm run world:build',
-    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrbahnen 15–35 % breiter (road.widen), Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.bends} Knicke zu Bögen` : ''}${g.index.roadShape?.curves ? `, ${g.index.roadShape.curves} Straßen als runde Kurven (${g.index.roadShape.curvePoints} Stützpunkte ergänzt)` : ''}`,
+    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrbahnen 15–35 % breiter (road.widen), Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.slots ? `${g.index.roadShape.slots} Spaltzellen zwischen Fahrbahnen gefüllt, ` : ''}${g.index.roadShape.bends} Knicke zu Bögen` : ''}${g.index.roadShape?.curves ? `, ${g.index.roadShape.curves} Straßen als runde Kurven (${g.index.roadShape.curvePoints} Stützpunkte ergänzt)` : ''}`,
   });
   registerCommand({
     name: 'road.widen',

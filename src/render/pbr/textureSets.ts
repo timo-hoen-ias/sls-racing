@@ -1,12 +1,14 @@
-// The PBR texture atlases: which CC0 photo material goes into which atlas cell, and how many metres one
-// texture repeat covers in the world. Shared by the build tool (tools/textures/build-textures.ts), which
+// The PBR texture atlases: which CC0 photo material (or material generated with Scenario PATINA, kept in
+// tools/textures/patina/) goes into which atlas cell, and how many metres one texture repeat covers in the world. Shared by the build tool (tools/textures/build-textures.ts), which
 // downloads and packs them into KTX2 files, and the game (render/pbr/), which samples them by cell index.
 
 export interface TextureSet {
   /** Name used in the debug console and the shaders. */
   name: string;
-  /** ambientCG asset id (https://ambientcg.com/a/<id>), CC0. */
+  /** ambientCG asset id (https://ambientcg.com/a/<id>), CC0, or a label for a local set. */
   asset: string;
+  /** Local folder with <name>_Color/_NormalGL/_Roughness/_Displacement maps instead of the ambientCG download. */
+  local?: string;
   /** Real-world size of one texture repeat, metres. */
   metres: number;
   /**
@@ -61,7 +63,7 @@ export const NATURE: AtlasSpec = {
 export const BUILDING: AtlasSpec = {
   name: 'building',
   cols: 4,
-  rows: 2,
+  rows: 3,
   sets: [
     { name: 'plaster', asset: 'Plaster001', metres: 2.5 },
     { name: 'plaster_rough', asset: 'Plaster007', metres: 2.5 },
@@ -71,6 +73,10 @@ export const BUILDING: AtlasSpec = {
     { name: 'roof_slate', asset: 'RoofingTiles013A', metres: 2.4 },
     { name: 'roof_gravel', asset: 'Gravel023', metres: 2.5, albedo: 0.14 },
     { name: 'painted_metal', asset: 'PaintedMetal004', metres: 1.5 },
+    { name: 'wood_cladding', asset: 'PATINA wood_cladding', local: 'tools/textures/patina/wood_cladding', metres: 1.8 },
+    { name: 'sandstone', asset: 'PATINA sandstone', local: 'tools/textures/patina/sandstone', metres: 2.4 },
+    { name: 'roof_seam', asset: 'PATINA roof_seam', local: 'tools/textures/patina/roof_seam', metres: 2.0 },
+    { name: 'timber', asset: 'PATINA timber', local: 'tools/textures/patina/timber', metres: 1.2 },
   ],
 };
 

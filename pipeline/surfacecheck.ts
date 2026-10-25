@@ -3,7 +3,7 @@
 // colliders as the game, as a wheel and as the chassis sees them (src/world/surfaceScan.ts has the rules).
 // Also compares the terrain of neighbouring tiles along their shared edge. Writes public/tiles/surface.json
 // for the in-game `world.surface` command (same layout as gaps.json).
-//   node pipeline/surfacecheck.ts [region] [--max=<allowed places>] [--list=<places to print, default 25>] [--cell=0.5]
+//   node pipeline/surfacecheck.ts [region] [--max=<allowed places>] [--max-critical=<allowed critical places>] [--list=<places to print, default 25>] [--cell=0.5]
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -16,13 +16,14 @@ import { readOsm, type Way } from './lib/osm.ts';
 import { loadWorld, paths } from './lib/region.ts';
 import { densify, isDrivable } from './lib/roads.ts';
 import {
-  SURFACE_KINDS, SURFACE_LIMITS, cellCentre, clusterIssues, gridCols, probeCells, rasterizeMesh, surfaceIssues,
+  SURFACE_KINDS, SURFACE_LIMITS, cellCentre, isCritical, clusterIssues, gridCols, probeCells, rasterizeMesh, surfaceIssues,
   type CellGrid, type SurfaceCell, type SurfaceKind,
 } from '../src/world/surfaceScan.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
-const MAX = +arg('max', '0');
+const MAX = +arg('max', 'Infinity');
+const MAX_CRITICAL = +arg('max-critical', 'Infinity');
 const CELL = +arg('cell', '0.5');
 /** Debugging: only the tile around local x,z, with the cells around it printed. */
 const AT = arg('at', '') ? arg('at', '').split(',').map(Number) : undefined;
@@ -135,6 +136,7 @@ async function main() {
     kinds: SURFACE_KINDS,
     cell: CELL,
     cells: nCells,
+    critical: kept.filter((s) => isCritical(s.kind, s.size)).length,
     // [x, y, z, kind index, size, osm way id (0 if none near)]
     issues: kept.map((s, i) => [+s.x.toFixed(1), +s.y.toFixed(2), +s.z.toFixed(1), SURFACE_KINDS.indexOf(s.kind), +s.size.toFixed(2), way[i]?.id ?? 0]),
   }));
@@ -150,10 +152,12 @@ async function main() {
     console.log(`  ${s.kind} ${s.size.toFixed(2)} m (${s.what}) at UTM ${e.toFixed(1)} ${n.toFixed(1)}, road ${s.y.toFixed(2)}`
       + (w ? ` · way ${w.id} ${w.tags.highway}${w.tags.bridge ? ' bridge' : ''} "${w.tags.name ?? ''}"` : ''));
   });
-  if (kept.length > MAX) {
-    console.log(`FAIL: ${kept.length} places where the road is not one seamless surface (allowed ${MAX})`);
-    process.exit(1);
-  }
+  const critical = kept.filter((s) => isCritical(s.kind, s.size));
+  console.log(`  critical (holes, snags, steps/bumps/dips from 0.25 m): ${critical.length} (${SURFACE_KINDS.map((k) => `${critical.filter((s) => s.kind === k).length} ${k}`).join(', ')})`);
+  let fail = false;
+  if (critical.length > MAX_CRITICAL) { console.log(`FAIL: ${critical.length} critical places (allowed ${MAX_CRITICAL})`); fail = true; }
+  if (kept.length > MAX) { console.log(`FAIL: ${kept.length} places where the road is not one seamless surface (allowed ${MAX})`); fail = true; }
+  if (fail) process.exit(1);
 }
 
 /** Prints drawn and wheel heights of the cells around AT (debugging). */

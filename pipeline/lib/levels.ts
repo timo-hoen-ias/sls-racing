@@ -1,10 +1,11 @@
-// Overlapping roads at nearly the same height. Each road is a ribbon flat across with its own profile, so
-// where two ribbons overlap (a junction arm under the junction plateau, two carriageways of one bridge with
-// decks measured a little apart, a hairpin whose legs touch) their surfaces disagree by decimetres to a metre
-// and the car bangs into the edge of the upper one. No car fits between surfaces less than APART apart, so
-// they must be one surface: the lower-priority road takes the other's height where they overlap (equal ones
-// meet halfway) and fades back into its own profile along the road. The shift is stored per way
+// Overlapping road surfaces that must be one: the carriageways of one bridge (decks measured from the surface
+// model a decimetre to a metre apart) and the two legs of a hairpin that touch. Their ribbons overlap with a
+// ledge the car bangs into; no car fits between surfaces less than APART apart, so where they overlap they
+// meet halfway and each fades back into its own profile along the road. The shift is stored per way
 // (`way.level`) and added by the surface function in roads.ts, so build, gap check and drive test agree.
+// Other overlaps (a junction arm under a plateau, a road beside a ramp) are left to the junction plateaus
+// and overlap.ts: matched along their centre lines, ribbons meeting at an angle with different grades only
+// trade one ledge for another (measured with world:surface, it doubled the critical places).
 import type { WorldInfo } from '../../src/world/format.ts';
 import type { Way } from './osm.ts';
 import { ROAD_CLASSES, isBridge, isDrivable, roadProfile, roadWidth } from './roads.ts';
@@ -58,7 +59,7 @@ export function matchLevels(ways: Way[], height: (e: number, n: number) => numbe
     let moved = 0;
     for (const [way, ring] of rings) {
       if (ring.length < 2) continue;
-      const hw = half.get(way)!, lift = drawLift(way), prio = priority(way);
+      const hw = half.get(way)!, lift = drawLift(way), prio = priority(way), bridge = isBridge(way.tags);
       // Wanted shift per sample: towards the highest-priority surface it overlaps, the largest such pull.
       const want = new Float64Array(ring.length);
       const pinned = new Uint8Array(ring.length);
@@ -73,8 +74,8 @@ export function matchLevels(ways: Way[], height: (e: number, n: number) => numbe
               const dx = s.e1 - s.e0, dy = s.n1 - s.n0;
               const t = Math.min(1, Math.max(0, ((p.e - s.e0) * dx + (p.n - s.n0) * dy) / (dx * dx + dy * dy || 1)));
               if (Math.hypot(s.e0 + dx * t - p.e, s.n0 + dy * t - p.n) > hw + s.hw + TOUCH) continue;
-              // The same way only where it comes back to itself (hairpin), not its own neighbourhood.
-              if (s.way === way && Math.abs(s.d0 + (s.d1 - s.d0) * t - p.dist) < 4 * (hw + s.hw) + 4) continue;
+              // Two bridge decks, or the same way where it comes back to itself (hairpin), not its own neighbourhood.
+              if (s.way === way ? Math.abs(s.d0 + (s.d1 - s.d0) * t - p.dist) < 4 * (hw + s.hw) + 4 : !(bridge && isBridge(s.way.tags))) continue;
               const other = s.b0 + (s.b1 - s.b0) * t;
               const gap = other - base;
               if (Math.abs(gap) < TOLERANCE || Math.abs(gap) > APART) continue;

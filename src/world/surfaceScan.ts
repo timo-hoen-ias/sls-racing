@@ -36,6 +36,14 @@ export const SURFACE_LIMITS = {
   level: 1.5,
 } as const;
 
+/**
+ * Places that stop or throw the car, not just jolt it: every hole and snag, and steps, bumps and dips from
+ * 0.25 m (the step assist lifts the car over 0.3 m above its underbody, the springs take 0.18 m). Seams from 5 cm.
+ */
+export function isCritical(kind: SurfaceKind, size: number) {
+  return kind === 'hole' || kind === 'snag' || size >= (kind === 'seam' ? 0.05 : 0.25);
+}
+
 /** One drawn level of a cell: drawn height, where the wheels and the chassis rest (null: nothing) and on what. */
 export interface SurfaceCell { yd: number; yw: number | null; wheel: string; yc: number | null; chassis: string }
 

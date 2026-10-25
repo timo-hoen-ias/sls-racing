@@ -538,7 +538,9 @@ export function buildRoads(
         const grade = (p.y - q.y) / (Math.abs(p.dist - q.dist) || 1);
         const y = p.y - STRIP_DROP, yt = y + grade * Math.abs(ext);
         const t = tiles.at(p.e, p.n).collide;
-        const v = [corner(p, -hr), corner(p, hl), corner(tip, -hr), corner(tip, hl)].map(([x, z], i) => t.vertex(x, i < 2 ? y : yt, z, {}));
+        // Never above another road it reaches over (the road it ends on, lower there): its wheels would hit the cap.
+        const capY = (x: number, z: number, h: number) => Math.min(h, (carriageways.below(way, x, z, h + STRIP_DROP) ?? Infinity) - STRIP_DROP);
+        const v = [corner(p, -hr), corner(p, hl), corner(tip, -hr), corner(tip, hl)].map(([x, z], i) => t.vertex(x, capY(x, z, i < 2 ? y : yt), z, {}));
         // Upward-facing whichever way the cap points.
         if (dir > 0) { t.tri(v[0], v[2], v[1]); t.tri(v[1], v[2], v[3]); }
         else { t.tri(v[0], v[1], v[2]); t.tri(v[1], v[3], v[2]); }

@@ -6,7 +6,8 @@ import {
 } from '../src/world/surfaceScan.ts';
 import type { Way } from '../pipeline/lib/osm.ts';
 import { matchLevels } from '../pipeline/lib/levels.ts';
-import { roadSurfaceHeights } from '../pipeline/lib/roads.ts';
+import { roadProfile, roadSurfaceHeights } from '../pipeline/lib/roads.ts';
+import type { WorldInfo } from '../src/world/format.ts';
 
 beforeAll(async () => {
   await RAPIER.init();
@@ -83,19 +84,20 @@ describe('overlapping road levels', () => {
     expect(ya[0]).toBeGreaterThan(110.3);
   });
 
-  it('a minor road overlapping a main road takes its height and fades back into its own', () => {
-    const main = way(1, [[0, 0], [200, 0]], { highway: 'primary' });
+  it('the touching legs of a hairpin become one surface', () => {
+    // Track out east and back west 2 m beside itself, climbing 1 %: the legs overlap with a 0.6–1.1 m ledge.
+    const t = way(3, [[0, 0], [60, 0], [60, 2], [0, 2]], { highway: 'track' });
+    t.profile = { dist: Float32Array.from([0, 60, 62, 122]), y: Float32Array.from([100, 100.6, 100.62, 101.22]) };
+    const at = (d: number) => roadProfile(t, flat, { originE: 0, originN: 0, tileSize: 256 } as WorldInfo, 2).reduce((b, p) => (Math.abs(p.dist - d) < Math.abs(b.dist - d) ? p : b)).y;
+    expect(at(92) - at(30)).toBeGreaterThan(0.5);
+    matchLevels([t], flat);
+    expect(Math.abs(at(92) - at(30))).toBeLessThan(0.05);
+    // A road beside another (not a bridge, not the same way) is left as it is.
+    const main = way(1, [[0, 10], [200, 10]], { highway: 'primary' });
     main.profile = { dist: Float32Array.from([0, 200]), y: Float32Array.from([100, 100]) };
-    // Side road running alongside the main road for 40 m, half a metre lower, then leaving it.
-    const side = way(2, [[60, 6], [100, 6], [100, 106]], { highway: 'residential' });
-    side.profile = { dist: Float32Array.from([0, 40, 140]), y: Float32Array.from([99.5, 99.5, 99.5]) };
-    matchLevels([main, side], flat);
-    const s = roadSurfaceHeights(side, flat), m = roadSurfaceHeights(main, flat);
-    // Alongside: same surface (less the draw-order lift between the classes).
-    expect(Math.abs(s[0] - m[0])).toBeLessThan(0.05);
-    // The main road keeps its height; the side road is back on its own profile far from it.
-    expect(m[0]).toBeCloseTo(100 + 0.15 + 7 * 0.008, 3);
-    expect(s[2]).toBeCloseTo(99.5 + 0.15 + 3 * 0.008, 3);
+    const side = way(2, [[0, 16], [200, 16]], { highway: 'residential' });
+    side.profile = { dist: Float32Array.from([0, 200]), y: Float32Array.from([99.5, 99.5]) };
+    expect(matchLevels([main, side], flat).ways).toBe(0);
   });
 
   it('surfaces a car fits between stay separate levels', () => {

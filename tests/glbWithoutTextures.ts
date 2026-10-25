@@ -5,7 +5,15 @@ export function withoutTextures(buf: Buffer) {
   delete json.textures;
   delete json.images;
   delete json.samplers;
-  for (const m of json.materials ?? []) if (m.pbrMetallicRoughness) delete m.pbrMetallicRoughness.baseColorTexture;
+  for (const m of json.materials ?? []) {
+    if (m.pbrMetallicRoughness) {
+      delete m.pbrMetallicRoughness.baseColorTexture;
+      delete m.pbrMetallicRoughness.metallicRoughnessTexture;
+    }
+    for (const k of ['normalTexture', 'occlusionTexture', 'emissiveTexture']) delete m[k];
+    // Texture slots of material extensions (KHR_materials_specular …).
+    for (const ext of Object.values(m.extensions ?? {}) as Record<string, unknown>[]) for (const k of Object.keys(ext)) if (k.endsWith('Texture')) delete ext[k];
+  }
   let text = Buffer.from(JSON.stringify(json));
   text = Buffer.concat([text, Buffer.alloc((4 - (text.length % 4)) % 4, 0x20)]);
   const bin = buf.subarray(20 + jsonLen);

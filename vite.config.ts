@@ -26,7 +26,8 @@ function basisTranscoder(): Plugin {
 
 export default defineConfig({
   plugins: [basisTranscoder()],
-  server: { host: true },
+  // npm run online:vite: the API (leaderboards, online servers) from `npm run online:dev` on port 8788.
+  server: { host: true, proxy: process.env.ONLINE_DEV ? { '/api': { target: 'http://localhost:8788', ws: true } } : undefined },
   build: { target: 'es2022', chunkSizeWarningLimit: 4000 },
   // pipeline.test and roadGraph.test both rebuild public/tiles; running files in parallel races on that folder.
   test: { include: ['tests/**/*.test.ts'], fileParallelism: false },

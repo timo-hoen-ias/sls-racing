@@ -368,6 +368,11 @@ async function boot() {
     lookup: (c) => { const h = props.lookup(c); return h?.kind === Prop.parkedCar ? h : undefined; },
     remove: (c) => { props.remove(c); },
   }, (k) => props.parkedCarDebris(k as PropHit), 1100, { minSpeed: 7, loss: 0.22, fling: 0.5, spin: 0.25 });
+  // Recycling containers by the road (S5): heavy, but they slide away instead of stopping the car dead.
+  knockdown.addSource({
+    lookup: (c) => { const h = props.lookup(c); return h?.kind === Prop.recycling ? h : undefined; },
+    remove: (c) => { props.remove(c); },
+  }, propDebris(), 600, { minSpeed: 6, loss: 0.15, fling: 0.6, spin: 0.4 });
   props.roadWidthAt = (x, z) => graph.snap(x, z, 15, (e) => e.rank >= 2)?.edge.width;
   // Style moves (near misses, slipstream, jumps …): nitro right away, points for the combo.
   const style = new StyleTracker(graph);

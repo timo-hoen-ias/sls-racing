@@ -1,5 +1,5 @@
 // Street furniture and parked cars from OSM: signs, bus stops, bollards, benches, bins, post boxes, hydrants,
-// advertising columns, fences, walls, hedges, guard rails along motorways, the Saarlouis city limit signs, and
+// advertising columns, fences, walls, hedges, the Saarlouis city limit signs, and
 // parked cars on car parks and along residential streets. Everything stays off the driving lanes.
 // Output: per tile Float32 records (see src/world/propKinds.ts).
 
@@ -8,8 +8,8 @@ import { DETECTED, PROP_STRIDE, Prop, type PropKind, SIGN_TYPES, type SignType }
 import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
-import { ROAD_LIFT, densify, isBridge, isDrivable, isMotorRoad, roadSurfaceHeights, roadWidth } from './roads.ts';
-import { bollardedEntry } from '../../src/world/roadSpec.ts';
+import { KERB, bollardedEntry } from '../../src/world/roadSpec.ts';
+import { ROAD_LIFT, densify, isBridge, isDrivable, isMotorRoad, roadSurfaceHeights, roadWidth, type Railing } from './roads.ts';
 
 interface Seg {
   ae: number; an: number; be: number; bn: number;
@@ -76,6 +76,14 @@ export interface PropOptions {
   nearLanes?: (e: number, n: number) => boolean;
   junctions: Junction[];
   boundary?: [number, number][][];
+  /** False when the place-name signs come from guideSigns.ts: no props for city limits then (default true). */
+  cityLimits?: boolean;
+  /** Pedestrian railings along bridge caps, from buildRoads. */
+  railings?: Railing[];
+  /** Hedge centre lines measured from the laser heights (lib/hedges.ts); dropped where OSM maps a hedge nearby. */
+  hedges?: [number, number][][];
+  /** Wall centre lines from ALKIS; dropped where OSM maps any barrier nearby. */
+  walls?: [number, number][][];
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
   detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
@@ -96,7 +104,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     if (!out.has(k)) out.set(k, []);
     const [x, z] = utmToLocal(o.world, e, n);
     const near = roads.nearest(e, n, 12);
-    const h = y ?? (near && near.d < near.seg.width / 2 + 3 ? Math.max(o.height(e, n), near.y - ROAD_LIFT) + ROAD_LIFT + 0.14 : o.height(e, n));
+    const h = y ?? (near && near.d < near.seg.width / 2 + 3 ? Math.max(o.height(e, n), near.y - ROAD_LIFT) + ROAD_LIFT + KERB.height : o.height(e, n));
     out.get(k)!.push(kind, r2(x), r2(h), r2(z), r3(heading), r2(size));
     counts[kind] = (counts[kind] ?? 0) + 1;
   };
@@ -153,7 +161,11 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     if (t.highway === 'bus_stop') { kind = Prop.busStop; size = t.shelter === 'yes' ? 1 : 0; }
     else if (t.highway === 'stop') kind = Prop.stopSign;
     else if (t.highway === 'give_way') kind = Prop.giveWay;
-    else if (t.traffic_sign) { kind = Prop.sign; size = signSize(osmSignType(t.traffic_sign)); }
+    else if (t.traffic_sign) {
+      kind = Prop.sign;
+      size = signSize(osmSignType(t.traffic_sign));
+      if (o.cityLimits === false && size === signSize('ortsschild')) continue;
+    }
     else if (t.barrier === 'bollard') kind = Prop.bollard;
     else if (t.barrier === 'block') kind = Prop.block;
     else if (t.amenity === 'bench') kind = Prop.bench;
@@ -202,6 +214,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   const same = (a: PropKind, b: PropKind) => a === b || (SIGNS.includes(a) && SIGNS.includes(b));
   let detected = 0;
   for (const d of o.detected ?? []) {
+    if (o.cityLimits === false && d.kind === Prop.sign && d.size === signSize('ortsschild')) continue;
     let dup = false;
     const ce = Math.floor(d.e / DEDUPE), cn = Math.floor(d.n / DEDUPE);
     for (let a = -1; a <= 1 && !dup; a++)
@@ -213,42 +226,53 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     detected++;
   }
 
-  // Fences, walls, hedges and mapped guard rails, in pieces of up to 4 m.
+  // Fences, walls and hedges, in pieces of up to 4 m (mapped guard rails: roadside.ts).
+  // Keep a car's clearance from the lanes: the whole piece stays off them, not only its centre (a barrier way
+  // crossing a street).
+  const clear = o.nearLanes ?? o.onLanes;
+  const offLanes = (e: number, n: number, de: number, dn: number, len: number) => [-0.5, -0.25, 0, 0.25, 0.5].every((f) => !clear(e + de * len * f, n + dn * len * f));
+  const mappedHedges = new Set<string>(), mappedBarriers = new Set<string>();
+  const HEDGE_CELL = 3;
   for (const w of osm.ways) {
     const b = w.tags.barrier;
-    const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : b === 'guard_rail' ? Prop.guardRail : undefined;
+    const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : undefined;
     if (!kind) continue;
-    // Guard rails belong right at the edge; the rest keeps a car's clearance.
-    const clear = kind === Prop.guardRail ? o.onLanes : o.nearLanes ?? o.onLanes;
     pieces(w.pts, 4, (e, n, de, dn, len) => {
-      // The whole piece stays off the lanes, not only its centre (a barrier way crossing a street).
-      for (const f of [-0.5, -0.25, 0, 0.25, 0.5]) if (clear(e + de * len * f, n + dn * len * f)) return;
-      add(kind, e, n, headingOf(de, dn), len);
+      const cell = `${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`;
+      if (kind !== Prop.fence) mappedHedges.add(cell);
+      mappedBarriers.add(cell);
+      if (offLanes(e, n, de, dn, len)) add(kind, e, n, headingOf(de, dn), len);
     });
   }
+  // Measured hedges have a negative length (see isMeasured in propKinds.ts); none beside a mapped hedge or wall.
+  let measuredHedges = 0;
+  const mappedNear = (set: Set<string>, e: number, n: number) => {
+    const ce = Math.floor(e / HEDGE_CELL), cn = Math.floor(n / HEDGE_CELL);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (set.has(`${ce + a}_${cn + b}`)) return true;
+    return false;
+  };
+  for (const h of o.hedges ?? [])
+    pieces(h, 4, (e, n, de, dn, len) => {
+      if (mappedNear(mappedHedges, e, n) || !offLanes(e, n, de, dn, len)) return;
+      add(Prop.hedge, e, n, headingOf(de, dn), -len);
+      measuredHedges++;
+    });
+  // Walls from the ALKIS building layer where OSM has no barrier.
+  let alkisWalls = 0;
+  for (const w of o.walls ?? [])
+    pieces(w, 4, (e, n, de, dn, len) => {
+      if (mappedNear(mappedBarriers, e, n) || !offLanes(e, n, de, dn, len)) return;
+      add(Prop.wall, e, n, headingOf(de, dn), len);
+      alkisWalls++;
+    });
 
-  // Guard rails along motorways and trunk roads, both sides, except where other roads join.
-  for (const w of osm.ways) {
-    if (!/^(motorway|trunk)$/.test(w.tags.highway) || !isDrivable(w.tags)) continue;
-    const off = roadWidth(w.tags)! / 2 + 0.8;
-    const ys = roadSurfaceHeights(w, o.height);
-    const cum = [0];
-    for (let i = 1; i < w.pts.length; i++) cum.push(cum[i - 1] + Math.hypot(w.pts[i][0] - w.pts[i - 1][0], w.pts[i][1] - w.pts[i - 1][1]));
-    let seg = 0;
-    pieces(w.pts, 4, (e, n, de, dn, len, along) => {
-      while (seg < cum.length - 2 && along > cum[seg + 1]) seg++;
-      const t = Math.min(1, Math.max(0, (along - cum[seg]) / (cum[seg + 1] - cum[seg] || 1)));
-      const y = ys[seg] + (ys[seg + 1] - ys[seg]) * t - ROAD_LIFT;
-      for (const s of [1, -1]) {
-        const pe = e + dn * off * s, pn = n - de * off * s;
-        if (o.onLanes(pe, pn) || junctionNear(pe, pn, 6)) continue;
-        add(Prop.guardRail, pe, pn, headingOf(de, dn), len, y);
-      }
-    });
-  }
+  // Guard rails (motorways, embankments, bridges, mapped ones) are their own tile field now: roadside.ts.
+
+  // Bridge railings, at the cap height buildRoads gave them.
+  for (const r of o.railings ?? []) add(Prop.railing, r.e, r.n, headingOf(r.de, r.dn), r.len, r.y);
 
   // City limit signs where roads cross the boundary.
-  for (const ring of o.boundary ?? []) {
+  for (const ring of o.cityLimits === false ? [] : o.boundary ?? []) {
     for (const w of osm.ways) {
       if (!isDrivable(w.tags) || !/^(primary|secondary|tertiary|unclassified|trunk)$/.test(w.tags.highway)) continue;
       for (let i = 1; i < w.pts.length; i++) {
@@ -265,11 +289,23 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     }
   }
 
-  // Parked cars: car parks.
+  // Parked cars: car parks. Paved ones get white lines between the stalls (centre e, n and direction de, dn).
+  const stallLines: number[] = [];
+  const painted = new Set<string>();
   for (const p of osm.polygons) {
     if (p.tags.amenity !== 'parking' || /^(underground|multi-storey|rooftop)$/.test(p.tags.parking ?? '')) continue;
-    parkingLot(p, (e, n, heading, variant) => {
-      if (o.onLanes(e, n) || rand(e, n, 9) > 0.62) return;
+    const paint = !/^(street_side|lane|on_kerb|half_on_kerb)$/.test(p.tags.parking ?? '') && (p.tags.surface === undefined || /^(asphalt|concrete|paved)$/.test(p.tags.surface));
+    parkingLot(p, (e, n, heading, variant, ux, uy) => {
+      if (o.onLanes(e, n)) return;
+      if (paint)
+        for (const s of [-1, 1]) {
+          const le = e + ux * STALL.width / 2 * s, ln = n + uy * STALL.width / 2 * s;
+          const k = `${Math.round(le * 4)}_${Math.round(ln * 4)}`;
+          if (painted.has(k) || o.onLanes(le - uy * 2.4, ln + ux * 2.4) || o.onLanes(le + uy * 2.4, ln - ux * 2.4)) continue;
+          painted.add(k);
+          stallLines.push(r2(le), r2(ln), r3(-uy), r3(ux));
+        }
+      if (rand(e, n, 9) > 0.62) return;
       add(Prop.parkedCar, e, n, heading, variant);
     });
   }
@@ -297,7 +333,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }, 3);
     }
   }
-  return { tiles: out, counts, detected, entries };
+  return { tiles: out, counts, detected, entries, measuredHedges, alkisWalls, stallLines };
 }
 
 /** Variant number for a parked car: colour index × 2 + 1 for a van. */
@@ -323,8 +359,12 @@ function pieces(pts: [number, number][], step: number, fn: (e: number, n: number
   }
 }
 
-/** Stall grid aligned with the car park's longest edge: rows of 2.6 m wide stalls, 5 m deep, with 6 m aisles. */
-function parkingLot(p: Polygon, fn: (e: number, n: number, heading: number, variant: number) => void) {
+/** Stall size on a car park (m). */
+export const STALL = { width: 2.6, depth: 5 };
+
+/** Stall grid aligned with the car park's longest edge: rows of 2.6 m wide stalls, 5 m deep, with 6 m aisles.
+ * Calls back with the stall centre, the parked car's heading and variant, and the edge direction ux, uy. */
+function parkingLot(p: Polygon, fn: (e: number, n: number, heading: number, variant: number, ux: number, uy: number) => void) {
   const ring = p.outer;
   let area = 0;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) area += (ring[j][0] - ring[i][0]) * (ring[j][1] + ring[i][1]);
@@ -353,7 +393,7 @@ function parkingLot(p: Polygon, fn: (e: number, n: number, heading: number, vari
       // Ensure the whole stall is inside.
       if (!pointInPolygon(e + vx * 2.4, n + vy * 2.4, p) || !pointInPolygon(e - vx * 2.4, n - vy * 2.4, p)) continue;
       const face = row === 0 ? 1 : -1;
-      fn(e, n, Math.atan2(vx * face, -vy * face), carVariant(e, n));
+      fn(e, n, Math.atan2(vx * face, -vy * face), carVariant(e, n), ux, uy);
     }
   }
 }

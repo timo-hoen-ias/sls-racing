@@ -15,6 +15,7 @@ export function terrainHeight(regions: RegionConfig[], toLonLat: (e: number, n: 
   const terrarium = regions.find((r) => r.terrain.source === 'terrarium')?.terrain as { zoom: number } | undefined;
   const sampler: HeightSampler = terrarium ? terrariumSampler(paths.terrain, terrarium.zoom) : flatSampler();
   const dgm = regions.some((r) => r.laser) ? laserSampler(paths.dgm1) : undefined;
+  if (dgm && !dgm.tiles) throw missing('DGM1', paths.dgm1, regions);
   if (dgm) log(`Terrain: DGM1 1 m grid in ${dgm.tiles} km tiles${terrarium ? `, Terrarium z${terrarium.zoom} outside` : ''}`);
   const raw = (e: number, n: number) => {
     const d = dgm?.at(e, n);
@@ -34,9 +35,17 @@ export function terrainHeight(regions: RegionConfig[], toLonLat: (e: number, n: 
   return Object.assign(height, { raw });
 }
 
+/**
+ * A region asks for laser data that was never downloaded (an old data/raw from before fetch.ts got it).
+ * Building anyway would put bridge decks on the valley floor, so stop and say how to get it.
+ */
+export const missing = (what: string, dir: string, regions: RegionConfig[]) =>
+  new Error(`${what} expected but ${dir} has no tiles. Run "node pipeline/fetch.ts ${regions.map((r) => r.id).join(' ')}" first.`);
+
 /** Bridge decks from DOM1 (where available), then lifts for crossings that still lack headroom. */
 export function roadHeights(ways: Way[], regions: RegionConfig[], height: (e: number, n: number) => number, log = (_: string) => {}) {
   const dom = regions.some((r) => r.laser?.dom1?.length) ? laserSampler(paths.dom1) : undefined;
+  if (dom && !dom.tiles) throw missing('DOM1', paths.dom1, regions);
   const d = bridgeDecks(ways, dom, height);
   if (dom) log(`Bridges: ${d.measured}/${d.bridges} decks measured from DOM1, max. ${d.maxRise.toFixed(1)} m above the straight span`);
   const p = roadProfiles(ways, height, d.anchors);

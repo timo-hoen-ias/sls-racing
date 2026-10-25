@@ -2,8 +2,8 @@
 // driving surface: OSM lines that run a metre off the road onto an embankment slope, kerbs, ditches, the
 // slope at a bridge end. Real roads are smooth, so each road gets a profile sampled from the terrain,
 // filtered, and pinned to one height per node so that roads meeting at a node (and bridges) meet exactly.
-import type { Way } from './osm.ts';
-import { densify, isBridge, isDrivable, roadWidth } from './roads.ts';
+import { SYNTHETIC_NODE, type Way } from './osm.ts';
+import { ROAD_CLASSES, densify, isBridge, isDrivable, roadWidth } from './roads.ts';
 
 /** Spacing of profile samples (m). */
 export const PROFILE_STEP = 2;
@@ -17,6 +17,8 @@ const NODE_REACH = 6;
 const RAMP_GRADE = 0.05;
 /** Past the junction plateau the road blends back into its own profile over this length (m). */
 const JUNCTION_BLEND = 10;
+/** A junction plateau tilts with the grade of its main road, up to this much (rise per metre). */
+const PLATEAU_GRADE = 0.12;
 /** Grade of a road end is measured over this length, and matched to the road it continues into over this reach (m). */
 const GRADE_SPAN = 4, GRADE_REACH = 16;
 
@@ -72,7 +74,8 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     const { ys, nodeAt } = raw.get(w)!;
     const d = dists.get(w)!;
     w.ids.forEach((id, i) => {
-      if (anchors.has(id)) return;
+      // Points the pipeline added only shape the line; the profile runs smoothly through them.
+      if (anchors.has(id) || id < SYNTHETIC_NODE) return;
       if (!near.has(id)) near.set(id, []);
       const list = near.get(id)!;
       for (let k = 0; k < ys.length; k++) if (Math.abs(d[k] - nodeAt[i]) <= NODE_REACH) list.push(ys[k]);
@@ -96,6 +99,7 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
   const isJunction = (id: number) => (degree.get(id) ?? 0) >= 3 && !anchors.has(id);
 
   let maxCorrection = 0;
+  const pinned = new Map<Way, number[]>();
   for (const w of roads) {
     const { ys, nodeAt } = raw.get(w)!;
     const d = dists.get(w)!;
@@ -108,6 +112,7 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     // Ramp the profile onto each node height: full correction at the node, fading out along the road.
     const prof = smooth.slice();
     for (let i = 0; i < w.ids.length; i++) {
+      if (!nodeH.has(w.ids[i])) continue;
       const target = nodeH.get(w.ids[i])!;
       const k0 = d.findIndex((v) => v >= nodeAt[i] - 1e-6);
       const delta = target - smooth[k0];
@@ -123,14 +128,58 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
         if (t > 0) prof[k] += delta * t;
       }
     }
-    const flats = w.ids.flatMap((id, i) => (isJunction(id) ? [{ at: nodeAt[i], y: nodeH.get(id)!, r: widest.get(id)! + 0.5 }] : []));
+    pinned.set(w, prof);
+  }
+
+  // Direction (unit, UTM) and grade of a road at one of its nodes, from its pinned profile.
+  const at = (w: Way, x: number) => {
+    const d = dists.get(w)!, y = pinned.get(w)!;
+    let k = 0;
+    while (k < d.length - 2 && d[k + 1] < x) k++;
+    return y[k] + (y[k + 1] - y[k]) * Math.min(1, Math.max(0, (x - d[k]) / (d[k + 1] - d[k] || 1)));
+  };
+  const heading = (w: Way, i: number): [number, number] => {
+    const a = w.pts[Math.max(0, i - 1)], b = w.pts[Math.min(w.pts.length - 1, i + 1)];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+  };
+  // Junction plateaus are planes through the node height, tilted with the main road (highest class, then
+  // widest): a flat plateau on a steep street makes the main road climb twice as steeply into it and leaves
+  // a crest to jump from. The other roads follow the plane, so all surfaces still meet at the node.
+  const tilt = new Map<number, { rank: number; hw: number; g: [number, number] }>();
+  for (const w of roads) {
+    const { nodeAt } = raw.get(w)!;
+    const len = dists.get(w)!.at(-1)!;
+    const rank = ROAD_CLASSES[w.tags.highway].rank, hw = roadWidth(w.tags)! / 2;
+    w.ids.forEach((id, i) => {
+      if (!isJunction(id)) return;
+      const best = tilt.get(id);
+      if (best && (best.rank > rank || (best.rank === rank && best.hw >= hw))) return;
+      const x0 = Math.max(0, nodeAt[i] - GRADE_SPAN), x1 = Math.min(len, nodeAt[i] + GRADE_SPAN);
+      if (x1 - x0 < 1) return;
+      const s = Math.max(-PLATEAU_GRADE, Math.min(PLATEAU_GRADE, (at(w, x1) - at(w, x0)) / (x1 - x0)));
+      const [ue, un] = heading(w, i);
+      tilt.set(id, { rank, hw, g: [s * ue, s * un] });
+    });
+  }
+
+  for (const w of roads) {
+    const { nodeAt } = raw.get(w)!;
+    const d = dists.get(w)!;
+    const prof = pinned.get(w)!;
+    const flats = w.ids.flatMap((id, i) => {
+      if (!isJunction(id)) return [];
+      const [ge, gn] = tilt.get(id)?.g ?? [0, 0];
+      const [ue, un] = heading(w, i);
+      return [{ at: nodeAt[i], y: nodeH.get(id)!, r: widest.get(id)! + 0.5, slope: ge * ue + gn * un }];
+    });
     if (flats.length)
       for (let k = 0; k < prof.length; k++) {
         let wt = 0, y = 0;
         for (const f of flats) {
           const off = Math.abs(d[k] - f.at);
           const t = off <= f.r ? 1 : Math.max(0, 1 - (off - f.r) / JUNCTION_BLEND);
-          if (t > wt) { wt = t; y = f.y; }
+          if (t > wt) { wt = t; y = f.y + f.slope * (d[k] - f.at); }
         }
         // Smoothstep so the grade changes gently into and out of the plateau.
         if (wt > 0) prof[k] += (y - prof[k]) * wt * wt * (3 - 2 * wt);

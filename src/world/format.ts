@@ -59,6 +59,8 @@ export interface TileData {
   ground: string;
   roads?: PackedMesh;
   markings?: PackedMesh;
+  /** Painted stall lines on car parks (src/world/stalls.ts). */
+  stalls?: PackedMesh;
   buildings?: PackedMesh;
   /** Extra collision only (bridges): Float32 xyz + Uint32 idx. */
   collide?: PackedMesh;
@@ -84,6 +86,16 @@ export interface TileData {
   waterLevel?: string;
   /** Float32 x, z, height above ground, ALKIS function group and code (31001, 1000 = Wohnhaus) per LoD2 building, for `bld.info`. */
   bldInfo?: string;
+  /** Uint8 terrain texture weights per vertex, 8 channels (see SPLAT in coverKinds.ts), from the land cover. */
+  splat?: string;
+  /** Uint8 crop-row strength and direction per vertex (1..255 = 0..180° from east towards north, 0 = none). */
+  rows?: string;
+  /** Uint8 sRGB ground colour per vertex from the aerial survey (3 bytes). */
+  tint?: string;
+  /** Guard rail runs, Float32 [count, flags, start, total, x0, y0, z0, …] (see guardRail.ts). */
+  rails?: string;
+  /** Float32 x, z, r, g, b (sRGB 0..255) per building with a roof colour measured in the aerial survey, for `roof.at`. */
+  roofInfo?: string;
 }
 
 /** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */
@@ -107,6 +119,8 @@ export interface RoadGraphData {
     l?: number;
     /** Centre of the rightmost lane, metres right of the centreline (a → b on one-way roads). */
     r?: number;
+    /** Pavement with a raised kerb: bit 1 right, bit 2 left of a → b; missing in older graphs. */
+    k?: number;
     /** Closed to cars (pedestrian zone, access tags): left out of routing and traffic. */
     x?: 1;
     /** Polyline x, y, z from a to b, including both ends. */
@@ -176,7 +190,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32', roofInfo: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

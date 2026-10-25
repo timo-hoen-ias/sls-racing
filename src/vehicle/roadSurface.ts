@@ -42,13 +42,20 @@ const PATH_SURFACE: SurfaceKind[] = ['asphalt', 'asphalt', 'asphalt', 'pflaster'
 
 /** Carriageway half width of an edge, with a little margin. */
 const halfWidth = (e: Edge) => e.width / 2 + 0.3;
-/** Urban streets with a raised kerb along them. */
+/** Urban streets with a raised kerb along them (graphs without pavement sides: by class). */
 const KERBED = (rank: number) => rank >= 2 && rank <= 7;
+/** Whether the edge has a kerb and pavement on the side of (x, z) (graph field k, see pipeline kerbs.ts). */
+function kerbSide(s: { edge: Edge; x: number; z: number; dx: number; dz: number }, x: number, z: number) {
+  if (s.edge.kerb < 0) return KERBED(s.edge.rank);
+  // Right of a → b is (-dz, dx).
+  const right = (x - s.x) * -s.dz + (z - s.z) * s.dx > 0;
+  return (s.edge.kerb & (right ? 1 : 2)) !== 0;
+}
 /** Pavement width beside kerbed streets (pipeline SIDEWALK.width). */
 const SIDEWALK = 2.2;
 
 /** Classifies a point: road graph first, the terrain ground class off the road. */
-export function classify(graph: RoadGraph, groundAt: (x: number, z: number) => number | undefined, x: number, z: number): { kind: SurfaceKind; rank: number } {
+export function classify(graph: RoadGraph, groundAt: (x: number, z: number) => number | undefined, x: number, z: number): { kind: SurfaceKind; rank: number; kerb?: boolean } {
   const s = graph.snap(x, z, 8);
   if (s && s.dist <= halfWidth(s.edge)) {
     const rank = s.edge.rank;
@@ -58,8 +65,8 @@ export function classify(graph: RoadGraph, groundAt: (x: number, z: number) => n
   // Footpaths, cycle paths and steps (not part of the network), by their surface.
   const path = graph.pathNear(x, z, 6);
   if (path && path.dist <= path.path.width / 2 + 0.2) return { kind: PATH_SURFACE[path.path.surface] ?? 'fussweg', rank: -1 };
-  // Streets have a raised pavement along both sides.
-  if (s && KERBED(s.edge.rank) && s.dist <= halfWidth(s.edge) + SIDEWALK) return { kind: 'gehweg', rank: s.edge.rank };
+  // Streets in town have a raised pavement along the sides the pipeline gave them.
+  if (s && s.dist <= halfWidth(s.edge) + SIDEWALK && kerbSide(s, x, z)) return { kind: 'gehweg', rank: s.edge.rank, kerb: true };
   const g = groundAt(x, z);
   const rank = s && s.dist < halfWidth(s.edge) + 4 ? s.edge.rank : -1;
   switch (g) {
@@ -83,7 +90,7 @@ export class RoadSurface {
   readonly kerbs: number[] = [];
   private graph: RoadGraph;
   private groundAt: (x: number, z: number) => number | undefined;
-  private ranks = [-1, -1, -1, -1];
+  private kerbed = [false, false, false, false];
 
   constructor(graph: RoadGraph, groundAt: (x: number, z: number) => number | undefined) {
     this.graph = graph;
@@ -102,16 +109,16 @@ export class RoadSurface {
       const w = car.wheels[i];
       const prev = this.kinds[i];
       if (w.contact) {
-        const c = this.force ? { kind: this.force, rank: -1 } : classify(this.graph, this.groundAt, w.p.x, w.p.z);
+        const c = this.force ? { kind: this.force, rank: -1, kerb: false } : classify(this.graph, this.groundAt, w.p.x, w.p.z);
         // Up or down a kerb: road ↔ pavement along an urban street.
-        const rank = Math.max(c.rank, this.ranks[i]);
-        if (!this.force && speed > 2 && KERBED(rank) && ((prev === 'gehweg') !== (c.kind === 'gehweg')) && (prev === 'gehweg' || c.kind === 'gehweg')) {
+        const kerb = !!c.kerb;
+        if (!this.force && speed > 2 && kerb !== this.kerbed[i] && (prev === 'asphalt' || prev === 'pflaster' || (this.kerbed[i] && (c.kind === 'asphalt' || c.kind === 'pflaster')))) {
           const k = Math.min(1, speed / 25);
           this.kerbs.push(k);
           car.bump(i, (c.kind === 'gehweg' ? 1 : 0.6) * (0.6 + 0.8 * k));
         }
         this.kinds[i] = c.kind;
-        this.ranks[i] = c.rank;
+        this.kerbed[i] = kerb;
       }
       const s = SURFACES[this.kinds[i]];
       car.wheelGrip[i] = s.grip * (extraGrip[i] ?? 1);

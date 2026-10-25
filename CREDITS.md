@@ -10,6 +10,9 @@
 Der Sportwagen (generisches Coupé, keine reale Marke) ist per Blender-Python-Skript gebaut (`tools/blender/make_sportscar.py`), der Motorsound ist prozedural erzeugt.
 CC-lizenzierte Modelle und Sounds werden hier mit Autor, Quelle und Lizenz eingetragen.
 
+### Schrift der Schilder (public/fonts/)
+[Barlow Semi Condensed](https://github.com/jpt/barlow) Medium von Jeremy Tribby, **SIL Open Font License 1.1** (`public/fonts/OFL-barlow.txt`), aus dem npm-Paket `@fontsource/barlow-semi-condensed`.
+
 ### PBR-Texturen (public/textures/pbr/)
 Alle Materialien stammen von [ambientCG](https://ambientcg.com) (Lennart Demes) und stehen unter **CC0 1.0** (gemeinfrei).
 Sie werden von `tools/textures/build-textures.ts` heruntergeladen, zu Atlanten gepackt und als KTX2 (Basis Universal) kodiert.
@@ -41,6 +44,21 @@ Sie werden von `tools/textures/build-textures.ts` heruntergeladen, zu Atlanten g
 | roof_gravel | [Gravel023](https://ambientcg.com/view?id=Gravel023) |
 | painted_metal | [PaintedMetal004](https://ambientcg.com/view?id=PaintedMetal004) |
 
+### Bäume (public/textures/foliage/)
+Blätter und Rinden stammen von [ambientCG](https://ambientcg.com) (Lennart Demes), **CC0 1.0**. `tools/textures/build-foliage.ts` schneidet die Einzelblätter aus und legt sie zu Zweigkarten zusammen; die Bäume selbst wachsen im Spiel (`src/world/treeGen.ts`).
+
+| Verwendung | ambientCG-Material |
+|---|---|
+| Linde | [LeafSet004](https://ambientcg.com/view?id=LeafSet004) |
+| Ahorn, Platane | [LeafSet010](https://ambientcg.com/view?id=LeafSet010) |
+| Buche | [LeafSet014](https://ambientcg.com/view?id=LeafSet014) |
+| Eiche | [LeafSet016](https://ambientcg.com/view?id=LeafSet016) |
+| Obstbaum | [LeafSet018](https://ambientcg.com/view?id=LeafSet018) |
+| Fichte | [LeafSet019](https://ambientcg.com/view?id=LeafSet019) |
+| Birke, Pappel | [LeafSet022](https://ambientcg.com/view?id=LeafSet022) |
+| Busch, Gebüsch | [LeafSet001](https://ambientcg.com/view?id=LeafSet001), [LeafSet005](https://ambientcg.com/view?id=LeafSet005) |
+| Rinden | [Bark001](https://ambientcg.com/view?id=Bark001), [Bark006](https://ambientcg.com/view?id=Bark006), [Bark007](https://ambientcg.com/view?id=Bark007), [Bark009](https://ambientcg.com/view?id=Bark009), [Bark010](https://ambientcg.com/view?id=Bark010), [Bark012](https://ambientcg.com/view?id=Bark012) |
+
 Die Fassaden-Atlanten (Fenster, Schaufenster) zeichnet `src/render/facades.ts` weiterhin selbst; ihre Normal Map wird daraus berechnet.
 
 ## Code
@@ -50,5 +68,6 @@ Wasser-Shading (src/render/water.ts) nach jbouny/ocean (https://github.com/jboun
 ## Zusatzdaten der Pipeline
 - Bäume (Standort, Höhe, Krone): LiDAR-Punktwolke 2025, © GeoBasis DE/LVGL-SL (2025), Datenlizenz Deutschland – Namensnennung – Version 2.0 (https://www.govdata.de/dl-de/by-2-0).
 - Hausadressen im Navi: Hauskoordinaten, © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0.
+- Bodenbedeckung, Bodenfarbe und Dachfarben: Digitale Orthophotos TrueDOP20 (2025, RGB + Infrarot), ALKIS Tatsächliche Nutzung und Gebäude, DOM1/DGM1, © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0.
 - Straßenraumbreiten: ALKIS Tatsächliche Nutzung, © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0.
 - Verkehrszeichen, Ampeln, Laternen und Straßenmöbel: Mapillary-Mitwirkende, CC BY-SA 4.0 (https://www.mapillary.com). Der Zugangstoken wird nur als Umgebungsvariable MAPILLARY_TOKEN übergeben und nie gespeichert.

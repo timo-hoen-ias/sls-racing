@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["src", "pipeline", "tests", "vite.config.ts"]
+  "include": ["src", "pipeline", "tests", "tools/treelab", "vite.config.ts"]
 }

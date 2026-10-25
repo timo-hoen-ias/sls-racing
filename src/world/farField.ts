@@ -3,7 +3,7 @@
 // meshes discard their fragments, using a small mask texture of visible tiles around the car.
 import * as THREE from 'three';
 import { FAR_BLOCK, Ground, TileContent, isGzip, tileKey, tileOfLocal, tileOriginLocal, utmToLocal, type WorldIndex } from './format.ts';
-import { gridMesh } from './tileBuild.ts';
+import { gridMesh, srgbToLinear } from './tileBuild.ts';
 import { gunzip } from './tileLoad.ts';
 
 /** Mask edge in near tiles (MASK × 256 m around the car). */
@@ -21,7 +21,12 @@ export interface FarView {
   readonly visibleVersion: number;
 }
 
+/** How far the far ground moves from its class colour to the survey colour (0..1). */
+const FAR_AERIAL = 0.85;
+
 export class FarField {
+  /** Far ground in the survey colours where the far tiles have them (lod.aerial). */
+  aerial = true;
   readonly root = new THREE.Group();
   /** View distance of the far field in metres (lod.dist). */
   dist: number;
@@ -167,6 +172,16 @@ export class FarField {
     const y = new Float32Array(h.length);
     for (let i = 0; i < h.length; i++) y[i] = h[i] - (g[i] === Ground.water ? WATER_DROP : 0);
     const m = gridMesh(y, g, N, S / (N - 1), ox, oz);
+    // Survey colour where the tile has it, so the far ground continues the tinted near ground.
+    const tint = this.aerial ? t.u8('tint') : undefined;
+    if (tint) {
+      const lut = new Float32Array(256).map((_, i) => srgbToLinear(i / 255));
+      const col = m.col!;
+      for (let i = 0; i < N * N; i++) {
+        if (!tint[i * 3] && !tint[i * 3 + 1] && !tint[i * 3 + 2]) continue;
+        for (let ch = 0; ch < 3; ch++) col[i * 3 + ch] += (lut[tint[i * 3 + ch]] - col[i * 3 + ch]) * FAR_AERIAL;
+      }
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(m.pos, 3));
     geo.setAttribute('normal', new THREE.BufferAttribute(m.nrm, 3));

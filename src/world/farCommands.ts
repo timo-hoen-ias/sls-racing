@@ -37,6 +37,7 @@ export function createViewDistance(view: SceneSetup, quality: Quality, far: FarF
     name: 'lod.info', help: 'Fernsicht: geladene Fernkacheln, Gebäudeblöcke, Kamera-Reichweite',
     run: () => `Fernsicht ${far.enabled ? 'an' : 'aus'} · ${far.loadedCount} Fernkacheln · ${far.stats.blocks} Gebäudeblöcke · Sichtweite ${far.dist} m · Kamera bis ${view.camera.far.toFixed(0)} m`,
   });
+  registerToggle('lod.aerial', 'Fernsicht-Boden in den Farben des Luftbilds (TrueDOP20), sonst Klassenfarben', () => far.aerial, (v) => { far.aerial = v; far.reload(); });
   registerCommand({ name: 'lod.reload', help: 'Fernkacheln neu laden', run: () => { far.reload(); return 'Fernkacheln werden neu geladen'; } });
   registerValue('lod.view', 'Kamera zum Prüfen der Fernsicht um so viele Meter anheben (0 = normal)', () => state.lift, (v) => (state.lift = v), [0, 2000]);
   return {

@@ -2,7 +2,7 @@
 // colliders every 2 m along each road (centre and both wheel tracks) and reports holes, bumps (terrain,
 // a deck edge or an obstacle sticking up through the road), dips and steps. Writes public/tiles/gaps.json
 // for the in-game `world.gaps` command.
-//   node pipeline/gapcheck.ts [region] [--max=<allowed issues>]
+//   node pipeline/gapcheck.ts [region] [--max=<allowed issues>] [--list=<places to print, default 25>]
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -13,7 +13,9 @@ import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, type Way } from './lib/osm.ts';
 import { halfWidthAt, halfWidths } from './lib/overlap.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
-import { isDrivable, roadProfile } from './lib/roads.ts';
+import { auxLoss, isDrivable, roadProfile } from './lib/roads.ts';
+import { matchRampHeights, planRamps } from './lib/ramps.ts';
+import { roadSection } from '../src/world/roadSpec.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
@@ -48,14 +50,19 @@ async function main() {
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   const height = terrainHeight(regions, unproject(cfg.zone));
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
+  const ramps = planRamps(osm.ways);
   roadHeights(osm.ways, regions, height);
+  matchRampHeights(ramps);
 
   // Wheel tracks 1 m inside the usable road edges (narrower where a road at another height runs alongside).
   const halves = halfWidths(osm.ways, height, W);
   const laneOffset = (w: Way, dist: number, lane: number) => {
     if (!lane) return 0;
     const [l, r] = halfWidthAt(halves.get(w)!, dist);
-    return lane > 0 ? Math.max(0, l - 1) : -Math.max(0, r - 1);
+    // Carriageways placed off the OSM line (motorway junction lanes) are shifted to the right, and narrower
+    // where an auxiliary lane opens or closes.
+    const section = roadSection(w.tags)!;
+    return lane > 0 ? Math.max(0, l - section.shift - 1) : -Math.max(0, r + section.shift - auxLoss(w, section, dist) - 1);
   };
 
   // Probe points per tile: [x, y, z, way, lane (0 centre, ±1 wheel tracks), sample index].
@@ -157,7 +164,7 @@ async function main() {
   const byWhat = new Map<string, number>();
   for (const s of kept) byWhat.set(`${s.kind} on ${s.what}`, (byWhat.get(`${s.kind} on ${s.what}`) ?? 0) + 1);
   console.log(`  ${[...byWhat].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v}× ${k}`).join(', ')}`);
-  for (const s of kept.slice(0, 25)) {
+  for (const s of kept.slice(0, Number(arg('list', '25')))) {
     const way = osm.ways.find((w) => w.id === s.way)!;
     const [e, n] = [s.x + W.originE, W.originN - s.z];
     console.log(`  ${s.kind} ${s.size.toFixed(2)} m (${s.what}) on way ${s.way} ${way.tags.highway}${way.tags.bridge ? ' bridge' : ''} "${way.tags.name ?? ''}" at UTM ${e.toFixed(1)} ${n.toFixed(1)}, road ${s.y.toFixed(2)}, ${['centre', 'right', 'left'][(s.lane + 3) % 3]}`);

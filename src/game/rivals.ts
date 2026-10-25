@@ -33,8 +33,12 @@ export const STEER_GAIN = { arc: 1.3, heading: 0.6, look: 0.28, b0: 0.5, b1: 2.5
 /** Highest cornering the drivers plan with (m/s², about 1.1 g: the arcade tyres hold ~1.4 g, minus braking and bumps). */
 const LAT_MAX = 11;
 
-/** Clearance from the carriageway edge (m) for the ideal line and while overtaking (ai.edge). */
-export const EDGE = { line: 1.4, pass: 0.5 };
+/**
+ * Clearance from the carriageway edge (m) for the ideal line and while overtaking (ai.edge), the steepest
+ * sideways drift of the line (m per m), and the centre-line radius below which a turn (a junction) gets only
+ * part of the width.
+ */
+export const EDGE = { line: 1.4, pass: 0.5, slope: 0.3, tight: 25 };
 
 /** Chance of a mistake per bend by level, before the driver's focus and ai.mistakes. */
 const MISTAKE_CHANCE: Record<RivalLevel, number> = { leicht: 0.22, mittel: 0.1, schwer: 0.04 };
@@ -159,6 +163,9 @@ export class RaceLine {
       const a = this.offsetAt(i - k, side[this.wrap(i - k)]), b = this.offsetAt(i, side[i]), c = this.offsetAt(i + k, side[this.wrap(i + k)]);
       out[i] = radius3(a[0], a[1], b[0], b[1], c[0], c[1]);
     }
+    // The ends of a sprint have no point beyond them: they take the radius next to them (not a fake hairpin).
+    const n = this.x.length;
+    if (!this.loop && n > 2 * k) for (let i = 0; i < k; i++) { out[i] = out[k]; out[n - 1 - i] = out[n - 1 - k]; }
     this.seal(out);
   }
 
@@ -179,7 +186,9 @@ export class RaceLine {
     for (let i = 0; i < n; i++) {
       let m = free[i];
       for (let k = -3; k <= 3; k++) if (this.loop || (i + k >= 0 && i + k < n)) m = Math.min(m, free[this.wrap(i + k)]);
-      this.room[i] = Math.max(0, Math.min(4.5, m - EDGE.line));
+      // Tight turns at junctions: the street graph's corner is a guess, so the line keeps nearer the middle.
+      const tight = Math.max(0.25, Math.min(1, this.centreRadius[i] / EDGE.tight));
+      this.room[i] = Math.max(0, Math.min(4.5, m - EDGE.line)) * tight;
       this.wide[i] = Math.max(0, Math.min(5.5, m - EDGE.pass));
     }
     this.seal(this.room, this.wide);
@@ -217,6 +226,8 @@ export class RaceLine {
           if (Math.abs(dc) < 1e-7) continue;
           s[i] = Math.max(-lim[i], Math.min(lim[i], s0 + (target - c0) / dc));
         }
+        // A sprint starts and ends straight on (no swerve off the grid towards the line).
+        if (!this.loop) { s[nodes[0]] = s[nodes[1]]; s[nodes[m - 1]] = s[nodes[m - 2]]; }
       }
       // Fill in between the nodes.
       for (let j = 0; j < (this.loop ? m : m - 1); j++) {
@@ -227,9 +238,13 @@ export class RaceLine {
         }
       }
     }
+    // No sudden swing across the road (kinks in the street graph at junctions): at most SLOPE m sideways per m.
+    const g = EDGE.slope * this.spacing;
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 1; i < n; i++) s[i] = Math.max(s[i - 1] - g, Math.min(s[i - 1] + g, s[i]));
+      for (let i = n - 2; i >= 0; i--) s[i] = Math.max(s[i + 1] - g, Math.min(s[i + 1] + g, s[i]));
+    }
     this.seal(s);
-    // Ease onto the centre line at the ends of a sprint (the start grid and the finish gate).
-    if (!this.loop) for (let i = 0; i < Math.min(8, n); i++) { const f = i / 8; s[i] *= f; s[n - 1 - i] *= f; }
     this.measure();
     return this;
   }

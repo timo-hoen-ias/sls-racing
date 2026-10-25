@@ -3,7 +3,7 @@
 // a car stuck for 2.5 s (on a sign, a wall, its roof) is put back on the line a little further on; more
 // than MAX_RESCUES of those fail the event. Uses the same physics and colliders as the game (drivetest.ts).
 //   node pipeline/eventtest.ts [region] [--only=<event id>] [--level=mittel] [--max=<n>] [--trace]
-//   --apex=<0..1> share of the road width the ideal line may use (default 1 as in the game, 0 = centre line).
+//   --apex=<0..1> share of the road width the ideal line may use (default 0 = centre line; the game uses 1).
 //   --min=<share> events that must finish (default 0.85).
 //   --write: saves the failed events as "drop" in events.json, so the game leaves them out (and only fails
 //   below --min when that is given explicitly).
@@ -35,8 +35,12 @@ const STEP = 1 / 60;
 const TRACE = process.argv.includes('--trace');
 const WRITE = process.argv.includes('--write');
 const MAX_RESCUES = +arg('rescues', '2');
-/** Share of the free road width the ideal line uses (ai.apex in the game). */
-const APEX = +arg('apex', '1');
+/**
+ * Share of the free road width the ideal line uses (ai.apex in the game). The test checks the world, so by
+ * default it drives the lane centre with the rivals' autopilot (the ideal line's corner cuts at junctions
+ * would hide or add stuck spots that are not the world's fault).
+ */
+const APEX = +arg('apex', '0');
 /** Share of events that must finish (ratchet in CI). */
 const MIN = +arg('min', '0.85');
 /** What each collider is, for failure reports. */
@@ -61,7 +65,7 @@ interface Result { ok: boolean; why?: string; at?: [number, number]; gates: numb
 
 function driveEvent(e: GameEvent): Result {
   const loop = !!e.laps;
-  // The ideal line the rivals drive in the game (apexes cut within the carriageway).
+  // The rivals' line (with --apex the ideal line within the carriageway, as in the game).
   const line = new RaceLine(e.path!, loop).racing((x, z) => graph.snap(x, z, 12, (g) => !g.noCars)?.edge.width, APEX);
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = STEP;
@@ -108,7 +112,7 @@ function driveEvent(e: GameEvent): Result {
     const flipped = 1 - 2 * (r.x * r.x + r.z * r.z) < 0.4;
     stuck = Math.abs(car.speed) < 2 || flipped ? stuck + 1 : 0;
     raced = Math.max(raced, line.cum[driver.index]);
-    if (TRACE && step % 30 === 0) console.log(`    t=${(step * STEP).toFixed(1)} ${q.x.toFixed(0)},${q.y.toFixed(1)},${q.z.toFixed(0)} v=${(car.speed * 3.6).toFixed(0)} goal=${(driver.goal * 3.6).toFixed(0)} off=${line.nearest(q.x, q.z, driver.index).dist.toFixed(1)}`);
+    if (TRACE && step % 30 === 0) console.log(`    t=${(step * STEP).toFixed(1)} ${q.x.toFixed(0)},${q.y.toFixed(1)},${q.z.toFixed(0)} v=${(car.speed * 3.6).toFixed(0)} goal=${(driver.goal * 3.6).toFixed(0)} off=${line.nearest(q.x, q.z, driver.index).dist.toFixed(1)} aim=${driver.aim.toFixed(1)}`);
     if (stuck > 150) {
       const hit = new Set<string>();
       world.contactPairsWith(car.body.collider(0), (o) => {

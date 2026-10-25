@@ -1,0 +1,51 @@
+import { describe, expect, it } from 'vitest';
+import { Details } from '../pipeline/lib/details.ts';
+import type { OsmData, Way } from '../pipeline/lib/osm.ts';
+import { buildPower, pylonHeight, pylonSlots } from '../pipeline/lib/power.ts';
+import { TileMap } from '../pipeline/lib/tilebuf.ts';
+import type { WorldInfo } from '../src/world/format.ts';
+
+const world: WorldInfo = { zone: 32, originE: 1000, originN: 1000, tileSize: 256 };
+const E = 1050, N = 1050;
+
+const line: Way = { id: 1, tags: { power: 'line', voltage: '110000', cables: '6' }, pts: [[E, N], [E + 150, N]], ids: [1, 2], closed: false };
+const minor: Way = { id: 2, tags: { power: 'minor_line' }, pts: [[E, N + 40], [E + 40, N + 40], [E + 80, N + 40]], ids: [3, 4, 5], closed: false };
+const solarRing: [number, number][] = [[E + 10, N + 60], [E + 70, N + 60], [E + 70, N + 100], [E + 10, N + 100], [E + 10, N + 60]];
+
+const osm = (): Pick<OsmData, 'points' | 'extra'> => ({
+  points: [
+    { id: 1, tags: { power: 'tower' }, e: E, n: N },
+    { id: 2, tags: { power: 'tower' }, e: E + 150, n: N },
+    { id: 9, tags: { power: 'transformer' }, e: E + 120, n: N + 80 },
+  ],
+  extra: { ways: [line, minor], areas: [{ id: 3, tags: { power: 'generator', 'generator:source': 'solar' }, outer: solarRing, holes: [] }] },
+});
+
+describe('power lines', () => {
+  it('sizes pylons by voltage and hangs a conductor per cable', () => {
+    expect(pylonHeight('380000;110000')).toBeGreaterThan(pylonHeight('110000'));
+    expect(pylonSlots(6, 34)).toHaveLength(6);
+    expect(pylonSlots(12, 50)).toHaveLength(12);
+  });
+
+  it('draws pylons, poles, sagging wires, a kiosk and solar rows', () => {
+    const tiles = new TileMap(256);
+    tiles.at(E, N);
+    const details = new Details(world, tiles);
+    const s = buildPower(osm(), details, () => 0);
+    expect(s.pylons).toBe(2);
+    expect(s.poles).toBe(3);
+    expect(s.spans).toBe(3);
+    expect(s.kiosks).toBe(1);
+    expect(s.solarRows).toBeGreaterThanOrEqual(5);
+    // Footings and the kiosk are solid.
+    expect(tiles.at(E, N).collide.idx.length).toBeGreaterThan(0);
+    // The wires sag: below the attachment height mid-span, but well above the ground.
+    const t = tiles.at(E, N).details;
+    const mx = E + 75 - world.originE, mz = -(N - world.originN);
+    let low = Infinity;
+    for (let i = 0; i < t.pos.length; i += 3) if (Math.abs(t.pos[i] - mx) < 3 && Math.abs(t.pos[i + 2] - mz) < 10 && t.pos[i + 1] > 5) low = Math.min(low, t.pos[i + 1]);
+    expect(low).toBeLessThan(34 * 0.7 - 2.6 - 1);
+    expect(low).toBeGreaterThan(9);
+  });
+});

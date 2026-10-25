@@ -330,6 +330,21 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }
     });
   }
+  // Substations and solar farms are fenced in with chain-link where no fence is mapped (power.ts draws the inside).
+  for (const area of osm.extra?.areas ?? []) {
+    const t = area.tags;
+    if (t.power !== 'substation' && !(t.power === 'generator' && t['generator:source'] === 'solar') && !(t.power === 'plant' && t['plant:source'] === 'solar')) continue;
+    if (t.substation === 'minor_distribution' || t.location === 'indoor' || t.location === 'roof') continue;
+    pieces(area.outer, 2.5, (e, n, de, dn, len) => {
+      const cell = `${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`;
+      if (mappedBarriers.has(cell)) return;
+      if (offLanes(e, n, de, dn, len)) add(Prop.chainLink, e, n, headingOf(de, dn), len);
+      else {
+        const at = squeeze(e, n, de, dn, len);
+        if (at) { add(Prop.chainLink, at[0], at[1], headingOf(de, dn), len); squeezed++; }
+      }
+    });
+  }
   if (squeezed) console.log(`Props: ${squeezed} chain-link pieces moved off the roads beside them`);
   // Retaining walls (extra features, osmTags.ts).
   for (const w of osm.extra?.ways ?? []) {

@@ -50,7 +50,7 @@ export interface RoadSection {
   inner: number;
   /** Where the width came from, for the debug console. */
   source: 'width' | 'lanes' | 'default';
-  /** Carriageway centre to the right of the OSM line, metres (from `placement`, see placementShift). */
+  /** Carriageway centre to the right of the OSM line, metres (one-way roads: OSM line on the lanes, see placementShift). */
   shift: number;
   /** The rightmost lane is an auxiliary lane of a motorway junction (acceleration or deceleration lane). */
   aux: boolean;
@@ -59,8 +59,9 @@ export interface RoadSection {
 }
 
 /**
- * Where the OSM line lies across a one-way carriageway. Without a `placement` tag our roads are centred on
- * the line. OSM maps the lanes of a motorway junction with `placement=right_of:1` (the line stays on the
+ * Where the OSM line lies across a one-way carriageway. Without a `placement` tag OSM puts the line in the middle
+ * of the lanes (not of the paved width with its hard shoulder), so the carriageway centre lies (outer - inner) / 2
+ * right of it. OSM maps the lanes of a motorway junction with `placement=right_of:1` (the line stays on the
  * through lanes while a lane is added on the right), so placements are measured against the through lanes:
  * the given lane edge lands where it would lie on the same road without the extra lanes.
  *   aux: the rightmost lane is an added lane; without a placement the line then stays on the through lanes.
@@ -69,14 +70,15 @@ function placementShift(placement: string | undefined, lanes: number, lane: numb
   const m = /^(left_of|middle_of|right_of):(\d+)$/.exec(placement ?? '');
   // Line position in carriageway coordinates (from the centre, right positive), in lanes from the left lane edge.
   let at: number;
+  // The lane block of the same road without a placement is centred on the line.
+  const centred = (outer - inner) / 2;
   if (m) at = +m[2] - (m[1] === 'left_of' ? 1 : m[1] === 'middle_of' ? 0.5 : 0);
   else if (aux) at = (lanes - 1) / 2;
-  else return 0;
-  if (!(at >= 0 && at <= lanes)) return 0;
+  else return centred;
+  if (!(at >= 0 && at <= lanes)) return centred;
   const line = -width / 2 + inner + at * lane;
-  // Where the same lane edge lies on a centred road of this class: the lane block sits (outer - inner) / 2
-  // left of the centre there.
-  return (inner - outer) / 2 - line;
+  // Where the same lane edge lies on that road: the lane block sits (outer - inner) / 2 left of the centre.
+  return (inner - outer) / 2 - line + centred;
 }
 
 export const hasSection = (highway: string | undefined) => !!highway && highway in SECTIONS;

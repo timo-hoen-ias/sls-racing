@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { roadSection } from '../src/world/roadSpec.ts';
+import { roadSection, setRoadProfile } from '../src/world/roadSpec.ts';
 import { utmScale } from '../src/world/scaleCommands.ts';
 
 describe('road cross-sections (1:1 against German guidelines)', () => {
@@ -38,5 +38,24 @@ describe('road cross-sections (1:1 against German guidelines)', () => {
   it('UTM distortion in Saarlouis is below 0.01 %', () => {
     // Großer Markt lies at about E 337 400 in zone 32.
     expect(Math.abs(utmScale(337_400) - 1)).toBeLessThan(1e-4);
+  });
+});
+
+describe('game road profile (S1)', () => {
+  it('widens lanes per class, up to the street space between the houses', () => {
+    setRoadProfile('game');
+    try {
+      const res = roadSection({ highway: 'residential' })!;
+      expect(res.width).toBeCloseTo(7.2);
+      expect(res.lane).toBeCloseTo(3.6);
+      expect(roadSection({ highway: 'motorway' })!.lane).toBeCloseTo(4.24, 1);
+      // Street space 9 m: room for 6.6 m with two 1.2 m sidewalks.
+      expect(roadSection({ highway: 'residential', 'sls:street': '9' })!.width).toBeCloseTo(6.6);
+      // Never narrower than the real road, however tight the street.
+      expect(roadSection({ highway: 'residential', 'sls:street': '7' })!.width).toBeCloseTo(6);
+      expect(roadSection({ highway: 'track' })!.width).toBeCloseTo(3);
+    } finally {
+      setRoadProfile('real');
+    }
   });
 });

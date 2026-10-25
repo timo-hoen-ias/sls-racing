@@ -24,11 +24,13 @@ import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
-import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
+import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
-import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, type Railing } from './lib/roads.ts';
+import { drawFillets, planFillets } from './lib/fillets.ts';
+import { smoothBends } from './lib/smooth.ts';
+import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
-import { KERB, noCars } from '../src/world/roadSpec.ts';
+import { activeRoadProfile, KERB, noCars } from '../src/world/roadSpec.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
 import { matchRampHeights, planRamps, rampList } from './lib/ramps.ts';
 import { planKerbs } from './lib/kerbs.ts';
@@ -51,6 +53,7 @@ function main() {
   const { cfg, info, project } = loadWorld();
   const ids = process.argv.slice(2).filter((a) => !a.startsWith('-'));
   const regions: RegionConfig[] = (ids.length ? ids : cfg.regions).map(loadRegion);
+  console.log(`Road profile: ${useRoadProfile({ regions })}`);
   const toLonLat = unproject(cfg.zone);
   const t0 = Date.now();
 
@@ -74,6 +77,9 @@ function main() {
   const height = terrainHeight(regions, toLonLat, console.log);
 
   const osm = readOsm(merged, project);
+  // Game road profile: kinks in the mapped lines become short arcs, before anything reads the geometry.
+  const smoothed = smoothBends(osm.ways, new Set(osm.points.map((p) => p.id)));
+  if (smoothed) console.log(`Bends: ${smoothed} kinks rounded`);
   const tiles = new TileMap(info.tileSize);
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
@@ -87,6 +93,13 @@ function main() {
   const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
   console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
   const { graph, junctions } = buildGraph(osm.ways, info, height);
+  // Rounded junction corners (game road profile): kerbs, lamps and props keep clear of them like of a junction.
+  const fillets = planFillets(osm.ways, height);
+  for (const f of fillets) {
+    const [x, z] = utmToLocal(info, f.node[0], f.node[1]);
+    junctions.push({ x, z, width: 2 * Math.max(0, f.reach - 2.8) });
+  }
+  console.log(`Junction corners: ${fillets.length} rounded`);
   const carve = new RoadCarve(TERRAIN_STEP);
   // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
   const real = regions.some((r) => r.boundary.type !== 'fixture');
@@ -94,6 +107,7 @@ function main() {
   const railings: Railing[] = [];
   const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings }, ramps);
+  drawFillets(fillets, info, tiles, carve);
   // Footpaths, cycle paths and steps on the terrain mesh as carved for the roads, stopping at carriageways and sidewalks.
   const pathStats = (() => {
     // Scoped so the index is freed before the tiles are written.
@@ -101,7 +115,7 @@ function main() {
     for (const w of osm.ways) {
       if (!isDrivable(w.tags) || isBridge(w.tags)) continue;
       const sides = sidewalkSides(w);
-      lanes.add(w, roadProfile(w, height, info), roadWidth(w.tags)! / 2 + (sides.left || sides.right ? KERB.width : 0));
+      lanes.add(w, roadProfile(w, height, info), roadWidth(w.tags)! / 2 + (sides.left || sides.right ? sidewalkWidth(w) : 0));
     }
     return buildPaths(osm.ways, info, meshHeight((e, n) => carve.apply(e, n, height.raw(e, n))), tiles, (x, z) => lanes.onOther(undefined, x, z, 0.2));
   })();
@@ -183,6 +197,7 @@ function main() {
   const nearLanes = new RoadMask(osm.ways, 0.5);
   // Trees a little further: their trunk collider is up to TREE_COLLIDER_MAX wide and the mask is a 2 m grid.
   const treeLanes = new RoadMask(osm.ways, 1.0);
+  for (const m of [onRoad, onLanes, onMotorLanes, nearLanes, treeLanes]) m.addFillets(fillets);
   const offLanes = (lamps: number[]) => {
     const out: number[] = [];
     for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
@@ -438,6 +453,8 @@ function main() {
     regions: regions.map((r) => ({ id: r.id, name: r.name })),
     tiles: index,
     graph: 'graph.json',
+    roadProfile: activeRoadProfile(),
+    ...(fillets.length || smoothed ? { roadShape: { corners: fillets.length, bends: smoothed } } : {}),
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',

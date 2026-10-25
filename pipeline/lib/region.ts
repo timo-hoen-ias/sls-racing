@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import proj4 from 'proj4';
 import type { WorldInfo } from '../../src/world/format.ts';
+import { type RoadProfile, setRoadProfile } from '../../src/world/roadSpec.ts';
 
 export interface RegionConfig {
   id: string;
@@ -60,4 +61,18 @@ export function unproject(zone: number) {
   const utm = `+proj=utm +zone=${zone} +ellps=GRS80 +towgs84=0,0,0 +units=m +no_defs`;
   const conv = proj4(utm, 'EPSG:4326');
   return (e: number, n: number) => conv.forward([e, n]) as [number, number];
+}
+
+/**
+ * Road profile for a pipeline run (roadSpec.ts). The build picks it (SLS_ROAD_PROFILE, else game for real
+ * regions and real for the synthetic fixture) and writes it into index.json; drive test and gap check pass
+ * the built index, so they measure the same roads.
+ */
+export function useRoadProfile(o: { regions?: RegionConfig[]; index?: { roadProfile?: RoadProfile } }): RoadProfile {
+  const env = process.env.SLS_ROAD_PROFILE;
+  const p: RoadProfile = env === 'real' || env === 'game' ? env
+    : o.index ? o.index.roadProfile ?? 'real'
+    : o.regions?.every((r) => r.boundary.type === 'fixture') ? 'real' : 'game';
+  setRoadProfile(p);
+  return p;
 }

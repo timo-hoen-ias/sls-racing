@@ -91,6 +91,9 @@ Seit Oktober 2026 geht Spielgefühl vor Realismus (Vorschlagsliste `docs/fun-rac
 - **Kamera und Tempo**: die Verfolgerkamera fällt beim Beschleunigen zurück und schaut in Kurven mit (`cam.style arcade|ruhig`, `cam.lag|swing|height|dist`), das Sichtfeld weitet sich bis 280 km/h, Tempo-Linien am Bildrand (`fx.speedlines`, `fx.speedlines.from|strength`).
 - **Spiel-Sounds** (`src/audio/gameSfx.ts`, ohne Sample-Dateien): `sfx on|off`, `sfx.volume`, `sfx.play <name>`.
 
+- **Spiel-Straßenprofil** (S1, `src/world/roadSpec.ts`): Fahrstreifen 13 bis 20 Prozent breiter als gemessen, je nach Straßenklasse. Wo ALKIS die Straßenbreite zwischen den Häusern kennt (`sls:street`), wird nur so weit verbreitert, dass mindestens 1,2 m Gehweg bleiben; die Gehwege werden dafür schmaler. Die Pipeline wählt das Profil selbst (echte Regionen `game`, Fixture `real`), `SLS_ROAD_PROFILE=real|game` erzwingt eins, der Index merkt es sich (`roadProfile`), und Fahrtest und Lückenprüfung lesen es von dort. `road.profile` zeigt es im Spiel.
+- **Runde Ecken und Kurven** (S2, nur im Spiel-Profil): an Kreuzungen bekommt jede Ecke zwischen zwei Straßen eine Asphalt-Ausrundung (bis 10 m Radius an Hauptstraßen, 8 m an Wohnstraßen), die innerhalb des Gehwegs bleibt (`pipeline/lib/fillets.ts`). Bordsteine, Laternen, Bäume und Props halten Abstand. Knicke in den OSM-Linien werden zu kurzen Bögen, höchstens 1 m neben der gemappten Linie (`pipeline/lib/smooth.ts`); Kreuzungen, Ampeln, Übergänge, Brücken und Autobahnen behalten ihre Geometrie.
+
 ### Events, Stufen und Spielstand
 
 - **Titelbildschirm** mit Losfahren, Events, Garage und Optionen, bedienbar mit Maus, Tastatur und Gamepad (`src/ui/gameMenus.ts`, `src/ui/padNav.ts`). `title` zeigt ihn wieder.

@@ -1,7 +1,7 @@
 // world.* and terrain.* debug commands: road gaps found by the pipeline's gap check (world.gaps) and its
 // full-coverage surface check (world.surface), the same scan live around the car (road.scan), terrain under
 // the car, bumps on the road ahead (road.bumps), the plazas the pipeline flattened (plaza) and where the tiles
-// come from (world.build).
+// come from (world.build), how big the world is (world.region) and its towns (world.towns).
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addTeleportPlace } from '../debug/gameCommands.ts';
@@ -99,6 +99,52 @@ export function registerWorldCommands(g: WorldCommandContext) {
         g.print(lines.join('\n'));
       });
       return 'Lade Bauinfo …';
+    },
+  });
+
+  // How big the world is (regions, tiles, area) and the towns and villages in it (districts.json).
+  registerCommand({
+    name: 'world.region',
+    help: 'Spielwelt: Regionen, Zahl der Kacheln, Fläche und Ausdehnung, Fernsicht',
+    run() {
+      const T = g.index.world.tileSize;
+      const xs = g.index.tiles.map(([ix]) => ix), ys = g.index.tiles.map(([, iy]) => iy);
+      const w = (Math.max(...xs) - Math.min(...xs) + 1) * T / 1000, h = (Math.max(...ys) - Math.min(...ys) + 1) * T / 1000;
+      const km2 = (g.index.tiles.length * T * T) / 1e6;
+      return [
+        `Regionen: ${g.index.regions.map((r) => r.name).join(', ')}`,
+        `${g.index.tiles.length} Kacheln à ${T} m = ${km2.toFixed(0)} km², Ausdehnung ${w.toFixed(1)} × ${h.toFixed(1)} km`,
+        g.index.far ? `Fernsicht: ${g.index.far.tiles.length} Kacheln à ${(g.index.far.size / 1000).toFixed(1)} km` : 'Keine Fernsicht',
+      ].join('\n');
+    },
+  });
+  let towns: { name: string; x: number; z: number }[] | null = null;
+  const townList = (q?: string) => {
+    const p = g.pos();
+    const list = towns!.map((t) => [t, Math.hypot(t.x - p.x, t.z - p.z)] as const).sort((a, b) => a[1] - b[1]);
+    if (q && q !== 'list') {
+      const n = q.toLowerCase();
+      const hit = list.find(([t]) => t.name.toLowerCase() === n) ?? list.find(([t]) => t.name.toLowerCase().includes(n));
+      if (!hit) return `Kein Ort "${q}"`;
+      g.teleport(hit[0].x, hit[0].z);
+      return `Teleport nach ${hit[0].name} (${(hit[1] / 1000).toFixed(1)} km)`;
+    }
+    return [`${towns!.length} Orte und Stadtteile · world.towns <name> fährt hin`, ...list.map(([t, d]) => `${t.name}: ${(d / 1000).toFixed(1)} km`)].join('\n');
+  };
+  registerCommand({
+    name: 'world.towns',
+    aliases: ['orte'],
+    help: 'Orte und Stadtteile der Spielwelt nach Entfernung; mit Namen dorthin teleportieren (z. B. "world.towns lebach")',
+    args: '[list|<name>]',
+    complete: () => towns?.map((t) => t.name) ?? [],
+    run([...a]) {
+      const q = a.join(' ') || undefined;
+      if (towns) return townList(q);
+      fetch(`${g.baseUrl}/districts.json`).then((r) => (r.ok ? r.json() : { districts: [] })).then((d: { districts?: { name: string; x: number; z: number }[] }) => {
+        towns = d.districts ?? [];
+        g.print(townList(q));
+      }).catch((e) => g.print(`Fehler: ${(e as Error).message}`));
+      return 'Lade districts.json …';
     },
   });
 

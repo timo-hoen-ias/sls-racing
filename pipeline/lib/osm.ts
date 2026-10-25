@@ -98,7 +98,8 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
   for (const el of json.elements) {
     if (el.type !== 'relation') continue;
     const tags = el.tags ?? {};
-    const isBoundary = tags.boundary === 'postal_code';
+    // The extract keeps exactly one boundary relation: the region's postal code or administrative area.
+    const isBoundary = tags.boundary === 'postal_code' || tags.boundary === 'administrative';
     if (tags.type !== 'multipolygon' && !isBoundary) continue;
     const rings = (role: string) =>
       joinRings(el.members.filter((m) => m.type === 'way' && (m.role || 'outer') === role).map((m) => toPts(wayById.get(m.ref)?.nodes ?? [])));

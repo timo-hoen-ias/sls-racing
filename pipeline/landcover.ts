@@ -1,11 +1,12 @@
 // Classifies the ground of a region from the TrueDOP20 aerial survey, ALKIS and the laser scans (see lib/landcover.ts).
 //   node pipeline/landcover.ts saarlouis                  all 2 km survey tiles around the region boundary
 //   node pipeline/landcover.ts saarlouis --tiles=336_5464  only these tiles (south-west corner in km)
+//   node pipeline/landcover.ts landkreis-saarlouis --reuse=saarlouis   copies the tiles another region classified
 // Needs data/raw/<region>/osm.json (pipeline/fetch.ts) and DGM1 (fetch.ts); fetches the DOM1 tiles it needs.
 // The survey tiles (~230 MB each, LZW GeoTIFF RGBI) are read out of the 40 GB district archive with range
 // requests and reduced to 2 m on the fly; the reduced copy is cached in data/raw/landcover/, so a rerun with
 // changed rules downloads nothing. Output (committed): data/derived/<region>/landcover/.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { PNG } from 'pngjs';
 import { inflateEntry, RemoteZip, type ZipEntry } from './lib/remotezip.ts';
@@ -194,6 +195,25 @@ async function main() {
   const index: LandcoverFile = { attribution: LANDCOVER_ATTRIBUTION, tiles: [], roofs: [], hedges: [], walls: [] };
   for (const w of walls) for (const l of centreLines(w.rings, 0.25, rasterize)) index.walls!.push(l.flat());
   const counts = new Float64Array(COVER_NAMES.length);
+  // Survey tiles a smaller region classified already (committed rasters): copied with their roofs and hedges.
+  const reused = new Set<string>();
+  for (const other of process.argv.find((a) => a.startsWith('--reuse='))?.slice(8).split(',') ?? []) {
+    const src = landcoverDir(other);
+    if (!existsSync(`${src}index.json.gz`)) throw new Error(`--reuse=${other}: no land cover for that region`);
+    const prev: LandcoverFile = JSON.parse(gunzipSync(readFileSync(`${src}index.json.gz`)).toString('utf8'));
+    for (const [e0, n0] of prev.tiles) {
+      const k = `${e0 / 1000}_${n0 / 1000}`;
+      if (reused.has(k) || !wanted.some(([e, n]) => e === e0 && n === n0)) continue;
+      reused.add(k);
+      for (const ext of ['class', 'colour', 'rows']) if (existsSync(`${src}${k}.${ext}.png`)) copyFileSync(`${src}${k}.${ext}.png`, `${out}${k}.${ext}.png`);
+      const inTile = (e: number, n: number) => e >= e0 && e < e0 + LC_TILE && n >= n0 && n < n0 + LC_TILE;
+      index.roofs.push(...prev.roofs.filter(([e, n]) => inTile(e, n)));
+      index.hedges!.push(...(prev.hedges ?? []).filter((h) => inTile(h[0], h[1])));
+      index.tiles.push([e0, n0]);
+    }
+    console.log(`  ${reused.size} survey tiles taken over from ${other}`);
+  }
+  wanted = wanted.filter(([e, n]) => !reused.has(`${e / 1000}_${n / 1000}`));
   // Surveys download in parallel with the classification of the previous tile.
   let next: Promise<Uint8Array | undefined> | undefined;
   for (let t = 0; t < wanted.length; t++) {

@@ -35,7 +35,7 @@ export function registerAddressCommands(c: AddressContext, url?: string) {
   const complete = (a: string[]) => (a.length === 1 && book ? book.streetNames() : []);
 
   registerCommand({
-    name: 'adresse', aliases: ['addr'], help: 'Adressen suchen (amtliche Hauskoordinaten)', args: '"<straße> [nr]"', complete,
+    name: 'adresse', aliases: ['addr'], help: 'Adressen suchen (amtliche Hauskoordinaten)', args: '"<straße> [nr][, ort]"', complete,
     run(a) {
       if (!a.length) {
         const b = need();
@@ -45,12 +45,12 @@ export function registerAddressCommands(c: AddressContext, url?: string) {
       if (!hits.length) return '(keine Treffer)';
       return hits.map((h) => {
         const [x, z] = utmToLocal(c.world, h.e, h.n);
-        return `${h.label}, ${h.plz} · lokal ${x.toFixed(0)} / ${z.toFixed(0)} · ${Math.hypot(x - c.pos.x, z - c.pos.z).toFixed(0)} m`;
+        return `${h.label}${h.town ? '' : `, ${h.plz}`} · lokal ${x.toFixed(0)} / ${z.toFixed(0)} · ${Math.hypot(x - c.pos.x, z - c.pos.z).toFixed(0)} m`;
       }).join('\n');
     },
   });
   registerCommand({
-    name: 'nav.adresse', aliases: ['nav.addr'], help: 'Navi zu einer Hausadresse', args: '"<straße> <nr>"', complete,
+    name: 'nav.adresse', aliases: ['nav.addr'], help: 'Navi zu einer Hausadresse', args: '"<straße> <nr>[, ort]"', complete,
     run(a) {
       const h = one(a.join(' '));
       const { x, z } = kerb(h);
@@ -59,7 +59,7 @@ export function registerAddressCommands(c: AddressContext, url?: string) {
     },
   });
   registerCommand({
-    name: 'tp.adresse', aliases: ['tp.addr'], help: 'Vor eine Hausadresse teleportieren', args: '"<straße> <nr>"', complete,
+    name: 'tp.adresse', aliases: ['tp.addr'], help: 'Vor eine Hausadresse teleportieren', args: '"<straße> <nr>[, ort]"', complete,
     run(a) {
       const h = one(a.join(' '));
       const { x, z, s } = kerb(h);

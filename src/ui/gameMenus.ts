@@ -33,7 +33,7 @@ export class TitleMenu {
     this.root.id = 'title';
     const logo = el('div', 'title-logo');
     logo.append(el('span', 'title-sls', 'SLS'), el('span', 'title-racing', 'Racing'));
-    const tag = el('div', 'title-tag', 'Saarlouis · Open World');
+    const tag = el('div', 'title-tag', 'Landkreis Saarlouis · Open World');
     this.stats = el('div', 'title-stats');
     const buttons = el('div', 'title-buttons');
     start.textContent = 'Losfahren';

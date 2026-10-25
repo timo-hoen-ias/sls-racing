@@ -27,7 +27,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The Landkreis (~500 km²) takes about an hour with the checks; a run that has to download all laser tiles
+    # again (new cache key) more.
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -61,6 +63,8 @@ jobs:
             data/raw/dom1
             data/raw/lod2
           key: laser-${{ hashFiles('pipeline/regions/*.json') }}
+          # A changed region keeps the tiles it already had and only downloads the new ones.
+          restore-keys: laser-
       - name: Download OSM and terrain
         if: steps.key.outputs.skip != 'true'
         run: npm run world:fetch

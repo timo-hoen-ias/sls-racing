@@ -4,7 +4,7 @@
 // Format: https://wiki.openstreetmap.org/wiki/PBF_Format
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
-import type { OsmJson } from './osm.ts';
+import { joinRings, type OsmJson } from './osm.ts';
 
 type Tags = Record<string, string>;
 type El = OsmJson['elements'][number];
@@ -261,12 +261,78 @@ const wantedRelation = (tags: Tags) =>
 export interface Cut {
   /** Postal code whose boundary relation defines the area, or a lon/lat box. */
   postalCode?: string;
+  /**
+   * Administrative boundary (e.g. a Landkreis, admin_level 6) that defines the area. Unlike the postal code,
+   * whose bounding box is cut, only what lies within marginMeters of the boundary itself is kept: a district's
+   * box holds twice its area.
+   */
+  admin?: { name: string; level: string };
   bbox?: { south: number; west: number; north: number; east: number };
   marginMeters: number;
   /** Which ways to keep (default: wanted). Multipolygon relations always follow wantedRelation. */
   keep?: (tags: Tags) => boolean;
   /** Keep point features: trees and street furniture (default true); without them only place names are kept. */
   trees?: boolean;
+}
+
+/**
+ * Whether a point lies inside the boundary rings (lon/lat) or within margin metres of them, on a grid of
+ * cells of 50 m: cells the boundary runs through are marked, the outside is flooded from the grid's edge,
+ * and the rest (inside and boundary) is grown by the margin.
+ */
+export function boundaryMask(rings: [number, number][][], box: { south: number; west: number; north: number; east: number }, margin: number) {
+  const CELL = 50;
+  const mLat = 111_320, mLon = 111_320 * Math.cos((((box.south + box.north) / 2) * Math.PI) / 180);
+  const pad = Math.ceil(margin / CELL) + 2;
+  const lat0 = box.south - (pad * CELL) / mLat, lon0 = box.west - (pad * CELL) / mLon;
+  const W = Math.ceil(((box.east - box.west) * mLon) / CELL) + 2 * pad + 1, H = Math.ceil(((box.north - box.south) * mLat) / CELL) + 2 * pad + 1;
+  const cx = (lon: number) => Math.floor(((lon - lon0) * mLon) / CELL), cy = (lat: number) => Math.floor(((lat - lat0) * mLat) / CELL);
+  // 1 boundary, 2 outside
+  const grid = new Uint8Array(W * H);
+  for (const ring of rings)
+    for (let i = 1; i < ring.length; i++) {
+      const [x0, y0] = ring[i - 1], [x1, y1] = ring[i];
+      const steps = Math.ceil(Math.hypot((x1 - x0) * mLon, (y1 - y0) * mLat) / (CELL / 4)) + 1;
+      for (let s = 0; s <= steps; s++) grid[cy(y0 + ((y1 - y0) * s) / steps) * W + cx(x0 + ((x1 - x0) * s) / steps)] = 1;
+    }
+  const stack: number[] = [0];
+  grid[0] = 2;
+  while (stack.length) {
+    const c = stack.pop()!;
+    const x = c % W, y = (c - x) / W;
+    for (const [a, b] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+      if (a < 0 || b < 0 || a >= W || b >= H || grid[b * W + a]) continue;
+      grid[b * W + a] = 2;
+      stack.push(b * W + a);
+    }
+  }
+  // Distance (in cells) to the nearest inside or boundary cell, two passes (chamfer, near enough for a margin).
+  const INF = 1e9;
+  const d = new Float32Array(W * H).fill(INF);
+  for (let i = 0; i < W * H; i++) if (grid[i] !== 2) d[i] = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      let v = d[y * W + x];
+      if (x > 0) v = Math.min(v, d[y * W + x - 1] + 1);
+      if (y > 0) v = Math.min(v, d[(y - 1) * W + x] + 1);
+      if (x > 0 && y > 0) v = Math.min(v, d[(y - 1) * W + x - 1] + Math.SQRT2);
+      if (x < W - 1 && y > 0) v = Math.min(v, d[(y - 1) * W + x + 1] + Math.SQRT2);
+      d[y * W + x] = v;
+    }
+  for (let y = H - 1; y >= 0; y--)
+    for (let x = W - 1; x >= 0; x--) {
+      let v = d[y * W + x];
+      if (x < W - 1) v = Math.min(v, d[y * W + x + 1] + 1);
+      if (y < H - 1) v = Math.min(v, d[(y + 1) * W + x] + 1);
+      if (x < W - 1 && y < H - 1) v = Math.min(v, d[(y + 1) * W + x + 1] + Math.SQRT2);
+      if (x > 0 && y < H - 1) v = Math.min(v, d[(y + 1) * W + x - 1] + Math.SQRT2);
+      d[y * W + x] = v;
+    }
+  const reach = margin / CELL + 1;
+  return (lat: number, lon: number) => {
+    const x = cx(lon), y = cy(lat);
+    return x >= 0 && y >= 0 && x < W && y < H && d[y * W + x] <= reach;
+  };
 }
 
 /**
@@ -284,6 +350,7 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
     pbf.scan(KIND_RELATIONS, {
       relation(id, members, tags) {
         if (cut.postalCode && tags.boundary === 'postal_code' && tags.postal_code === cut.postalCode) boundary = { id, members, tags };
+        else if (cut.admin && tags.boundary === 'administrative' && tags.admin_level === cut.admin.level && tags.name === cut.admin.name) boundary = { id, members, tags };
         else if (wantedRelation(tags)) relations.push({ id, members, tags });
       },
     });
@@ -291,21 +358,30 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
     // 2. Bounding box, from the boundary relation if there is one.
     let bbox = cut.bbox;
     const boundaryWays = new Map<number, number[]>();
-    if (cut.postalCode) {
-      if (!boundary) throw new Error(`Postal code ${cut.postalCode}: no boundary relation in ${file}`);
+    let near: ((lat: number, lon: number) => boolean) | undefined;
+    if (cut.postalCode || cut.admin) {
+      const what = cut.postalCode ? `Postal code ${cut.postalCode}` : `${cut.admin!.name} (admin_level ${cut.admin!.level})`;
+      if (!boundary) throw new Error(`${what}: no boundary relation in ${file}`);
       const ids = new Set(boundary.members.filter((m) => m.type === 'way').map((m) => m.ref));
       pbf.scan(KIND_WAYS, { way(id, refs) { if (ids.has(id)) boundaryWays.set(id, refs); } });
       const nodeIds = new Set([...boundaryWays.values()].flat());
+      const coords = new Map<number, [number, number]>();
       let south = 90, west = 180, north = -90, east = -180;
       pbf.scan(KIND_NODES, {
         node(id, lat, lon) {
           if (!nodeIds.has(id)) return;
+          coords.set(id, [lon, lat]);
           south = Math.min(south, lat); north = Math.max(north, lat);
           west = Math.min(west, lon); east = Math.max(east, lon);
         },
       });
-      if (south > north) throw new Error(`Postal code ${cut.postalCode}: boundary nodes missing from ${file}`);
+      if (south > north) throw new Error(`${what}: boundary nodes missing from ${file}`);
       bbox = { south, west, north, east };
+      if (cut.admin) {
+        const outer = boundary.members.filter((m) => m.type === 'way' && (m.role || 'outer') === 'outer');
+        const rings = joinRings(outer.map((m) => (boundaryWays.get(m.ref) ?? []).map((id) => coords.get(id)).filter((p): p is [number, number] => !!p)));
+        near = boundaryMask(rings, bbox, cut.marginMeters);
+      }
     }
     if (!bbox) throw new Error('extractRegion needs a postal code or a bbox');
     const dLat = cut.marginMeters / 111_320;
@@ -318,6 +394,7 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
     pbf.scan(KIND_NODES, {
       node(id, lat, lon, tags) {
         if (lat < south || lat > north || lon < west || lon > east) return;
+        if (near && !near(lat, lon)) return;
         inside.set(id, [lat, lon]);
         if (cut.trees !== false ? wantedNode(tags) : isPlace(tags)) els.push({ type: 'node', id, lat, lon, tags });
       },

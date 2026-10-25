@@ -100,7 +100,12 @@ async function fetchOverpass(region: RegionConfig) {
   } else if (region.boundary.type === 'bbox') {
     const b = region.boundary;
     filter = `(${b.south},${b.west},${b.north},${b.east})`;
-  } else throw new Error('Overpass needs a postal_code or bbox boundary');
+  } else if (region.boundary.type === 'admin') {
+    const b = region.boundary;
+    area = `area["boundary"="administrative"]["admin_level"="${b.level}"]["name"="${b.name}"]->.a;`;
+    filter = '(area.a)';
+    boundaryQuery = `[out:json];relation["boundary"="administrative"]["admin_level"="${b.level}"]["name"="${b.name}"];(._;>;);out body;`;
+  } else throw new Error('Overpass needs a postal_code, admin or bbox boundary');
   console.log(`Overpass: ${region.name} …`);
   const json = await overpass(overpassQuery(area, filter));
   if (boundaryQuery) json.elements.push(...(await overpass(boundaryQuery)).elements);
@@ -108,7 +113,7 @@ async function fetchOverpass(region: RegionConfig) {
 }
 
 async function main() {
-  const id = process.argv[2] ?? 'saarlouis';
+  const id = process.argv[2] ?? 'landkreis-saarlouis';
   const region = loadRegion(id);
   const dir = paths.raw(id);
   mkdirSync(dir, { recursive: true });
@@ -129,6 +134,7 @@ async function main() {
       const b = region.boundary;
       json = extractRegion(pbf, {
         postalCode: b.type === 'postal_code' ? b.value : undefined,
+        admin: b.type === 'admin' ? { name: b.name, level: String(b.level) } : undefined,
         bbox: b.type === 'bbox' ? b : undefined,
         marginMeters: region.marginMeters,
       });
@@ -160,6 +166,7 @@ async function main() {
       const b = region.boundary;
       const json = extractRegion(pbf, {
         postalCode: b.type === 'postal_code' ? b.value : undefined,
+        admin: b.type === 'admin' ? { name: b.name, level: String(b.level) } : undefined,
         bbox: b.type === 'bbox' ? b : undefined,
         marginMeters: region.far.marginMeters,
         keep: farWanted,

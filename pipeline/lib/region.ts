@@ -7,7 +7,8 @@ import { type RoadProfile, setRoadProfile } from '../../src/world/roadSpec.ts';
 export interface RegionConfig {
   id: string;
   name: string;
-  boundary: { type: 'postal_code'; value: string } | { type: 'bbox'; south: number; west: number; north: number; east: number } | { type: 'fixture' };
+  /** admin: an administrative boundary relation by name and admin_level (6 = Landkreis). */
+  boundary: { type: 'postal_code'; value: string } | { type: 'admin'; name: string; level: number } | { type: 'bbox'; south: number; west: number; north: number; east: number } | { type: 'fixture' };
   marginMeters: number;
   /** Road profile (roadSpec.ts): "game" builds wider roads with rounded corners; default "real". */
   roadProfile?: RoadProfile;

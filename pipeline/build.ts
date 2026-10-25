@@ -336,7 +336,8 @@ function main() {
   const guide = buildGuideSigns(osm, { world: info, height, farPlaces });
   console.log(`Guide signs: ${Object.entries(guide.counts).map(([k, c]) => `${k} ${c}`).join(', ')} (${farPlaces.length} places beyond the region) · skipped: ${Object.entries(guide.skipped).map(([k, c]) => `${k} ${c}`).join(', ')}`);
   // Mapped place-name signs replace the generic ones where roads cross the postal boundary.
-  const cityLimits = guide.counts.ort === 0;
+  // Only along a postal boundary: a district's boundary runs between villages, not at a town's limits.
+  const cityLimits = guide.counts.ort === 0 && regions.every((r) => r.boundary.type !== 'admin');
   // Survey hedges and ALKIS walls reach beyond the OSM extract (the ALKIS walls cover the whole district):
   // only the ones on tiles with OSM content, where the terrain is fetched.
   const inData = (l: [number, number][]) => l.every(([e, n]) => used.has(`${Math.floor(e / T0)}_${Math.floor(n / T0)}`));
@@ -571,7 +572,7 @@ function main() {
   writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
   console.log(`Landmarks: ${placed.length} models placed`);
   writeFileSync(`${paths.out}fuel.json`, JSON.stringify({ v: 1, stations: fuel.list }));
-  const districts = districtList(osm, (e, n) => utmToLocal(info, e, n));
+  const districts = districtList(osm, (e, n) => utmToLocal(info, e, n), [info.originE, info.originN]);
   writeFileSync(`${paths.out}districts.json`, JSON.stringify({ v: 1, districts }));
   console.log(`Districts: ${districts.map((d) => d.name).join(', ') || '–'}`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));

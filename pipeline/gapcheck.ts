@@ -21,7 +21,7 @@ import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { roadSection } from '../src/world/roadSpec.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
-const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
+const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'landkreis-saarlouis';
 const MAX = +arg('max', '0');
 
 /** Something sticks up through the road by more than this (m). */

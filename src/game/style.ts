@@ -22,6 +22,8 @@ export interface StyleEvent {
   detail?: string;
   /** For near misses: the side it passed on, -1 left .. 1 right (sound panning). */
   side?: number;
+  /** Measured value: jump distance (m). */
+  value?: number;
 }
 
 export interface StyleInput {
@@ -74,9 +76,9 @@ export class StyleTracker {
     this.graph = graph;
   }
 
-  private emit(kind: StyleKind, points: number, nitro: number, detail?: string, side?: number) {
+  private emit(kind: StyleKind, points: number, nitro: number, detail?: string, side?: number, value?: number) {
     this.totals[kind]++;
-    this.onEvent?.({ kind, label: STYLE_LABELS[kind], points: Math.round(points), nitro, detail, side });
+    this.onEvent?.({ kind, label: STYLE_LABELS[kind], points: Math.round(points), nitro, detail, side, value });
   }
 
   /** After a reset, teleport or rewind: forget take-offs and running moves (no fake jump on the drop). */
@@ -175,7 +177,7 @@ export class StyleTracker {
       const dist = Math.hypot(p.x - this.takeoff.x, p.z - this.takeoff.z);
       // A real jump goes somewhere: dropping onto the road after a reset does not count.
       if (air > t.airMin && dist > 5) {
-        this.emit('air', t.airPoints * air + dist * 4, t.airNitro * Math.min(2, air), `${dist.toFixed(0)} m · ${air.toFixed(1)} s`);
+        this.emit('air', t.airPoints * air + dist * 4, t.airNitro * Math.min(2, air), `${dist.toFixed(0)} m · ${air.toFixed(1)} s`, undefined, dist);
       }
       this.takeoff = undefined;
     }

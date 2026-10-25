@@ -77,3 +77,34 @@ function polyline(ctx: CanvasRenderingContext2D, p: Float32Array) {
   ctx.moveTo(p[0], p[2]);
   for (let i = 3; i < p.length; i += 3) ctx.lineTo(p[i], p[i + 2]);
 }
+
+/** An event or place on the map: a coloured diamond, a ring for medals already won. */
+export interface MapMarker {
+  x: number;
+  z: number;
+  color: string;
+  /** 0 none … 4 platinum; draws a gold/white ring. */
+  medal?: number;
+  /** Races: a bigger marker. */
+  big?: boolean;
+}
+
+const MEDAL_RING = ['', '#c98a4b', '#c9d1d9', '#ffd60a', '#e8f6ff'];
+
+export function drawMarkers(ctx: CanvasRenderingContext2D, markers: MapMarker[], cx: number, cz: number, radius: number, pxPerM: number) {
+  for (const m of markers) {
+    if (Math.abs(m.x - cx) > radius || Math.abs(m.z - cz) > radius) continue;
+    ctx.save();
+    ctx.translate(m.x, m.z);
+    ctx.scale(1 / pxPerM, 1 / pxPerM);
+    const r = m.big ? 7 : 5;
+    ctx.beginPath();
+    ctx.moveTo(0, -r); ctx.lineTo(r, 0); ctx.lineTo(0, r); ctx.lineTo(-r, 0); ctx.closePath();
+    ctx.fillStyle = m.color;
+    ctx.fill();
+    ctx.lineWidth = m.medal ? 2.5 : 1.5;
+    ctx.strokeStyle = m.medal ? MEDAL_RING[m.medal] : '#0b0e13';
+    ctx.stroke();
+    ctx.restore();
+  }
+}

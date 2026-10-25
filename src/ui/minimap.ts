@@ -1,6 +1,6 @@
 import type { Navigation } from '../nav/navigation.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
-import { MAP_COLORS, drawCar, drawFlag, drawRoads, drawRoute } from './mapDraw.ts';
+import { MAP_COLORS, type MapMarker, drawMarkers, drawCar, drawFlag, drawRoads, drawRoute } from './mapDraw.ts';
 
 /** Round, heading-up minimap; zooms out with speed. */
 export class Minimap {
@@ -8,6 +8,8 @@ export class Minimap {
   private ctx: CanvasRenderingContext2D;
   private graph: RoadGraph;
   private nav: Navigation;
+  /** Event markers (U2), set by the game. */
+  markers?: () => MapMarker[];
   private range = 160;
 
   constructor(canvas: HTMLCanvasElement, graph: RoadGraph, nav: Navigation) {
@@ -45,6 +47,7 @@ export class Minimap {
     ctx.rotate(-heading);
     ctx.translate(-x, -z);
     drawRoads(ctx, this.graph, x, z, this.range * 1.5, pxPerM);
+    if (this.markers) drawMarkers(ctx, this.markers(), x, z, this.range * 1.5, pxPerM);
     if (this.nav.route) drawRoute(ctx, this.nav.route, this.nav.progress, pxPerM);
     if (this.nav.destination) drawFlag(ctx, this.nav.destination.x, this.nav.destination.z, pxPerM);
     drawCar(ctx, x, z, heading, pxPerM);

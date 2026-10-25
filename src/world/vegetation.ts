@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import type { Materials } from '../render/materials.ts';
 import { patchMaterial } from '../weather/weatherMaterials.ts';
+import { SPLAT } from './coverKinds.ts';
 import { Ground, TERRAIN_N, TERRAIN_STEP, type WorldInfo, tileOriginLocal } from './format.ts';
 import type { RoadGraph } from './roadGraph.ts';
 import { registerTileLayer } from './tileHooks.ts';
@@ -106,6 +107,8 @@ interface VegTile {
   groups: VegGroup[];
   heights: Float32Array;
   ground: Uint8Array;
+  /** Land cover from the aerial photo (coverKinds.ts SPLAT, 8 bytes per terrain point), if the tile has it. */
+  splat?: Uint8Array;
   ox: number;
   oz: number;
 }
@@ -140,6 +143,7 @@ export function speciesOf(kind: TreeKind, forest: boolean, r: number): string {
   return mix[mix.length - 1][0];
 }
 
+const LAWN = SPLAT.indexOf('lawn'), MEADOW = SPLAT.indexOf('meadow'), PATCHY = SPLAT.indexOf('patchy');
 const SHAPE = Object.fromEntries(SPECIES.map((s) => [s.id, s]));
 const BUSH_SPECIES: Record<number, string> = { [Bush.round]: 'busch', [Bush.scrub]: 'gebuesch' };
 const HIDDEN = () => new THREE.Vector4(1e9, 1e9 + 1, 1e9, 1e9 + 1);
@@ -168,6 +172,10 @@ export class Vegetation {
   forcedLod?: 0 | 1 | 2;
   grassOn: boolean;
   grassRadius = 32;
+  /** Where grass clumps grow: aerial-photo land cover where the tile has it (auto), only that (splat), or the OSM class. */
+  grassSource: 'auto' | 'splat' | 'osm' = 'auto';
+  /** Least grassiness (0..1) of the ground for clumps. */
+  grassMin = 0.25;
   /** Draw the trees measured by the LiDAR survey (veg.lidar). */
   lidar = true;
   /** Seed of the generated trees (veg.regen) and impostor frame size (veg.impostor). */
@@ -222,6 +230,7 @@ export class Vegetation {
         const tile: VegTile = {
           key: t.key, group: ctx.group, shadows: ctx.shadows, groups: [],
           heights: t.f32('terrain')!.slice(), ground: t.u8('ground')!.slice(), ox, oz,
+          splat: t.has('splat') ? t.u8('splat')?.slice() : undefined,
           trees: trees ? t.f32('trees')?.slice() : undefined,
           kinds: trees && t.has('treeKinds') ? t.u8('treeKinds')?.slice() : undefined,
           crowns: trees && t.has('treeCrowns') ? t.u8('treeCrowns')?.slice() : undefined,
@@ -451,7 +460,10 @@ export class Vegetation {
     }
   }
 
-  /** Terrain height and ground class at (x, z), or undefined without a loaded tile. */
+  /**
+   * Terrain height and how grassy the ground is (0..1) at (x, z), or undefined without a loaded tile. Grassiness is
+   * lawn + meadow (+ half of patchy grass) from the aerial-photo land cover, or the OSM grass class without it.
+   */
   private sample(x: number, z: number): [number, number] | undefined {
     const T = this.info.tileSize;
     for (const t of this.tiles.values()) {
@@ -463,7 +475,14 @@ export class Vegetation {
       const a = h[r * N + c], b = h[r * N + c + 1], d = h[(r + 1) * N + c], e = h[(r + 1) * N + c + 1];
       // Same triangles as the terrain mesh: (a, d, b) and (b, d, e).
       const y = u + v <= 1 ? a + (b - a) * u + (d - a) * v : e + (d - e) * (1 - u) + (b - e) * (1 - v);
-      return [y, t.ground[Math.round(fz) * N + Math.round(fx)]];
+      const sp = t.splat;
+      if (sp && this.grassSource !== 'osm') {
+        const g = (i: number) => (sp[i * 8 + LAWN] + sp[i * 8 + MEADOW] + 0.5 * sp[i * 8 + PATCHY]) / 255;
+        const w = (g(r * N + c) * (1 - u) + g(r * N + c + 1) * u) * (1 - v) + (g((r + 1) * N + c) * (1 - u) + g((r + 1) * N + c + 1) * u) * v;
+        return [y, Math.min(1, w)];
+      }
+      if (this.grassSource === 'splat') return [y, 0];
+      return [y, t.ground[Math.round(fz) * N + Math.round(fx)] === Ground.grass ? 1 : 0];
     }
     return undefined;
   }
@@ -484,13 +503,14 @@ export class Vegetation {
         const x0 = gx * step, z0 = gz * step;
         if (Math.hypot(x0 - cx, z0 - cz) > R) continue;
         const cell = this.sample(x0, z0);
-        if (!cell || cell[1] !== Ground.grass || onRoad(x0, z0)) continue;
+        if (!cell || cell[1] < this.grassMin || onRoad(x0, z0)) continue;
         // A few clumps per 2 m cell, at fixed spots so they don't jump as the camera moves.
         for (let k = 0; k < 3 && n < cap; k++) {
           const h = fract(Math.sin(gx * 127.1 + gz * 311.7 + k * 74.7) * 43758.5453);
           const x = x0 + h * step, z = z0 + fract(h * 13.7) * step;
           const at = this.sample(x, z);
-          if (!at || at[1] !== Ground.grass) continue;
+          // Fewer clumps where the ground is only partly grass.
+          if (!at || at[1] < this.grassMin || fract(h * 29.3) > at[1]) continue;
           const fade = 1 - Math.max(0, (Math.hypot(x - cx, z - cz) - R * 0.7) / (R * 0.3));
           q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, h * 6.28);
           s.set(0.8 + h * 0.6, (0.6 + fract(h * 5.1) * 0.8) * fade, 0.8 + h * 0.6);
@@ -586,6 +606,19 @@ export class Vegetation {
     });
     registerToggle('veg.lidar', 'Bäume aus der LiDAR-Befliegung (echte Position, Höhe und Krone) zeigen', () => this.lidar, (v) => { this.lidar = v; if (this.ready) for (const t of this.tiles.values()) this.buildTile(t); });
     registerToggle('veg.grass', 'Grasbüschel um die Kamera', () => this.grassOn, (v) => { this.grassOn = v; this.grassAt.x = Infinity; });
+    registerCommand({
+      name: 'veg.grass.source', help: 'Wo Grasbüschel wachsen: auto (Luftbild-Boden, sonst OSM), splat (nur Luftbild) oder osm (OSM-Grasflächen)', args: '[auto|splat|osm]',
+      complete: () => ['auto', 'splat', 'osm'],
+      run: ([v]) => {
+        if (v !== undefined) {
+          if (v !== 'auto' && v !== 'splat' && v !== 'osm') throw new Error('auto, splat oder osm');
+          this.grassSource = v;
+          this.grassAt.x = Infinity;
+        }
+        return `Grasbüschel nach ${this.grassSource}`;
+      },
+    });
+    registerValue('veg.grass.min', 'Mindestanteil Gras im Boden (0..1), ab dem Büschel wachsen', () => this.grassMin, (v) => { this.grassMin = v; this.grassAt.x = Infinity; }, [0, 1]);
     registerValue('veg.grass.radius', 'Radius der Grasbüschel in Metern', () => this.grassRadius, (v) => { this.grassRadius = v; this.grassAt.x = Infinity; }, [5, 120]);
     registerValue('veg.fields', 'Grasflecken im Boden 0..1 (Ackerreihen: ground.rows)', () => this.groundUniforms.uVegFields.value, (v) => (this.groundUniforms.uVegFields.value = v), [0, 1]);
     registerCommand({

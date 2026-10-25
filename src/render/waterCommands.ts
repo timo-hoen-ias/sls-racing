@@ -43,7 +43,7 @@ export function registerWaterCommands(water: Water) {
   registerCommand({
     name: 'water.mirror.detail',
     args: '[on|off]',
-    help: 'Straßenmöbel, Parker, Verkehr, Fußgänger und Gras auch in der Spiegelung zeichnen (Standard aus, spart Draw-Calls)',
+    help: 'Straßenmöbel, Parker, Verkehr und Gras auch in der Spiegelung zeichnen (Standard aus, spart Draw-Calls)',
     complete: () => ['on', 'off'],
     run: ([a]) => {
       if (a) water.mirrorDetail = isOn(a) ? true : isOff(a) ? false : (() => { throw new Error('on oder off'); })();

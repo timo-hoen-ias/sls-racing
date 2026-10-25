@@ -128,8 +128,6 @@ export class TrafficSim {
   spawnMax = 420;
   frozen = false;
   events: TrafficEvents = {};
-  /** Extra things in the road that vehicles stop for (pedestrians crossing). Same shape as the player. */
-  obstacles: PlayerState[] = [];
   /** Wrecks the player knocked out of traffic, lying in the road (set by traffic.ts each frame). */
   wrecks: PlayerState[] = [];
   /** Traffic lights at signalised junctions. */
@@ -334,16 +332,16 @@ export class TrafficSim {
       const stop = rem - this.stopOffset(a);
       if (stop < gap) { gap = Math.max(0.1, stop); vLead = 0; a.state = 'yield'; a.reason = why; }
     }
-    // Other obstacles in the lane, e.g. pedestrians crossing.
-    if (this.obstacles.length || this.wrecks.length) {
+    // Wrecks lying in the lane.
+    if (this.wrecks.length) {
       const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw);
-      for (const o of [...this.obstacles, ...this.wrecks]) {
+      for (const o of this.wrecks) {
         const rx = o.x - a.x, rz = o.z - a.z;
         const f = rx * fx + rz * fz;
         if (f < 0 || f > 30) continue;
         if (Math.abs(-rx * fz + rz * fx) > a.spec.width / 2 + o.halfWidth + 0.5) continue;
         const d = f - a.spec.length / 2 - o.halfLength - 1.5;
-        if (d < gap) { gap = Math.max(0.05, d); vLead = 0; a.state = 'yield'; a.reason = 'Fußgänger'; }
+        if (d < gap) { gap = Math.max(0.05, d); vLead = 0; a.state = 'yield'; a.reason = 'Wrack'; }
       }
     }
     if (p) {

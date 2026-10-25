@@ -95,6 +95,24 @@ export class Details {
     else this.quad(B, A, D, C, col);
   }
 
+  /** Solid box in the collision layer: centred at (e, n) from y up h, `w` across the unit direction (ae, an), `d` along it. */
+  solid(p: P3, w: number, d: number, h: number, ae: number, an: number) {
+    if (!this.tiles.has(p[0], p[1])) return;
+    const buf = this.tiles.at(p[0], p[1]).collide;
+    const le = -an, ln = ae;
+    const c = (x: number, z: number, yy: number) => {
+      const [lx, lz] = utmToLocal(this.world, p[0] + ae * x * w / 2 + le * z * d / 2, p[1] + an * x * w / 2 + ln * z * d / 2);
+      return buf.vertex(lx, yy, lz);
+    };
+    const v = [-1, 1].flatMap((x) => [-1, 1].flatMap((z) => [c(x, z, p[2]), c(x, z, p[2] + h)]));
+    // v index: ((x+1)/2)*4 + ((z+1)/2)*2 + top; both windings so the collider sees every face.
+    const faces = [[0, 4, 6, 2], [1, 3, 7, 5], [0, 1, 5, 4], [2, 6, 7, 3], [0, 2, 3, 1], [4, 5, 7, 6]];
+    for (const [a, b, cc, d2] of faces) {
+      buf.tri(v[a], v[b], v[cc]); buf.tri(v[a], v[cc], v[d2]);
+      buf.tri(v[a], v[cc], v[b]); buf.tri(v[a], v[d2], v[cc]);
+    }
+  }
+
   /** Tube from a to b (UTM e, n, y): `sides` faces, radius r. */
   tube(a: P3, b: P3, r: number, col: Rgb, sides = 4) {
     const de = b[0] - a[0], dn = b[1] - a[1], dy = b[2] - a[2];
@@ -112,7 +130,8 @@ export class Details {
       const cs = Math.cos(ang) * r, sn = Math.sin(ang) * r;
       return [p[0] + u[0] * cs + v[0] * sn, p[1] + u[1] * cs + v[1] * sn, p[2] + u[2] * cs + v[2] * sn];
     };
-    for (let k = 0; k < sides; k++) this.quad(ring(a, k), ring(b, k), ring(b, k + 1), ring(a, k + 1), col, true);
+    // Closed tube: outward faces only (this winding faces out in the local frame).
+    for (let k = 0; k < sides; k++) this.quad(ring(a, k + 1), ring(b, k + 1), ring(b, k), ring(a, k), col);
   }
 
   /** Flat ribbon along a polyline (UTM e, n with a height each), `width` wide, lying on its points' heights. */

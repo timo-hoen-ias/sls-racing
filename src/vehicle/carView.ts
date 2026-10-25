@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import type { CarPhysics } from './carPhysics.ts';
 import { Cockpit } from './cockpit.ts';
-import { CarDamage } from './damage.ts';
 import type { CarModelKind } from './sportsCarGlb.ts';
 import { buildSportsCar, type SportsCarModel } from './sportsCarModel.ts';
 import { CAR } from './tuning.ts';
@@ -28,7 +27,6 @@ export class CarView {
   readonly cockpit = new Cockpit();
   /** Body group in model space (ground at y = 0). */
   model: THREE.Group;
-  readonly damage: CarDamage;
 
   /** model: a prepared body (the Blender GLB from loadSportsCar); without it the procedural car is built. */
   constructor(color?: string, model?: SportsCarModel) {
@@ -39,7 +37,6 @@ export class CarView {
     model.body.position.y = -RIDE_HEIGHT;
     this.root.add(model.body);
     this.model = model.body;
-    this.damage = new CarDamage(model.body, model.materials.paint);
     this.cockpit.group.visible = false;
     model.body.add(this.cockpit.group);
     this.brakeLights = model.materials.brake;
@@ -101,7 +98,6 @@ export class CarView {
   /** Swaps the body and wheels (car.model). Damage is repaired; lights and effects keep their anchors. */
   setModel(model: SportsCarModel, kind: CarModelKind) {
     const color = '#' + this.paint.color.getHexString();
-    this.damage.repair();
     this.model.removeFromParent();
     for (const w of this.wheels) w.pivot.removeFromParent();
     this.wheels = [];
@@ -114,7 +110,6 @@ export class CarView {
     this.paint.color.set(color);
     this.brakeLights = model.materials.brake;
     this.headLights = model.materials.head;
-    this.damage.attach(model.body, this.paint);
     // Effects hold these vectors: update them in place.
     model.exhausts.forEach((v, i) => this.exhausts[i]?.copy(v).setY(v.y - RIDE_HEIGHT));
     model.headlights.forEach((v, i) => this.headlights[i]?.copy(v).setY(v.y - RIDE_HEIGHT));
@@ -154,7 +149,6 @@ export class CarView {
 
   setColor(color: string) {
     this.paint.color.set(color);
-    this.damage.rebase();
   }
 
   /** 0 by day .. 1 at night: brightens the light lenses so they bloom. */

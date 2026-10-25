@@ -28,7 +28,7 @@ import { registerCommand, runCommand } from './debug/registry.ts';
 import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { Garage, registerGarageCommands } from './vehicle/garage.ts';
-import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
+import { loadAssists, registerDebrisCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
 import { registerReplayCommands } from './replay/commands.ts';
 import { Recorder } from './replay/recorder.ts';
@@ -168,15 +168,10 @@ async function boot() {
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
-  // Car damage: dents, dull paint, parts breaking off as debris, optional power loss.
+  // Loose parts of knocked-over street furniture.
   const debris = new Debris(RAPIER, world);
   view.scene.add(debris.root);
-  carView.damage.onDetach = (parts) => {
-    carView.model.updateMatrixWorld(true);
-    const lv = car.body.linvel();
-    const side = new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 2, (Math.random() - 0.5) * 4);
-    debris.spawn(parts, carView.model.matrixWorld, new THREE.Vector3(lv.x, lv.y, lv.z).multiplyScalar(0.8).add(side), new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4));
-  };
+  registerDebrisCommands(debris);
   const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
   const input = new Input();
@@ -336,7 +331,6 @@ async function boot() {
   const telemetry = new Telemetry(recorder);
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
-  registerDamageCommands(carView.damage, debris);
   // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
   const rescue = new Rescue();
   const rewind = () => {
@@ -384,7 +378,6 @@ async function boot() {
     worldAudio.impact(ip, car.heading(), strength);
     input.rumble(0.5 + strength * 0.5, 160);
     effects.impact({ x: ip.x + dir.x * 2, y: ip.y, z: ip.z + dir.z * 2 }, strength);
-    carView.damage.hit(new THREE.Vector3(dir.x, 0, dir.z).applyQuaternion(iq.clone().invert()), strength * 0.6);
   };
   registerKnockCommands(knockdown, streamer, () => ip);
   window.addEventListener('keydown', (e) => {
@@ -410,7 +403,7 @@ async function boot() {
   glide.registerCommands();
   const speedLines = new SpeedLines($('hud'));
   speedLines.registerCommands();
-  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, damage: carView.damage, traffic, props });
+  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, traffic, props });
   feel.registerCommands();
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
 
@@ -652,16 +645,9 @@ async function boot() {
       sound?.impact(strength);
       worldAudio.impact(ip, car.heading(), strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
-      // Mostly sideways/longitudinal hits dent the body; hard landings do not.
-      if (Math.abs(hitDir.y) < 0.75) {
-        const from = new THREE.Vector3(-hitDir.x, 0, -hitDir.z).applyQuaternion(iq.clone().invert());
-        carView.damage.hit(from, strength);
-      }
       hitCooldown = 0.25;
     }
     hit = 0;
-    car.power = carView.damage.power;
-    car.steerPull = carView.damage.steerPull;
     debris.update(dt);
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;

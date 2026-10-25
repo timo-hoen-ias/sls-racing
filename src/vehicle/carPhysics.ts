@@ -33,6 +33,7 @@ function wheelMounts(): V3[] {
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 /** Steering lock (rad) at a speed (m/s): shrinks with the square of the speed. */
 export function maxSteerAngle(speed: number) {
@@ -97,16 +98,15 @@ export class CarPhysics {
   assists: Assists = { ...ASSIST_PRESETS.arcade };
   /** Body-frame acceleration of the last step (m/s², x = left, z = forward) for telemetry and the cockpit camera. */
   readonly accel = { x: 0, y: 0, z: 0 };
-  /** From damage: engine power factor and a steering offset (rad, + = right). */
-  power = 1;
-  steerPull = 0;
   /**
    * Arcade feel on top of the tuning (feel.* commands, src/game/feel.ts): engine torque and downforce factors,
    * air drag factor (higher top speed below 1), self-levelling in the air and a soft landing (0..1),
    * arcade brakes: extra deceleration in g on top of what the tyres can hold, at full pedal,
-   * and road hold 0..1: bumps and crests do not throw the car into the air (feel.stick).
+   * road hold 0..1: bumps and crests do not throw the car into the air (feel.stick),
+   * step assist 0..1: low edges that catch the body are climbed instead of stopping the car (feel.step),
+   * and straight braking 0..1: both wheels of an axle brake alike and the car does not yaw away (feel.straight).
    */
-  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0 };
+  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0, step: 0, straight: 0 };
   /** A short tap on nitro fires a burst instead of the steady boost (feel.burst). */
   burst = { enabled: true, tap: 0.22, kick: 5, cost: 0.14 };
   /** Nitro gained from style moves since the last frame (near misses, jumps …), added by the game. */
@@ -145,6 +145,17 @@ export class CarPhysics {
   stick = { free: 0.25, damp: 18, press: 0.6, gravity: 1.5, window: 0.4, reach: 1.6, hopVy: 2.5, rampRise: 0.6 };
   private climb = 0;
   private launched = false;
+  /**
+   * Step assist tuning (feel.step scales it): highest edge above the underbody that is climbed (m), share of the speed
+   * before the hit that is given back, and the pause before the next lift (s).
+   */
+  stepAssist = { height: 0.3, keep: 0.9, cooldown: 0.12 };
+  private stepCooldown = 0;
+  /** Times the step assist lifted the car (step.info). */
+  steps = 0;
+  private lastFwd = 0;
+  private stepLocal = { x: 0, y: 0, z: 0 };
+  private stepNormal = { x: 0, y: 0, z: 0 };
   private chassis!: RAPIER_NS.Collider;
 
   constructor(R: R, world: RAPIER_NS.World, pos: V3, heading: number) {
@@ -224,6 +235,7 @@ export class CarPhysics {
   update(input: DriveInput, dt: number) {
     const vc = this.controller;
     const as = this.assists;
+    if (this.feel.step > 0) this.stepOver(dt);
     this.speed = vc.currentVehicleSpeed();
     const v = this.speed;
     const absV = Math.abs(v);
@@ -244,8 +256,7 @@ export class CarPhysics {
     if (input.handbrake || this.driftDir) maxSteer = Math.max(maxSteer, CAR.steer.drift);
     const sf = this.surface;
     const rate = (CAR.steer.rate * sf.steer) / (1 + absV / CAR.steer.rateSpeed);
-    const pull = this.steerPull * clamp(absV / 8, 0, 1);
-    let target = input.steer * maxSteer + pull;
+    let target = input.steer * maxSteer;
     if (as.steer > 0 && absV > 4 && !input.handbrake && !this.driftDir) {
       // Steering assist: no more lock than puts the front tyres at their peak slip angle (they would
       // only push wide past it). Countersteer is never limited.
@@ -309,7 +320,7 @@ export class CarPhysics {
 
     // Suspension only: Rapier's engine, brakes and friction stay at zero.
     vc.updateVehicle(dt);
-    this.tyres(input, brake, hold, dt0.force * sf.accel * (dt0.force > 0 ? this.power : 1), dt);
+    this.tyres(input, brake, hold, dt0.force * sf.accel, dt);
 
     const body = this.body;
     const rot = body.rotation();
@@ -407,6 +418,15 @@ export class CarPhysics {
     // Arcade brakes: extra deceleration past the tyre grip, against the velocity along the road, so the car
     // stops hard without locking or lurching sideways. Fades out just above standstill (no jump into reverse).
     const brakePedal = input.brake > 0 && v > 1 ? input.brake : input.throttle > 0 && v < -1 ? input.throttle : 0;
+    // Straight braking: without steering input the yaw rate is damped away, so a camber, a puddle or a kerb
+    // under one side does not pull the car round.
+    const straight = this.feel.straight;
+    if (brakePedal > 0.05 && straight > 0 && contacts >= 2 && Math.abs(input.steer) < 0.1 && !input.handbrake && !this.driftDir) {
+      const w = body.angvel();
+      const yawRate = w.x * up.x + w.y * up.y + w.z * up.z;
+      const k = -yawRate * this.k.yaw * Math.min(1, 10 * straight * brakePedal * dt);
+      body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
+    }
     if (brakePedal > 0 && this.feel.brake > 0 && contacts > 0) {
       const lv = body.linvel();
       const un = lv.x * up.x + lv.y * up.y + lv.z * up.z;
@@ -431,6 +451,9 @@ export class CarPhysics {
     this.accel.y = ax * up.x + ay * up.y + az * up.z;
     this.accel.z = ax * fwd.x + ay * fwd.y + az * fwd.z;
     this.lastVel.x = lv.x; this.lastVel.y = lv.y; this.lastVel.z = lv.z;
+    // Speed along the car before the next contact (the step assist gives it back after a snag); a hit lowers it only slowly.
+    const fNow = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z;
+    this.lastFwd = Math.abs(fNow) >= Math.abs(this.lastFwd) || Math.sign(fNow) !== Math.sign(this.lastFwd) ? fNow : this.lastFwd + (fNow - this.lastFwd) * Math.min(1, 6 * dt);
   }
 
   /** Tyre forces for all four wheels, applied as impulses at the contact patches. */
@@ -534,6 +557,13 @@ export class CarPhysics {
       const rearAxle = i >= 2;
       let wheelBrake = (brake * (rearAxle ? 1 - CAR.brake.bias : CAR.brake.bias)) / 2;
       let abs = as.abs;
+      // Straight braking: anti-lock holds both wheels of the axle to what the weaker one can take, so the
+      // brake forces stay alike left and right (otherwise the side with more load or grip pulls).
+      if (abs && this.feel.straight > 0 && wheelBrake > 0) {
+        const o = i ^ 1;
+        const weak = this.wheels[o].contact ? Math.min(capX[i], capX[o]) : capX[i];
+        wheelBrake = Math.min(wheelBrake, lerp(capX[i], weak, this.feel.straight) * 0.97);
+      }
       if (hold) wheelBrake = CAR.brake.hold / 4;
       if (rearAxle && input.handbrake) { wheelBrake += CAR.brake.handbrake / 2; abs = false; }
       // Soft ground drags the tyres like a light brake.
@@ -584,6 +614,58 @@ export class CarPhysics {
     // Rear tyres give a little while the drift runs, so it does not grip up on its own.
     const target = this.driftDir && !input.handbrake ? dk.grip : 1;
     this.rearSide += (target - this.rearSide) * Math.min(1, dt * 6);
+  }
+
+  /**
+   * Step assist (feel.step): when only the lowest part of the body touches fixed geometry in front of (or, reversing,
+   * behind) the car, such as a high kerb, a terrain step or a seam in the road mesh, the car is lifted over it and
+   * gets back most of the speed the hit took. Walls, rails and traffic touch the body higher up and are left alone.
+   */
+  private stepOver(dt: number) {
+    const body = this.body;
+    const st = this.stepAssist;
+    const h = CAR.halfExtents;
+    const dir = Math.sign(this.lastFwd);
+    if (this.stepCooldown > 0) { this.stepCooldown -= dt; return; }
+    if (Math.abs(this.lastFwd) < 1) return;
+    let top = -Infinity;
+    let low = true;
+    const p = this.stepLocal, n = this.stepNormal;
+    this.world.contactPairsWith(this.chassis, (other) => {
+      if (!low) return;
+      const parent = other.parent();
+      if (parent && !parent.isFixed()) return;
+      this.world.contactPair(this.chassis, other, (m, flipped) => {
+        const nn = flipped ? m.localNormal2(n) : m.localNormal1(n);
+        // The normal points from the body to the obstacle: it has to face the way the car is going.
+        if (nn.z * dir < 0.5) return;
+        for (let i = 0; i < m.numContacts(); i++) {
+          if (m.contactDist(i) > 0.03) continue;
+          const c = flipped ? m.localContactPoint2(i, p) : m.localContactPoint1(i, p);
+          if (!c) continue;
+          const y = c.y + h.y;
+          if (y > st.height * this.feel.step) low = false;
+          else top = Math.max(top, y);
+        }
+      });
+    });
+    if (!low || top === -Infinity) return;
+    const rot = body.rotation();
+    const up = rotate(rot, 0, 1, 0);
+    const fwd = rotate(rot, 0, 0, 1);
+    // Up by the height of the edge in one go (the springs take out the jolt), then the speed back.
+    const lift = top + 0.03;
+    this.stepCooldown = st.cooldown;
+    const t = body.translation();
+    body.setTranslation({ x: t.x + up.x * lift, y: t.y + up.y * lift, z: t.z + up.z * lift }, true);
+    const lv = body.linvel();
+    const fv = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z;
+    const want = this.lastFwd * st.keep * this.feel.step;
+    const add = Math.abs(fv) < Math.abs(want) ? want - fv : 0;
+    const uv = lv.x * up.x + lv.y * up.y + lv.z * up.z;
+    const upCut = Math.max(0, uv);
+    body.setLinvel({ x: lv.x + fwd.x * add - up.x * upCut, y: lv.y + fwd.y * add - up.y * upCut, z: lv.z + fwd.z * add - up.z * upCut }, true);
+    this.steps++;
   }
 
   /**

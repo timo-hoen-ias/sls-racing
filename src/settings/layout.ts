@@ -76,9 +76,6 @@ export const SECTIONS: MenuSection[] = [
       e('assist.steer', 'Lenkhilfe'),
       'Getriebe',
       e('gear.mode', 'Schaltung'),
-      'Schaden',
-      e('damage', 'Schaden am Auto'),
-      e('damage.power', 'Schaden kostet Leistung'),
     ],
   },
   {

@@ -63,6 +63,7 @@ import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
 import { loadShops } from './world/shopGlb.ts';
 import { ShopLayer } from './world/shops.ts';
+import { FuelLayer } from './world/fuel.ts';
 import { loadHouses } from './world/houseGlb.ts';
 import { HouseLayer } from './world/houses.ts';
 import { Prop } from './world/propKinds.ts';
@@ -158,6 +159,10 @@ async function boot() {
   stalls.register();
   const shops = new ShopLayer(index.world);
   shops.register();
+  // Petrol stations (fuel.json lists them all for fuel.list / fuel.tp).
+  const fuel = await FuelLayer.fetch(TILES_URL);
+  fuel.register();
+  view.scene.add(fuel.lights);
   // Freely designed houses, villas and administrative buildings with front gardens.
   const houses = new HouseLayer({ shadows: quality.shadows > 0 });
   houses.register();
@@ -432,6 +437,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  fuel.registerCommands(() => ({ x: ip.x, z: ip.z }));
   houses.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   stalls.registerCommands();
@@ -836,6 +842,7 @@ async function boot() {
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
+    fuel.update(view.camera, view.daylight.daylight);
     houses.update(view.camera, view.daylight.daylight);
     vegetation.update(dt, view.camera, weather.weather, view.sun);
     effects.surface = roadSurface.kinds;

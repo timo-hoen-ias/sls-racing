@@ -16,7 +16,7 @@ import { registerTileLayer } from './tileHooks.ts';
 // Street furniture and parked cars (W1) as a tile layer. Tiles hand over their prop records; everything within
 // `radius` of the camera is drawn with one instanced mesh per model, rebuilt when the set of nearby tiles changes.
 // Colliders come with the tile physics (near the car only). Breakable props are registered by collider so
-// damage code (F3) can look up what it hit and remove it.
+// knockdown code can look up what it hit and remove it.
 
 /** What a collider belongs to (props.lookup). */
 export interface PropHit {

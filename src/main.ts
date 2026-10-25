@@ -667,6 +667,8 @@ async function boot() {
       if (e === 'online') net.toggleMenu();
       if (e === 'chat' && !bigMap.open && !debug.open) net.openChat();
       if (e === 'events') game.openList();
+      // The home garage from anywhere (outside events); the dealer is still a drive away.
+      if (e === 'garage') game.openGarage('home');
       if (e === 'rewind') rewind();
       if (e === 'camera') cam.next();
       if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }

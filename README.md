@@ -142,6 +142,8 @@ Weitere Spielerautos: `tools/blender/make_hothatch.py` baut einen Hot Hatch (Kom
 
 Ladenteile für die Altstadt: `tools/blender/make_shops.py` baut `public/models/shops.glb` (`npm run models:shops`): Markise (gestreift, zum Einfärben), Markisenkasten, Nasenschild mit Wandarm, Ladenschild (je 1 m breit, über die Ladenbreite skaliert; die Fassade ist die Ebene z = 0), Café-Tisch mit zwei Stühlen und Aufsteller, dazu Schilderflächen für 13 Ladenarten (Bäckerei, Metzgerei, Café, Restaurant, Apotheke nur mit Schriftzug, Friseur, Mode, Bücher, Blumen, Eiscafé, Kiosk, Bank, Laden) aus einem selbst gezeichneten Atlas. `src/world/shopGlb.ts` lädt sie.
 
+Hero-Brücken: Für die Wahrzeichen-Brücken (Peter-Neis-Brücke, Gustav-Heinemann-Brücke, A-8- und A-620-Saarquerungen, Brückenstraße, Konrad-Adenauer-Allee) schreibt `node tools/bridge-heroes.ts` nach dem Welt-Build Deckhöhe, Geländehöhe (DGM1) und Wasserlage alle 4 m nach `pipeline/bridge-heroes.json`; `tools/blender/make_bridge_heroes.py` baut daraus Überbau mit Kragarmen und Untersicht (über den Pfeilern gevoutet), Pfeiler auf dem echten Gelände mit offener Hauptöffnung über der Saar, Widerlager, Gesims und Geländer. Alle Brücken haben ein Fußgängergeländer mindestens halfWidth + 0,5 m von der Mittellinie.
+
 Im Spiel lädt `src/vehicle/sportsCarGlb.ts` das GLB; fehlt es oder schlägt das Laden fehl, fährt das prozedurale Coupé (`?car=procedural` erzwingt es). Debug-Konsole: `car.model [glb|procedural]` wechselt das Modell und zeigt die Dreiecke, `car.lod [auto|0|1|2]` erzwingt eine Detailstufe, `cam.orbit <grad>|aus` stellt eine Schaukamera ums Auto (0 = hinten, 180 = vorne).
 
 ## Aufbau

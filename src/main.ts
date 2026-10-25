@@ -60,6 +60,7 @@ import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
 import { loadShops } from './world/shopGlb.ts';
 import { ShopLayer } from './world/shops.ts';
+import { FuelLayer } from './world/fuel.ts';
 import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
@@ -145,6 +146,10 @@ async function boot() {
   stalls.register();
   const shops = new ShopLayer(index.world);
   shops.register();
+  // Petrol stations (fuel.json lists them all for fuel.list / fuel.tp).
+  const fuel = await FuelLayer.fetch(TILES_URL);
+  fuel.register();
+  view.scene.add(fuel.lights);
   const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod, impostor: quality.name === 'hoch' ? 256 : 128 });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
@@ -402,6 +407,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  fuel.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   stalls.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
@@ -695,6 +701,7 @@ async function boot() {
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
+    fuel.update(view.camera, view.daylight.daylight);
     vegetation.update(dt, view.camera, weather.weather);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);

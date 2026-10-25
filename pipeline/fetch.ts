@@ -28,13 +28,14 @@ ${area}
   way["waterway"="riverbank"]${f};
   way["waterway"~"^(river|stream|canal|ditch|drain)$"]${f};
   way["leisure"~"park|pitch|garden|playground"]${f};
-  way["amenity"="parking"]${f};
+  way["amenity"~"^(parking|fuel)$"]${f};
+  relation["type"="multipolygon"]["amenity"="fuel"]${f};
   node["natural"="tree"]${f};
   node["highway"~"^(traffic_signals|stop|give_way|bus_stop|street_lamp|crossing|motorway_junction)$"]${f};
   node["kerb"]${f};
   node["place"~"^(city|town|village|suburb|quarter|hamlet)$"]${f};
   node["barrier"~"^(bollard|block)$"]${f};
-  node["amenity"~"^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling)$"]${f};
+  node["amenity"~"^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling|fuel)$"]${f};
   node["emergency"="fire_hydrant"]${f};
   node["advertising"="column"]${f};
   node["traffic_sign"]${f};

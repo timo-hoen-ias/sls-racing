@@ -234,7 +234,7 @@ export function wanted(tags: Tags): boolean {
     tags.waterway === 'riverbank' ||
     /^(river|stream|canal|ditch|drain)$/.test(tags.waterway ?? '') ||
     /^(park|pitch|garden|playground)$/.test(tags.leisure ?? '') ||
-    tags.amenity === 'parking' ||
+    tags.amenity === 'parking' || tags.amenity === 'fuel' ||
     /^(fence|wall|hedge|guard_rail)$/.test(tags.barrier ?? '')
   );
 }
@@ -247,7 +247,7 @@ export function wantedNode(tags: Tags | undefined): boolean {
     /^(traffic_signals|stop|give_way|bus_stop|street_lamp|crossing|motorway_junction)$/.test(tags.highway ?? '') || !!tags.kerb ||
     /^(city|town|village|suburb|quarter|hamlet)$/.test(tags.place ?? '') ||
     /^(bollard|block)$/.test(tags.barrier ?? '') ||
-    /^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling)$/.test(tags.amenity ?? '') ||
+    /^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling|fuel)$/.test(tags.amenity ?? '') ||
     tags.emergency === 'fire_hydrant' || tags.advertising === 'column' || tags.traffic_sign
   );
 }
@@ -256,7 +256,7 @@ export function wantedNode(tags: Tags | undefined): boolean {
 const isPlace = (tags: Tags | undefined) => !!tags?.name && /^(city|town|village|suburb)$/.test(tags.place ?? '');
 
 const wantedRelation = (tags: Tags) =>
-  !!tags.building || (tags.type === 'multipolygon' && (!!tags.landuse || /^(water|wood)$/.test(tags.natural ?? '')));
+  !!tags.building || (tags.type === 'multipolygon' && (!!tags.landuse || tags.amenity === 'fuel' || /^(water|wood)$/.test(tags.natural ?? '')));
 
 export interface Cut {
   /** Postal code whose boundary relation defines the area, or a lon/lat box. */

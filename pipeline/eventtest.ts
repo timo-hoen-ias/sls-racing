@@ -12,6 +12,7 @@ import { gunzipSync } from 'node:zlib';
 import { TileContent, isGzip, tileKey, tileOfLocal, type RoadGraphData, type WorldIndex } from '../src/world/format.ts';
 import { addTileColliders } from '../src/world/tileColliders.ts';
 import { addPropColliders } from '../src/world/propColliders.ts';
+import { addFuelColliders } from '../src/world/fuelColliders.ts';
 import { addSignColliders } from '../src/world/signColliders.ts';
 import { GUIDE_SIGN_NAMES, type SignsFile } from '../src/world/signSpec.ts';
 import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.ts';
@@ -70,6 +71,8 @@ function driveEvent(e: GameEvent): Result {
     const body = addTileColliders(RAPIER, world, t, W, (c, kind) => kinds.set(c.handle, kind));
     const props = t.has('props') ? t.f32('props') : undefined;
     if (props) addPropColliders(RAPIER, world, body, props, (c, i) => kinds.set(c.handle, PROP_NAMES[props[i * PROP_STRIDE] as PropKind]));
+    const fuel = t.has('fuel') ? t.f32('fuel') : undefined;
+    if (fuel) addFuelColliders(RAPIER, world, body, fuel, (c, part) => kinds.set(c.handle, `tankstelle-${part}`));
   }
   const signBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   for (const s of signs) if (keys.has(tileKey(...tileOfLocal(W, s.x, s.z)))) addSignColliders(RAPIER, world, signBody, s, (c) => kinds.set(c.handle, GUIDE_SIGN_NAMES[s.t]));

@@ -17,6 +17,7 @@ import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
 import { buildGuideSigns, type Place } from './lib/guideSigns.ts';
 import { type ShopBuilding, buildShops } from './lib/shops.ts';
+import { type FuelBuilding, isFuelCanopyFn, isFuelShopFn, planFuel } from './lib/fuel.ts';
 import { signalJunctions } from './lib/signals.ts';
 import { RoadLines, RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
@@ -116,7 +117,25 @@ function main() {
   const landmarkFoot = landmarkArea(landmarks);
   const centre = (r: [number, number][]) => r.reduce(([a, b], [e, n]) => [a + e / r.length, b + n / r.length], [0, 0]);
   const footprints = new Footprints();
-  if (lod2Dir) for (const b of lod2Buildings(lod2Dir)) if (!isTrafficStructure(b)) footprints.add(b.ground);
+  const fuelBuildings: FuelBuilding[] = [];
+  if (lod2Dir)
+    for (const b of lod2Buildings(lod2Dir)) {
+      if (isTrafficStructure(b)) continue;
+      footprints.add(b.ground);
+      for (const ring of b.ground) fuelBuildings.push({ ring, kind: isFuelCanopyFn(b.fn) ? 'canopy' : isFuelShopFn(b.fn) ? 'shop' : 'other' });
+    }
+  for (const p of osm.polygons)
+    if (p.tags.building && !footprints.covers(p.outer)) fuelBuildings.push({ ring: p.outer, kind: /^(roof|canopy)$/.test(p.tags.building) ? 'canopy' : 'other' });
+  const onRoad = new RoadMask(osm.ways);
+  // Tree trunks, fences and hedges keep clear of the carriageway edge too: narrow roads are mapped narrower
+  // than the car drives them, and the car must not clip them.
+  const nearLanes = new RoadMask(osm.ways, 0.5);
+  // Petrol stations: canopies, pumps, shops and price pylons; the survey's canopy blocks make way for them.
+  // Service roads through the forecourt are checked against their centreline in fuel.ts.
+  const fuelLanes = new RoadMask(osm.ways, 0.5, (t) => !/^(service|track)$/.test(t.highway));
+  const fuel = planFuel(osm, { world: info, height, nearLanes: (e, n) => fuelLanes.has(e, n), onRoad: (e, n) => onRoad.has(e, n), buildings: fuelBuildings });
+  fuelBuildings.length = 0;
+  console.log(`Petrol stations: ${fuel.list.length} of ${fuel.zones} placed (${fuel.list.filter((f) => f.mapped).length} on the surveyed canopy, ${fuel.list.reduce((a, f) => a + f.pumps, 0)} pumps)${fuel.failed.length ? `, no room: ${fuel.failed.join(', ')}` : ''}`);
   // Only where the region has something already (roads, OSM buildings): the survey tiles reach past it.
   const T0 = info.tileSize;
   const used = new Set(tiles.tiles.keys());
@@ -149,8 +168,8 @@ function main() {
   };
   const shopBuildings: ShopBuilding[] = [];
   const onBuilding = (b: ShopBuilding) => shopBuildings.push(b);
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, roofColour: roofColourAt, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding, roofColour: roofColourAt });
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, roofColour: roofColourAt, skip: (b) => isTrafficStructure(b) || outside(b) || b.ground.some(fuel.skip) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
+  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || fuel.skip(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding, roofColour: roofColourAt });
   if (landcover) console.log(`Roofs: ${[...roofInfo.values()].reduce((a, v) => a + v.length / 5, 0)} buildings with their surveyed colour`);
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM, ${blocking} left out on roads`);
 
@@ -173,13 +192,9 @@ function main() {
   let coverTiles = 0;
   const water = new WaterLines(osm.ways);
   const waterways = water.polylines(info, height);
-  const onRoad = new RoadMask(osm.ways);
   // Lamps stand beside their own road; drop the ones that end up on another road's lanes.
   const onLanes = new RoadMask(osm.ways, -0.5);
   const onMotorLanes = new RoadMask(osm.ways, -0.5, (t) => !noCars(t));
-  // Tree trunks, fences and hedges keep clear of the carriageway edge too: narrow roads are mapped narrower
-  // than the car drives them, and the car must not clip them.
-  const nearLanes = new RoadMask(osm.ways, 0.5);
   // Trees a little further: their trunk collider is up to TREE_COLLIDER_MAX wide and the mask is a 2 m grid.
   const treeLanes = new RoadMask(osm.ways, 1.0);
   const offLanes = (lamps: number[]) => {
@@ -410,6 +425,8 @@ function main() {
     if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
     const rails = railTiles.get(k);
     if (rails) tile.rails = encode(new Float32Array(rails));
+    const tileFuel = fuel.tiles.get(k);
+    if (tileFuel) tile.fuel = encode(new Float32Array(tileFuel));
     const tileShops = shops.tiles.get(k);
     if (tileShops) tile.shops = encode(new Float32Array(tileShops));
     const tileProps = props.tiles.get(k);
@@ -471,6 +488,7 @@ function main() {
   const placed = landmarkList(landmarks, info, height, (e, n) => want.has(`${Math.floor(e / T)}_${Math.floor(n / T)}`));
   writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
   console.log(`Landmarks: ${placed.length} models placed`);
+  writeFileSync(`${paths.out}fuel.json`, JSON.stringify({ v: 1, stations: fuel.list }));
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info, medians.points)));

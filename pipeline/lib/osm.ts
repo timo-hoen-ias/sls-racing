@@ -112,7 +112,7 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
 }
 
 function isArea(tags: Record<string, string>) {
-  return !!(tags.building || tags.landuse || tags.natural || tags.leisure || tags.waterway === 'riverbank' || tags.amenity === 'parking' || tags.area === 'yes');
+  return !!(tags.building || tags.landuse || tags.natural || tags.leisure || tags.waterway === 'riverbank' || tags.amenity === 'parking' || tags.amenity === 'fuel' || tags.area === 'yes');
 }
 
 /** Joins way segments of a multipolygon into closed rings. */

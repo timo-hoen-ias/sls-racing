@@ -76,6 +76,8 @@ export interface TileData {
   treeKinds?: string;
   treeCrowns?: string;
   shops?: string;
+  /** Petrol stations (fuelKinds.ts). */
+  fuel?: string;
   /** Float32 x, y, z, scale, kind per bush. */
   bushes?: string;
   /** Street furniture and parked cars, Float32 records of PROP_STRIDE values (see propKinds.ts). */
@@ -190,7 +192,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32', roofInfo: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', fuel: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32', roofInfo: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

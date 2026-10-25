@@ -80,6 +80,8 @@ export interface PropOptions {
   railings?: Railing[];
   /** Hedge centre lines measured from the laser heights (lib/hedges.ts); dropped where OSM maps a hedge nearby. */
   hedges?: [number, number][][];
+  /** Wall centre lines from ALKIS; dropped where OSM maps any barrier nearby. */
+  walls?: [number, number][][];
   /** Extra point features from street-level imagery (Mapillary); dropped where OSM already has one nearby. */
   detected?: { kind: PropKind; e: number; n: number; size?: number }[];
 }
@@ -177,29 +179,39 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   // crossing a street).
   const clear = o.nearLanes ?? o.onLanes;
   const offLanes = (e: number, n: number, de: number, dn: number, len: number) => [-0.5, -0.25, 0, 0.25, 0.5].every((f) => !clear(e + de * len * f, n + dn * len * f));
-  const mappedHedges = new Set<string>();
+  const mappedHedges = new Set<string>(), mappedBarriers = new Set<string>();
   const HEDGE_CELL = 3;
   for (const w of osm.ways) {
     const b = w.tags.barrier;
     const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : undefined;
     if (!kind) continue;
     pieces(w.pts, 4, (e, n, de, dn, len) => {
-      if (kind !== Prop.fence) mappedHedges.add(`${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`);
+      const cell = `${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`;
+      if (kind !== Prop.fence) mappedHedges.add(cell);
+      mappedBarriers.add(cell);
       if (offLanes(e, n, de, dn, len)) add(kind, e, n, headingOf(de, dn), len);
     });
   }
   // Measured hedges have a negative length (see isMeasured in propKinds.ts); none beside a mapped hedge or wall.
   let measuredHedges = 0;
-  const mappedNear = (e: number, n: number) => {
+  const mappedNear = (set: Set<string>, e: number, n: number) => {
     const ce = Math.floor(e / HEDGE_CELL), cn = Math.floor(n / HEDGE_CELL);
-    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (mappedHedges.has(`${ce + a}_${cn + b}`)) return true;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (set.has(`${ce + a}_${cn + b}`)) return true;
     return false;
   };
   for (const h of o.hedges ?? [])
     pieces(h, 4, (e, n, de, dn, len) => {
-      if (mappedNear(e, n) || !offLanes(e, n, de, dn, len)) return;
+      if (mappedNear(mappedHedges, e, n) || !offLanes(e, n, de, dn, len)) return;
       add(Prop.hedge, e, n, headingOf(de, dn), -len);
       measuredHedges++;
+    });
+  // Walls from the ALKIS building layer where OSM has no barrier.
+  let alkisWalls = 0;
+  for (const w of o.walls ?? [])
+    pieces(w, 4, (e, n, de, dn, len) => {
+      if (mappedNear(mappedBarriers, e, n) || !offLanes(e, n, de, dn, len)) return;
+      add(Prop.wall, e, n, headingOf(de, dn), len);
+      alkisWalls++;
     });
 
   // Guard rails (motorways, embankments, bridges, mapped ones) are their own tile field now: roadside.ts.
@@ -257,7 +269,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }, 3);
     }
   }
-  return { tiles: out, counts, detected, measuredHedges };
+  return { tiles: out, counts, detected, measuredHedges, alkisWalls };
 }
 
 /** Variant number for a parked car: colour index × 2 + 1 for a van. */

@@ -99,7 +99,7 @@ describe('land cover rasters', () => {
 
   it('falls back to the coarse ground class outside the survey', () => {
     const g = new Uint8Array(TERRAIN_N * TERRAIN_N).fill(Ground.farmland);
-    const lc = { classAt: () => Cover.lawn, rowsAt: () => 0, colourAt: () => [90, 100, 80] as [number, number, number], roofAt: () => undefined, hedges: [], tiles: 1 };
+    const lc = { classAt: () => Cover.lawn, rowsAt: () => 0, colourAt: () => [90, 100, 80] as [number, number, number], roofAt: () => undefined, hedges: [], walls: [], tiles: 1 };
     const covered = tileCover(lc, 0, 0, g)!;
     expect(covered.splat[0]).toBe(255);
     expect(covered.tint[0]).toBe(90);

@@ -179,6 +179,8 @@ export interface LandcoverFile {
   roofs: RoofColour[];
   /** Hedge centre lines measured from the laser heights (lib/hedges.ts): flat e, n pairs (UTM, m). */
   hedges?: number[][];
+  /** Centre lines of the walls in the ALKIS building layer (FUNKTION Mauer): flat e, n pairs (UTM, m). */
+  walls?: number[][];
 }
 
 export interface Landcover {
@@ -192,8 +194,12 @@ export interface Landcover {
   roofAt(e: number, n: number, max?: number): [number, number, number] | undefined;
   /** Measured hedge centre lines (UTM, m). */
   hedges: [number, number][][];
+  /** ALKIS wall centre lines (UTM, m). */
+  walls: [number, number][][];
   tiles: number;
 }
+
+const pairs = (f: number[]) => Array.from({ length: f.length / 2 }, (_, i) => [f[i * 2], f[i * 2 + 1]] as [number, number]);
 
 /** Reads the committed land cover rasters of a region; undefined when the region has none. */
 export function loadLandcover(region: string): Landcover | undefined {
@@ -249,7 +255,8 @@ export function loadLandcover(region: string): Landcover | undefined {
   }
   return {
     tiles: file.tiles.length,
-    hedges: (file.hedges ?? []).map((f) => Array.from({ length: f.length / 2 }, (_, i) => [f[i * 2], f[i * 2 + 1]] as [number, number])),
+    hedges: (file.hedges ?? []).map(pairs),
+    walls: (file.walls ?? []).map(pairs),
     classAt(e, n) {
       const e0 = Math.floor(e / LC_TILE) * LC_TILE, n0 = Math.floor(n / LC_TILE) * LC_TILE;
       const t = tile(e0, n0);

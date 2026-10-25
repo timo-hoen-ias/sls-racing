@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { narrowRuns, thin, traceChains, traceHedges } from '../pipeline/lib/hedges.ts';
+import { centreLines, narrowRuns, thin, traceChains, traceHedges } from '../pipeline/lib/hedges.ts';
+import { rasterize } from '../pipeline/lib/landcover.ts';
 
 const N = 40;
 const grid = (fill: (r: number, c: number) => boolean) => {
@@ -42,5 +43,15 @@ describe('hedges from the laser heights', () => {
     expect(p.some(([e, n]) => Math.hypot(e - 1061, n - 1939) < 2.5)).toBe(true);
     const short = traceHedges(grid((r, c) => r === 5 && c >= 5 && c < 7), none, N, 0, 0, 2);
     expect(short.length).toBe(0);
+  });
+
+  it('finds the centre line of a thin L-shaped wall polygon', () => {
+    // 20 m east, then 10 m north, 0.4 m thick.
+    const ring: [number, number][] = [[100, 100], [120.4, 100], [120.4, 110], [120, 110], [120, 100.4], [100, 100.4], [100, 100]];
+    const lines = centreLines([ring], 0.25, rasterize);
+    const total = lines.reduce((s, l) => s + l.reduce((a, p, i) => (i ? a + Math.hypot(p[0] - l[i - 1][0], p[1] - l[i - 1][1]) : 0), 0), 0);
+    expect(total).toBeGreaterThan(27);
+    expect(total).toBeLessThan(31);
+    for (const l of lines) for (const [e, n] of l) expect(Math.min(Math.abs(n - 100.2), Math.abs(e - 120.2))).toBeLessThan(0.6);
   });
 });

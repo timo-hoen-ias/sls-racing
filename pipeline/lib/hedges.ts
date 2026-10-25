@@ -116,6 +116,25 @@ export function simplify(pts: [number, number][], tol: number): [number, number]
 
 const lengthOf = (p: [number, number][]) => p.reduce((s, q, i) => (i ? s + Math.hypot(q[0] - p[i - 1][0], q[1] - p[i - 1][1]) : 0), 0);
 
+/** Centre lines of a thin polygon (an ALKIS wall), from a raster with `step` m cells (UTM, m). */
+export function centreLines(rings: [number, number][][], step: number, rasterize: (rings: [number, number][][], grid: Uint8Array, cols: number, rows: number, e0: number, n1: number, s: number, value: number) => void) {
+  let e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
+  for (const [e, n] of rings[0]) { e0 = Math.min(e0, e); e1 = Math.max(e1, e); n0 = Math.min(n0, n); n1 = Math.max(n1, n); }
+  // One empty cell around it, so thinning sees its edges.
+  e0 -= step; n1 += step;
+  const N = Math.ceil(Math.max(e1 - e0, n1 - n0) / step) + 2;
+  if (N > 1200) return [];
+  const m = new Uint8Array(N * N);
+  rasterize(rings, m, N, N, e0, n1, step, 1);
+  const out: [number, number][][] = [];
+  for (const chain of traceChains(thin(m, N), N)) {
+    const pts = chain.map((i) => [e0 + ((i % N) + 0.5) * step, n1 - (Math.floor(i / N) + 0.5) * step] as [number, number]);
+    if (lengthOf(pts) < 1.5) continue;
+    out.push(simplify(pts, step).map(([e, n]) => [Math.round(e * 10) / 10, Math.round(n * 10) / 10]));
+  }
+  return out;
+}
+
 /** Hedge centre lines of one grid tile: `low` marks low green cells, `exclude` crowns and buildings.
  * Cell (r, c) has its centre at e0 + (c + 0.5)·step, n1 − (r + 0.5)·step. */
 export function traceHedges(low: Uint8Array, exclude: Uint8Array, N: number, e0: number, n1: number, step: number) {

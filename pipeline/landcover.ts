@@ -12,7 +12,7 @@ import { inflateEntry, RemoteZip, type ZipEntry } from './lib/remotezip.ts';
 import { readTiffRows } from './lib/tiff.ts';
 import { readDbf, readShpPolygons, type ShpPolygon } from './lib/shp.ts';
 import { fetchLaserTiles, laserSampler } from './lib/laser.ts';
-import { HEDGE_HIGH, HEDGE_LOW, traceHedges } from './lib/hedges.ts';
+import { HEDGE_HIGH, HEDGE_LOW, centreLines, traceHedges } from './lib/hedges.ts';
 import { pointInRing, readOsm } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths } from './lib/region.ts';
 import {
@@ -56,8 +56,12 @@ async function alkisLayers() {
   const nutzung = readShpPolygons(get('Nutzung.shp'));
   const recs = readDbf(get('Nutzung.dbf'), ['NUTZART', 'BEZ']);
   const uses = nutzung.map((p, i) => (p ? { p, use: alkisUse(recs[i].NUTZART, recs[i].BEZ) } : undefined)).filter((x) => !!x);
-  const buildings = readShpPolygons(get('GebaeudeBauwerk.shp')).filter((p): p is ShpPolygon => !!p);
-  return { uses, buildings };
+  const shapes = readShpPolygons(get('GebaeudeBauwerk.shp'));
+  const fn = readDbf(get('GebaeudeBauwerk.dbf'), ['FUNKTION']);
+  // Walls are in the building layer too (and stay in the building mask); they also become wall props.
+  const walls = shapes.filter((p, i): p is ShpPolygon => !!p && fn[i]?.FUNKTION === 'Mauer');
+  const buildings = shapes.filter((p): p is ShpPolygon => !!p);
+  return { uses, buildings, walls };
 }
 
 /** The 2 m RGBI means of one survey tile, cached. */
@@ -170,8 +174,8 @@ async function main() {
   }
   const dom = laserSampler(paths.dom1), dgm = laserSampler(paths.dgm1);
 
-  const { uses, buildings } = await alkisLayers();
-  console.log(`  ALKIS: ${uses.length} use parcels, ${buildings.length} building outlines`);
+  const { uses, buildings, walls } = await alkisLayers();
+  console.log(`  ALKIS: ${uses.length} use parcels, ${buildings.length} building outlines, ${walls.length} walls`);
 
   // Where each survey tile sits in the district archives.
   const where = new Map<string, { zip: RemoteZip; entry: ZipEntry }>();
@@ -187,7 +191,8 @@ async function main() {
 
   const out = landcoverDir(id);
   mkdirSync(out, { recursive: true });
-  const index: LandcoverFile = { attribution: LANDCOVER_ATTRIBUTION, tiles: [], roofs: [], hedges: [] };
+  const index: LandcoverFile = { attribution: LANDCOVER_ATTRIBUTION, tiles: [], roofs: [], hedges: [], walls: [] };
+  for (const w of walls) for (const l of centreLines(w.rings, 0.25, rasterize)) index.walls!.push(l.flat());
   const counts = new Float64Array(COVER_NAMES.length);
   // Surveys download in parallel with the classification of the previous tile.
   let next: Promise<Uint8Array | undefined> | undefined;
@@ -318,7 +323,7 @@ async function main() {
   writeFileSync(`${out}index.json.gz`, gzipSync(JSON.stringify(index), { level: 9 }));
   const total = counts.reduce((a, b) => a + b, 0) || 1;
   const km = index.hedges!.reduce((s, h) => s + h.reduce((a, _, i) => (i >= 2 && i % 2 === 0 ? a + Math.hypot(h[i] - h[i - 2], h[i + 1] - h[i - 1]) : a), 0), 0) / 1000;
-  console.log(`Land cover: ${index.tiles.length} tiles, ${index.roofs.length} roof colours, ${index.hedges!.length} hedges (${km.toFixed(0)} km) → ${out}`);
+  console.log(`Land cover: ${index.tiles.length} tiles, ${index.roofs.length} roof colours, ${index.hedges!.length} hedges (${km.toFixed(0)} km), ${index.walls!.length} wall lines → ${out}`);
   console.log(`  ${COVER_NAMES.map((n, i) => [n, counts[i]] as const).filter(([, c]) => c).map(([n, c]) => `${n} ${((c / total) * 100).toFixed(1)}%`).join(', ')}`);
 }
 

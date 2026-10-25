@@ -93,6 +93,7 @@ import { Game } from './game/game.ts';
 import { applyParts, carStats, type PartLevels } from './game/workshop.ts';
 import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';
+import { distanceToPath } from './game/events/runner.ts';
 import { BarrierView } from './game/events/barriers.ts';
 import type { PropHit } from './world/props.ts';
 
@@ -477,10 +478,13 @@ async function boot() {
     feel: () => car.feel,
   });
   police.registerCommands();
+  let thinPath: number[] | undefined;
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
   const game = new Game({
     rivals, barriers, police,
+    pose: () => ({ x: ip.x, y: ip.y, z: ip.z, qx: iq.x, qy: iq.y, qz: iq.z, qw: iq.w }),
+    ghostModel: () => loadSportsCar('#7fd4ff', garage.current.url).then((m) => new CarView('#7fd4ff', m).root, () => undefined),
     graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
     toast: (t, sec) => navHud.toast(t, sec), rumble: (k, ms) => input.rumble(k, ms),
     teleport: (x, z, heading) => teleport(x, z, heading), ready: () => worldReady && !hold,
@@ -729,6 +733,13 @@ async function boot() {
     effects.road.puddle = weather.puddle;
     const lvel = car.body.linvel();
     const simDt = debugState.frozen || paused ? 0 : dt * debugState.timeScale;
+    // Less traffic on the route of a running race (V1).
+    const racePath = game.racePath;
+    if (racePath !== thinPath) {
+      thinPath = racePath;
+      traffic.sim.thinOut = racePath ? (x, z) => distanceToPath(racePath, x, z) < 25 : undefined;
+      traffic.sim.thinRoute(ip);
+    }
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);

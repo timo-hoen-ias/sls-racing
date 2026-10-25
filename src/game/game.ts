@@ -22,6 +22,7 @@ import { CARS } from '../vehicle/cars.ts';
 import type { CarPhysics } from '../vehicle/carPhysics.ts';
 import { BUST, type PlayerNow, type Police } from './police.ts';
 import { WantedHud } from '../ui/wantedHud.ts';
+import { GhostRecorder, type GhostRun, ghostStore, GhostView, type Pose } from './ghost.ts';
 
 // The game around the driving (G1): spielstand, level and credits, the events in town with their gates and
 // HUD, the title screen and the event list. main.ts feeds it the car each frame and asks it whether the
@@ -57,6 +58,9 @@ export interface GameDeps {
   groundAt?(x: number, z: number): number | undefined;
   /** Police patrols and chases in free roam (V4). */
   police?: Police;
+  /** The player car's pose (physics body, interpolated) and a car model for the ghost (E5). */
+  pose?(): Pose;
+  ghostModel?(): Promise<THREE.Object3D | undefined>;
 }
 
 /** What the game needs from vehicle/garage.ts. */
@@ -159,6 +163,10 @@ export class Game {
     this.runner.best = (id) => this.save.data.events[id]?.best;
     this.wireRunner();
     if (d.police) this.wirePolice(d.police);
+    if (d.ghostModel) {
+      this.ghostView = new GhostView(d.ghostModel);
+      d.scene.add(this.ghostView.root);
+    }
     this.progress.onLevelUp = (l) => { d.sfx.play('levelup'); d.toast(`Stufe ${l} erreicht!`, 2.5); d.rumble(0.6, 300); };
     this.save.onChange = () => (this.badgeTimer = 0);
     this.refreshBadge();
@@ -184,6 +192,8 @@ export class Game {
   /** Controls locked: countdown, or waiting to put the car on a race start. */
   get locked() { return this.runner.state === 'countdown' || !!this.pending; }
   get racing() { return this.runner.racing; }
+  /** Route of the running race (traffic thins out there, V1). */
+  get racePath() { return this.runner.racing ? this.runner.event?.path : undefined; }
 
   private play() {
     if (!this.title.open) return;
@@ -296,6 +306,7 @@ export class Game {
       this.runner.update(dt, car);
       if (!this.runner.busy && this.enabled && this.prev && !this.pending) this.freeRoam(car);
       this.trackPlace(car);
+      this.updateGhost();
       if (this.runner.racing && this.runner.state === 'running' && this.runner.event?.path && distanceToPath(this.runner.event.path, car.x, car.z) > 150) this.runner.abort('Strecke verlassen');
       this.prev = { x: car.x, z: car.z };
     } else if (!ready) { this.prev = undefined; this.runner.skip(); this.retrack = true; }
@@ -350,6 +361,24 @@ export class Game {
   }
 
   private wantedHud?: WantedHud;
+  /** Ghost of the best run in time races (E5). */
+  ghosts = true;
+  private ghostView?: GhostView;
+  private ghostRec = new GhostRecorder();
+  private ghostRun?: GhostRun;
+
+  private ghostEvent(e?: GameEvent) {
+    return !!e && (e.type === 'sprint' || e.type === 'circuit' || e.type === 'duel') && !e.higher;
+  }
+
+  /** Records the running race and moves the ghost along its best run. */
+  private updateGhost() {
+    const r = this.runner;
+    const on = r.state === 'running' && this.ghostEvent(r.event);
+    const pose = on ? this.d.pose?.() : undefined;
+    if (pose) this.ghostRec.sample(r.time, pose);
+    this.ghostView?.show(on && this.ghosts ? this.ghostRun : undefined, r.time);
+  }
 
   /** Chases end with a reward for getting away, or a fine when caught (V4). */
   private wirePolice(police: Police) {
@@ -430,7 +459,11 @@ export class Game {
   private wireRunner() {
     const r = this.runner;
     const { sfx, toast, rumble } = this.d;
-    r.onStart = (e) => { if (!RACE_TYPES.has(e.type)) { sfx.play('go', 0.6); toast(`${EVENT_LABELS[e.type]}: ${e.name}`, 1.4); } };
+    r.onStart = (e) => {
+      this.ghostRec.start();
+      this.ghostRun = this.ghostEvent(e) ? ghostStore.load(e.id) : undefined;
+      if (this.ghostRun && this.ghosts) toast(`Geist: deine Bestzeit ${formatValue(e, this.ghostRun.value)}`, 1.6);
+      if (!RACE_TYPES.has(e.type)) { sfx.play('go', 0.6); toast(`${EVENT_LABELS[e.type]}: ${e.name}`, 1.4); } };
     r.onCountdown = (n) => { this.hud.countdown(n); sfx.play('beep'); };
     r.onGo = () => { this.hud.countdown(0); sfx.play('go'); rumble(0.5, 200); };
     r.onGate = (i, lap) => {
@@ -449,6 +482,7 @@ export class Game {
         runs: (rec?.runs ?? 0) + 1,
       };
       if (res.medal) this.save.stat(`medal${res.medal}`);
+      if (res.best && this.ghostEvent(e)) ghostStore.save(e.id, this.ghostRec.finish(res.value));
       this.progress.reward(res.xp, res.credits, e.name);
       const part = this.workshop?.reward(e, res.medal);
       if (part) { toast(`Neues Teil: ${part}`, 2.5); sfx.play('discover', 0.7); }
@@ -533,6 +567,8 @@ export class Game {
       return `${this.events.length} Events`;
     } });
     registerToggle('events', 'Events in der freien Fahrt (Tore, Marker, Start-Hinweise)', () => this.enabled, (v) => (this.enabled = v));
+    registerToggle('ghost', 'Geist der eigenen Bestfahrt in Sprints und Rundkursen', () => this.ghosts, (v) => (this.ghosts = v));
+    registerCommand({ name: 'ghost.clear', help: 'Gespeicherte Geister löschen (alle oder eines)', args: '[event-id]', run: ([id]) => { ghostStore.clear(id); return id ? `Geist ${id} gelöscht` : 'alle Geister gelöscht'; } });
     registerToggle('event.navi', 'Navi führt im Rennen zum nächsten Checkpoint', () => this.checkpointNav, (v) => (this.checkpointNav = v));
     const rv = this.d.rivals;
     if (rv) {

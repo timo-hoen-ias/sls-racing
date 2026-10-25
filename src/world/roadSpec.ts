@@ -112,6 +112,37 @@ export function roadSection(tags: Record<string, string>): RoadSection | undefin
   };
 }
 
+// Ways without cars: footpaths, cycle paths and steps are drawn as narrow paths beside the road network
+// (pipeline/lib/paths.ts), never part of it. Pedestrian zones and roads closed to cars keep their carriageway
+// but are left out of routing, traffic and the drive test.
+
+/** Path kinds by index (graph.json `w` entries, debug console). */
+export const PATH_KINDS = ['footway', 'path', 'cycleway', 'bridleway', 'steps'] as const;
+export type PathKind = (typeof PATH_KINDS)[number];
+const PATH_WIDTH: Record<PathKind, number> = { footway: 2, path: 1.5, cycleway: 2, bridleway: 2, steps: 2 };
+
+/** Path width in metres: the width tag where plausible, else by kind. */
+export function pathWidth(tags: Record<string, string>): number {
+  const w = parseFloat(tags.width);
+  return w >= 0.8 && w <= 6 ? w : PATH_WIDTH[tags.highway as PathKind] ?? 1.5;
+}
+
+/** Values of motorcar, motor_vehicle, vehicle and access (most specific first) that keep cars out. */
+const NO_CARS = new Set(['no', 'private', 'agricultural', 'forestry', 'agricultural;forestry', 'delivery', 'permit', 'emergency', 'bus', 'psv', 'discouraged']);
+
+/** Closed to cars: pedestrian zones, and roads whose access tags keep motor vehicles out. */
+export function noCars(tags: Record<string, string>): boolean {
+  if (tags.highway === 'pedestrian') return true;
+  const v = tags.motorcar ?? tags.motor_vehicle ?? tags.vehicle ?? tags.access;
+  return !!v && NO_CARS.has(v);
+}
+
+/** Entrances that get a row of bollards: pedestrian zones and roads explicitly closed to all motor vehicles. */
+export function bollardedEntry(tags: Record<string, string>): boolean {
+  if (tags.highway === 'pedestrian') return true;
+  const v = tags.motorcar ?? tags.motor_vehicle ?? tags.vehicle ?? tags.access;
+  return v === 'no';
+}
 /** Kerb and pavement dimensions (RASt 06: Hochbord 10–12 cm, abgesenkt 3 cm at crossings and driveways). */
 export const KERB = {
   /** Raised kerb above the carriageway, metres. */

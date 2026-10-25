@@ -68,6 +68,8 @@ export interface TileData {
   trees?: string;
   /** Sidewalks and kerbs (visual only). */
   sidewalks?: PackedMesh;
+  /** Footpaths, cycle paths and steps: road shader, wheels-only collision. */
+  paths?: PackedMesh;
   /** Float32 x, y, z, heading per street lamp. */
   lamps?: string;
   /** Uint8 tree kind per tree, see vegKinds.ts. */
@@ -119,9 +121,13 @@ export interface RoadGraphData {
     r?: number;
     /** Pavement with a raised kerb: bit 1 right, bit 2 left of a → b; missing in older graphs. */
     k?: number;
+    /** Closed to cars (pedestrian zone, access tags): left out of routing and traffic. */
+    x?: 1;
     /** Polyline x, y, z from a to b, including both ends. */
     p: number[];
   }[];
+  /** Footpaths, cycle paths and steps (not part of the network): kind index into PATH_KINDS, width in metres, surface, polyline x, y, z. */
+  w?: { k: number; w: number; s: number; p: number[] }[];
   /** Junctions with traffic lights: [node, group]; nodes of one group (a big junction) share their phases. */
   s?: [number, number][];
 }

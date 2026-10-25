@@ -42,6 +42,7 @@ import { registerWaterCommands } from './render/waterCommands.ts';
 import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerScaleCommands } from './world/scaleCommands.ts';
+import { registerPathCommands } from './world/pathCommands.ts';
 import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
@@ -418,6 +419,7 @@ async function boot() {
     print: (t) => debug.print(t, 'info'),
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
+  registerPathCommands({ graph, scene: view.scene, pos: () => (hold ?? ip), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   registerGroundCommands({ index, pos: () => (hold ?? ip), tiles: (fn) => streamer.forEachContent(fn) });
   guideSigns.registerCommands(() => (hold ?? ip), (x, z, heading) => teleport(x, z, heading, true));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.

@@ -26,7 +26,9 @@ import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
-import { buildRoads, type Railing } from './lib/roads.ts';
+import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, type Railing } from './lib/roads.ts';
+import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
+import { KERB, noCars } from '../src/world/roadSpec.ts';
 import { matchRampHeights, planRamps, rampList } from './lib/ramps.ts';
 import { planKerbs } from './lib/kerbs.ts';
 import { buildRoadside } from './lib/roadside.ts';
@@ -89,6 +91,21 @@ function main() {
   const railings: Railing[] = [];
   const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings }, ramps);
+  // Footpaths, cycle paths and steps on the terrain mesh as carved for the roads, stopping at carriageways and sidewalks.
+  const pathStats = (() => {
+    // Scoped so the index is freed before the tiles are written.
+    const lanes = new CarriagewayIndex();
+    for (const w of osm.ways) {
+      if (!isDrivable(w.tags) || isBridge(w.tags)) continue;
+      const sides = sidewalkSides(w);
+      lanes.add(w, roadProfile(w, height, info), roadWidth(w.tags)! / 2 + (sides.left || sides.right ? KERB.width : 0));
+    }
+    return buildPaths(osm.ways, info, meshHeight((e, n) => carve.apply(e, n, height.raw(e, n))), tiles, (x, z) => lanes.onOther(undefined, x, z, 0.2));
+  })();
+  graph.w = pathStats.lines;
+  const km = (m: number) => (m / 1000).toFixed(1);
+  console.log(`Paths: ${pathStats.lines.length} ways, ${Object.entries(pathStats.drawn).map(([k, m]) => `${k} ${km(m)} km`).join(', ')}; ${km(pathStats.clipped)} km on roads left out · closed to cars: ${graph.edges.filter((e) => e.x).length} graph edges`);
+  const onPaths = new PathMask(osm.ways);
   // Main roads (tertiary and up) for shop fronts on the ground floor.
   const mainRoads = new RoadMask(osm.ways, 9, (t) => /^(primary|secondary|tertiary)$/.test(t.highway));
   // LoD2 models where the survey has them (the whole district), OSM outlines for everything else.
@@ -157,6 +174,7 @@ function main() {
   const onRoad = new RoadMask(osm.ways);
   // Lamps stand beside their own road; drop the ones that end up on another road's lanes.
   const onLanes = new RoadMask(osm.ways, -0.5);
+  const onMotorLanes = new RoadMask(osm.ways, -0.5, (t) => !noCars(t));
   // Tree trunks, fences and hedges keep clear of the carriageway edge too: narrow roads are mapped narrower
   // than the car drives them, and the car must not clip them.
   const nearLanes = new RoadMask(osm.ways, 0.5);
@@ -197,7 +215,7 @@ function main() {
     if (l) { coverage.push(...l.coverage); for (const t of l.trees) measuredTrees.push(t); }
   }
   const lidar = placeLidarTrees(coverage, measuredTrees, {
-    skip: (e, n) => treeLanes.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
+    skip: (e, n) => treeLanes.has(e, n) || onPaths.has(e, n) || ground.at(e, n, Ground.grass) === Ground.forest,
     tagsAt: (e, n) => ground.tagsAt(e, n), mapped, rand,
   });
   for (const t of lidar.trees) addTree(t.e, t.n, t.scale, t.kind, t.crown);
@@ -262,7 +280,8 @@ function main() {
   // Survey hedges and ALKIS walls reach beyond the OSM extract (the ALKIS walls cover the whole district):
   // only the ones on tiles with OSM content, where the terrain is fetched.
   const inData = (l: [number, number][]) => l.every(([e, n]) => used.has(`${Math.floor(e / T0)}_${Math.floor(n / T0)}`));
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings, hedges: landcover?.hedges.filter(inData), walls: landcover?.walls.filter(inData) });
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), onMotorLanes: (e, n) => onMotorLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings, hedges: landcover?.hedges.filter(inData), walls: landcover?.walls.filter(inData) });
+  console.log(`Bollards at ${props.entries} entrances to pedestrian zones and roads closed to cars`);
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
   // Stall lines: 12 cm wide, 4.8 m long, in two pieces that follow the ground, 4 cm above it.
   const stallBufs = new Map<string, MeshBuf>();
@@ -343,7 +362,7 @@ function main() {
           for (let i = 0; i < nt + nb; i++) {
             const te = e + rand(e, n, i * 2 + 5) * TREE_CELL;
             const tn = n - rand(e, n, i * 2 + 6) * TREE_CELL;
-            if (onRoad.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
+            if (onRoad.has(te, tn) || onPaths.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
             if (i < nt) {
               // Trunks keep clear of the carriageway like the measured trees.
               if (treeLanes.has(te, tn)) continue;
@@ -360,7 +379,7 @@ function main() {
     const tile: TileData = {
       v: 1, ix, iy, terrain: encode(h), ground: encode(g),
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
-      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(),
+      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(), paths: b?.paths.pack(),
     };
     const cover = landcover && tileCover(landcover, E0, N0, g);
     if (cover) {

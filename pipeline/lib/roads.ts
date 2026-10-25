@@ -3,7 +3,7 @@ import { utmToLocal } from '../../src/world/format.ts';
 import { edgeLineWidth, encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
 import type { RoadCarve } from './carve.ts';
 import type { HalfWidths } from './overlap.ts';
-import { roadSection, type RoadSection } from '../../src/world/roadSpec.ts';
+import { noCars, roadSection, type RoadSection } from '../../src/world/roadSpec.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import { KERB } from './kerbs.ts';
@@ -79,11 +79,21 @@ export function roadWidth(tags: Record<string, string>): number | undefined {
   return ROAD_CLASSES[tags.highway] ? roadSection(tags)!.width : undefined;
 }
 
+/** Built as a carriageway (with collision), including pedestrian zones and roads closed to cars. */
 export function isDrivable(tags: Record<string, string>) {
-  return !!ROAD_CLASSES[tags.highway] && tags.tunnel !== 'yes' && tags.area !== 'yes' && tags.access !== 'no';
+  return !!ROAD_CLASSES[tags.highway] && tags.tunnel !== 'yes' && tags.area !== 'yes';
 }
 
+/** A carriageway open to cars: routing, traffic and the drive test use only these. */
+export const isMotorRoad = (tags: Record<string, string>) => isDrivable(tags) && !noCars(tags);
+
 export const isBridge = (tags: Record<string, string>) => !!tags.bridge && tags.bridge !== 'no';
+
+/** Pavement sides as kerbs.ts planned them (left = positive offsets), else the old default for streets. */
+export function sidewalkSides(way: Way): { left: boolean; right: boolean } {
+  if (isBridge(way.tags)) return { left: false, right: false };
+  return way.sidewalks ?? (ROAD_CLASSES[way.tags.highway]?.street && !['no', 'none'].includes(way.tags.sidewalk) ? { left: true, right: true } : { left: false, right: false });
+}
 
 export function densify(pts: [number, number][], step = STEP): [number, number][] {
   const out: [number, number][] = [pts[0]];
@@ -200,7 +210,7 @@ class JunctionIndex {
 }
 
 /** Carriageways of all roads, to keep sidewalks off other roads where they meet at an angle. */
-class CarriagewayIndex {
+export class CarriagewayIndex {
   private cells = new Map<string, { way: Way; x0: number; z0: number; x1: number; z1: number; y0: number; y1: number; hw: number }[]>();
   add(way: Way, ring: { x: number; y: number; z: number }[], hw: number) {
     for (let i = 1; i < ring.length; i++) {
@@ -215,7 +225,7 @@ class CarriagewayIndex {
     }
   }
   /** Whether (x, z) lies on the carriageway of a road other than `self` (plus a margin), near height y if given. */
-  onOther(self: Way, x: number, z: number, margin: number, y?: number) {
+  onOther(self: Way | undefined, x: number, z: number, margin: number, y?: number) {
     for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
       if (s.way === self) continue;
       const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
@@ -252,9 +262,8 @@ export function buildRoads(
     const ring = rings.get(way)!;
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
-    // Pavement sides as kerbs.ts planned them (left = positive offsets), else the old default for streets.
-    const sides = way.sidewalks ?? (cls.street && !bridge && !['no', 'none'].includes(way.tags.sidewalk) ? { left: true, right: true } : { left: false, right: false });
-    const sidewalk = !bridge && (sides.left || sides.right);
+    const sides = sidewalkSides(way);
+    const sidewalk = sides.left || sides.right;
     // Bridges dressed by a landmark model bring their own railings.
     const walkway = bridge && !bridges.dressed?.has(way.id);
     const capFrom = FAST.test(way.tags.highway) ? BRIDGE_CAP.behindRail : 0;

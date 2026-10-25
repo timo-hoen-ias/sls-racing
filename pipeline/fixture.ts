@@ -62,5 +62,13 @@ export function fixtureOsm(origin: { lat: number; lon: number }): OsmJson {
   area(100, 100, { leisure: 'park' });
   area(-200, 0, { natural: 'water' });
   for (let i = 0; i < 20; i++) node(110 + (i % 5) * 18, 110 + Math.floor(i / 5) * 20, { natural: 'tree' });
+  // Ways without cars: a footpath across the park from street to street, a gravel path and a cycle path beside
+  // it, steps, and a pedestrian zone off the southern edge of the grid (bollards at its entrance).
+  way([node(100, 150), node(150, 160), node(200, 150)], { highway: 'footway' });
+  way([node(130, 110), node(170, 190)], { highway: 'path' });
+  way([node(-400, 30), node(-430, 30), node(-470, 60)], { highway: 'cycleway' });
+  way([node(-450, -100), node(-480, -100)], { highway: 'steps' });
+  way([grid.get('200_-400')!, node(200, -470)], { highway: 'pedestrian', name: 'Fußgängerzone' });
+  way([grid.get('-200_-400')!, node(-200, -470)], { highway: 'service', access: 'private' });
   return { elements: els };
 }

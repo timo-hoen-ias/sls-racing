@@ -494,6 +494,8 @@ export class Vegetation {
     // Roads near the camera, to keep the grass off them (the graph has no widths, so a width by rank).
     const roads: { p: Float32Array; half: number }[] = [];
     this.graph.forEachEdgeNear(cx, cz, R + 20, (e) => roads.push({ p: e.p, half: 2 + e.rank * 0.9 }));
+    // And off the footpaths, cycle paths and steps.
+    this.graph.forEachPathNear(cx, cz, R + 5, (w) => roads.push({ p: w.p, half: w.width / 2 - 0.7 }));
     const onRoad = (x: number, z: number) => roads.some((r) => distToPolyline(r.p, x, z) < r.half + 1);
     let n = 0;
     const step = 2;

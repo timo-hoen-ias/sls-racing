@@ -8,7 +8,7 @@ import type { RoadGraph } from './roadGraph.ts';
 import { registerTileLayer } from './tileHooks.ts';
 import type { TreeGeometry } from './treeGen.ts';
 import { triangles } from './treeGen.ts';
-import { type ImpostorAtlas, type TreeTextures, bakeImpostors, buildSpecies, impostorGeometry, impostorMaterial, loadTreeTextures, treeMaterials, vegUniforms } from './treeRender.ts';
+import { type ImpostorAtlas, type TreeTextures, type TreeTierMaterials, bakeImpostors, buildSpecies, impostorGeometry, impostorMaterial, loadTreeTextures, treeMaterials, vegUniforms } from './treeRender.ts';
 import { SPECIES } from './treeSpecies.ts';
 import { BUSH_STRIDE, Bush, TREE_HEIGHT, Tree, type TreeKind } from './vegKinds.ts';
 import { buildGrassGeometry, grassTexture } from './vegModels.ts';
@@ -160,9 +160,11 @@ export class Vegetation {
   /** Bushes are drawn up to this distance (m). */
   bushDistance: number;
   /** Width of the dithered cross-fade between tiers as a share of the distance (veg.fade). */
-  fade = 0.12;
-  /** Detail tiers that cast shadows (0 = none, 1 = detailed, 2 = detailed and simple). */
-  shadowTiers = 1;
+  fade = 0.3;
+  /** Detail tiers that cast shadows (0 = none, 1 = detailed, 2 = detailed and simple, 3 = all). */
+  shadowTiers = 3;
+  /** Trees fade out (dithered) towards this distance (m), inside the loaded tiles, so they never pop in with a tile. */
+  farDistance: number;
   /** Tree and bush instances moved between tiers in the last frame (veg.info). */
   private splitCount = 0;
   /** "auto" follows the weather, a number fixes the wind strength 0..1. */
@@ -188,9 +190,9 @@ export class Vegetation {
   private tiles = new Map<string, VegTile>();
   private geo: Record<string, TreeGeometry> = {};
   private impGeo: Record<string, THREE.BufferGeometry> = {};
-  private treeMats: THREE.Material[][] = [];
-  private bushMats: THREE.Material[][] = [];
-  private impMats: Record<string, THREE.Material> = {};
+  private treeMats: TreeTierMaterials[] = [];
+  private bushMats: TreeTierMaterials[] = [];
+  private impMats: Record<string, { mat: THREE.Material; depth: THREE.Material }> = {};
   private atlas?: ImpostorAtlas;
   private tex?: TreeTextures;
   private renderer?: THREE.WebGLRenderer;
@@ -201,8 +203,9 @@ export class Vegetation {
   private graph: RoadGraph;
   private time = 0;
 
-  constructor(opts: { world: WorldInfo; graph: RoadGraph; mats: Materials; grass: number; lod?: { trees: number; billboards: number; bushes: number }; impostor?: number }) {
+  constructor(opts: { world: WorldInfo; graph: RoadGraph; mats: Materials; grass: number; lod?: { trees: number; billboards: number; bushes: number }; impostor?: number; far?: number }) {
     this.lodDistance = opts.lod?.trees ?? 140;
+    this.farDistance = opts.far ?? 1e6;
     this.billboardDistance = opts.lod?.billboards ?? 450;
     this.bushDistance = opts.lod?.bushes ?? 120;
     this.impostorRes = opts.impostor ?? 128;
@@ -263,7 +266,7 @@ export class Vegetation {
     if (!this.tex || !this.renderer) return;
     for (const g of Object.values(this.geo)) for (const l of g.lods) l.dispose();
     for (const g of Object.values(this.impGeo)) g.dispose();
-    for (const m of Object.values(this.impMats)) m.dispose();
+    for (const m of Object.values(this.impMats)) { m.mat.dispose(); m.depth.dispose(); }
     this.atlas?.albedo.dispose();
     this.atlas?.normal.dispose();
     this.geo = buildSpecies(this.seed);
@@ -286,7 +289,8 @@ export class Vegetation {
     const [t0, t1, t2] = this.treeBands;
     t0.set(-2, -1, d0 - half(d0), d0 + half(d0));
     t1.set(d0 - half(d0), d0 + half(d0), d1 - half(d1), d1 + half(d1));
-    t2.set(d1 - half(d1), d1 + half(d1), 1e9, 1e9 + 1);
+    const far = Math.max(d1 + 2 * half(d1) + 20, this.farDistance);
+    t2.set(d1 - half(d1), d1 + half(d1), far * 0.8, far);
     if (this.forcedLod !== undefined) this.treeBands.forEach((b, i) => (i === this.forcedLod ? b.set(-2, -1, 1e9, 1e9 + 1) : b.copy(HIDDEN())));
     const b0 = BUSH_DETAIL, b1 = Math.max(b0 + 10, this.bushDistance);
     this.bushBands[0].set(-2, -1, b0 - half(b0), b0 + half(b0));
@@ -331,8 +335,9 @@ export class Vegetation {
       const g = this.geo[sp];
       const tiers = bush ? [g.lods[0], g.lods[1]] : [g.lods[0], g.lods[1], this.impGeo[sp]];
       const meshes = tiers.map((geo, l) => {
-        const mat = bush ? this.bushMats[l] : l < 2 ? this.treeMats[l] : this.impMats[sp];
-        const im = new THREE.InstancedMesh(geo, mat, recs.length);
+        const tm = bush ? this.bushMats[l] : l < 2 ? this.treeMats[l] : undefined;
+        const im = new THREE.InstancedMesh(geo, tm ? tm.mats : this.impMats[sp].mat, recs.length);
+        im.customDepthMaterial = tm ? tm.depth : this.impMats[sp].depth;
         im.userData.sharedGeometry = true;
         im.castShadow = t.shadows && !bush && l < this.shadowTiers;
         im.receiveShadow = true;
@@ -435,8 +440,10 @@ export class Vegetation {
     }
   }
 
-  update(dt: number, camera: THREE.Camera, weather?: { rain: number; snow: number; overcast: number }) {
+  update(dt: number, camera: THREE.Camera, weather?: { rain: number; snow: number; overcast: number }, light?: THREE.DirectionalLight) {
     this.time += dt;
+    vegUniforms.uVegCam.value.copy(camera.position);
+    if (light) vegUniforms.uVegLight.value.subVectors(light.position, light.target.position).normalize();
     const target = this.wind === 'auto' ? 0.2 + 0.35 * (weather?.overcast ?? 0) + 0.45 * Math.max(weather?.rain ?? 0, weather?.snow ?? 0) : this.wind;
     this.windNow += (target - this.windNow) * Math.min(1, dt * 0.3);
     vegUniforms.uVegTime.value = this.time;
@@ -550,10 +557,12 @@ export class Vegetation {
     registerValue('veg.lod.billboard', 'Ab dieser Entfernung (m) werden Bäume als Impostor (gebackenes Bild aus 8 Richtungen) gezeichnet', () => this.billboardDistance, (v) => { this.billboardDistance = v; this.forcedLod = undefined; bands(); }, [0, 5000]);
     registerValue('veg.lod.bush', 'Büsche bis zu dieser Entfernung (m) zeichnen', () => this.bushDistance, (v) => { this.bushDistance = v; bands(); }, [0, 1000]);
     registerValue('veg.fade', 'Breite der geditherten Überblendung zwischen den Detailstufen, Anteil der Entfernung 0..0.5', () => this.fade, (v) => { this.fade = v; bands(); }, [0, 0.5]);
-    registerValue('veg.shadows', 'Detailstufen, die Schatten werfen: 0 keine, 1 detailliert, 2 detailliert und einfach', () => this.shadowTiers, (v) => {
+    registerValue('veg.shadows', 'Detailstufen, die Schatten werfen (mit Wind und Überblendung): 0 keine, 1 detailliert, 2 detailliert und einfach, 3 alle', () => this.shadowTiers, (v) => {
       this.shadowTiers = Math.round(v);
       for (const t of this.tiles.values()) for (const g of t.groups) g.meshes.forEach((im, l) => (im.castShadow = t.shadows && !g.bush && l < this.shadowTiers));
-    }, [0, 2]);
+    }, [0, 3]);
+    registerValue('veg.far', 'Bäume blenden bis zu dieser Entfernung (m) geditherten aus, damit sie nicht mit ihrer Kachel auftauchen (höchstens stream.radius)', () => this.farDistance, (v) => { this.farDistance = v; bands(); }, [100, 10000]);
+    registerValue('veg.translucency', 'Durchscheinendes Sonnenlicht in den Blättern bei Gegenlicht 0..2 (im Schatten keins)', () => vegUniforms.uVegThrough.value, (v) => (vegUniforms.uVegThrough.value = v), [0, 2]);
     registerCommand({
       name: 'veg.lod.force', help: 'Alle Bäume in einer Detailstufe zeigen (0 = detailliert, 1 = einfach, 2 = Impostor) oder auto', args: '0|1|2|auto',
       complete: () => ['0', '1', '2', 'auto'],

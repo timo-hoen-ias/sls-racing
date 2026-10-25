@@ -142,7 +142,7 @@ async function boot() {
   stalls.register();
   const shops = new ShopLayer(index.world);
   shops.register();
-  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod, impostor: quality.name === 'hoch' ? 256 : 128 });
+  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod, impostor: quality.name === 'hoch' ? 256 : 128, far: quality.radius * 0.9 });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
   view.scene.add(props.root);
@@ -658,7 +658,7 @@ async function boot() {
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
-    vegetation.update(dt, view.camera, weather.weather);
+    vegetation.update(dt, view.camera, weather.weather, view.sun);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);

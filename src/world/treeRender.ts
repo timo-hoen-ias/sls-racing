@@ -15,7 +15,20 @@ const FOLIAGE = `${import.meta.env.BASE_URL}textures/foliage/`;
 export const IMPOSTOR_FRAMES = 8;
 
 /** Shared by every vegetation material; Vegetation.update() writes them. */
-export const vegUniforms = { uVegTime: { value: 0 }, uVegWind: { value: 0.3 }, uVegDir: { value: new THREE.Vector2(0.8, 0.6) }, uVegDebug: { value: 0 } };
+export const vegUniforms = {
+  uVegTime: { value: 0 }, uVegWind: { value: 0.3 }, uVegDir: { value: new THREE.Vector2(0.8, 0.6) }, uVegDebug: { value: 0 },
+  // The player's camera: tiers are picked by the distance to it in the shadow pass too, so shadows cross-fade with
+  // the trees (the shadow pass has the light's camera in cameraPosition).
+  uVegCam: { value: new THREE.Vector3() },
+  // Towards the shadow-casting light (world); impostors face it in the shadow pass.
+  uVegLight: { value: new THREE.Vector3(0.3, 0.8, 0.5) },
+  // Leaf translucency strength (veg.translucency).
+  uVegThrough: { value: 0.3 },
+  // Leaves look up the sun's shadow this many crown radii towards the sun (veg.selfshadow): the crown shades
+  // itself through its normals and occlusion, like the simple model and the impostor, and not through the shadow
+  // map, whose speckles inside the crown differ from tier to tier.
+  uVegLift: { value: 1 },
+};
 
 /** Tint of each tier with veg.lod.debug: red detailed, yellow simple, blue impostor. */
 const TIER_TINT = ['vec3(1.0, 0.15, 0.1)', 'vec3(1.0, 0.85, 0.1)', 'vec3(0.15, 0.4, 1.0)'];
@@ -42,17 +55,19 @@ const WIND_VERTEX = (amp: number) => `
 const LOD_VERTEX = `
   {
     vec3 lodBase = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
-    float lodD = distance(lodBase.xz, cameraPosition.xz);
+    float lodD = distance(lodBase.xz, uVegCam.xz);
     vLodT = vec2(clamp((lodD - uLod.x) / max(uLod.y - uLod.x, 1e-3), 0.0, 1.0), clamp((lodD - uLod.z) / max(uLod.w - uLod.z, 1e-3), 0.0, 1.0));
   }`;
 
 // Interleaved gradient noise: the dither pattern; a pixel belongs to the far tier once noise + progress >= 1.
-const LOD_FRAGMENT = (tier: number) => `
-  if (uVegDebug > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, ${TIER_TINT[tier]}, 0.65);
+const LOD_DITHER = `
   {
     float lodN = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     if (lodN + vLodT.x < 1.0 || lodN + vLodT.y >= 1.0) discard;
   }`;
+const LOD_FRAGMENT = (tier: number) => `
+  if (uVegDebug > 0.5) diffuseColor.rgb = mix(diffuseColor.rgb, ${TIER_TINT[tier]}, 0.65);
+${LOD_DITHER}`;
 
 // Alpha-tested leaves thin out in the small mip levels; raise alpha with the mip level so crowns keep their body.
 const MIP_ALPHA = (size: string, uv: string) => `
@@ -61,6 +76,32 @@ const MIP_ALPHA = (size: string, uv: string) => `
     float mip = max(0.0, 0.5 * log2(max(dot(mdx, mdx), dot(mdy, mdy))));
     diffuseColor.a *= 1.0 + mip * 0.28;
   }`;
+
+// Sun shining through the leaves towards the camera, as strong as the sun reaching the leaf (its shadow included:
+// with a single directional light, directLight still holds it after the light loop).
+const TRANSLUCENCY = `#include <lights_fragment_end>
+  #if NUM_DIR_LIGHTS > 0
+  {
+    #if NUM_DIR_LIGHTS == 1 && defined(RE_Direct)
+    vec3 sunC = directLight.color;
+    #else
+    vec3 sunC = directionalLights[0].color;
+    #endif
+    float through = pow(max(0.0, dot(-normalize(vViewPosition), directionalLights[0].direction)), 4.0);
+    reflectedLight.indirectDiffuse += diffuseColor.rgb * sunC * through * uVegThrough;
+  }
+  #endif`;
+
+const VERTEX_HEAD = `#include <common>
+attribute float wind;
+uniform float uVegTime;
+uniform float uVegWind;
+uniform vec2 uVegDir;
+uniform vec3 uVegCam;
+uniform vec3 uVegLight;
+uniform vec4 uLod;
+varying vec2 vLodT;
+attribute float leaf;`;
 
 interface TreeMatOpts {
   key: string;
@@ -78,10 +119,15 @@ function patchTree(mat: THREE.MeshStandardMaterial, o: TreeMatOpts) {
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, vegUniforms, { uLod: { value: o.band } });
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float wind;\nuniform float uVegTime;\nuniform float uVegWind;\nuniform vec2 uVegDir;\nuniform vec4 uLod;\nvarying vec2 vLodT;')
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${WIND_VERTEX(o.wind)}\n${LOD_VERTEX}`);
+      .replace('#include <common>', VERTEX_HEAD)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${WIND_VERTEX(o.wind)}\n${LOD_VERTEX}`)
+      .replace('#include <common>', '#include <common>\nuniform float uVegLift;')
+      .replace('#include <shadowmap_vertex>', `#ifdef USE_SHADOWMAP
+  worldPosition.xyz += uVegLight * leaf * length((modelMatrix * instanceMatrix)[0].xyz) * uVegLift;
+  #endif
+  #include <shadowmap_vertex>`);
     let frag = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vLodT;\nuniform float uVegDebug;')
+      .replace('#include <common>', '#include <common>\nvarying vec2 vLodT;\nuniform float uVegDebug;\nuniform float uVegThrough;')
       .replace('#include <color_fragment>', `#include <color_fragment>\n${LOD_FRAGMENT(o.tier)}`);
     if (o.texSize) frag = frag.replace('#include <map_fragment>', `#include <map_fragment>\n${MIP_ALPHA(`${o.texSize.toFixed(1)}`, 'vMapUv')}`);
     if (o.leaves) {
@@ -93,20 +139,40 @@ function patchTree(mat: THREE.MeshStandardMaterial, o: TreeMatOpts) {
     diffuseColor.a *= smoothstep(0.06, 0.28, abs(dot(faceN, normalize(vViewPosition))));
   }
   #include <alphatest_fragment>`)
-        // Sun shining through the leaves towards the camera.
-        .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
-  #if NUM_DIR_LIGHTS > 0
-  {
-    float through = pow(max(0.0, dot(-normalize(vViewPosition), directionalLights[0].direction)), 4.0);
-    reflectedLight.indirectDiffuse += diffuseColor.rgb * directionalLights[0].color * through * 0.3;
-  }
-  #endif`);
+        .replace('#include <lights_fragment_end>', TRANSLUCENCY);
     }
     shader.fragmentShader = frag;
   };
   patchMaterial(mat, { wet: o.leaves ? 0.3 : 0.5, snow: o.leaves ? 0.6 : 0.3, upFrom: o.leaves ? 0.25 : 0.6 });
   const wx = mat.customProgramCacheKey.bind(mat);
   mat.customProgramCacheKey = () => `tree-${o.key}-${wx()}`;
+}
+
+/**
+ * Shadow caster of a tree tier: the same wind and the same dithered cross-fade (by the distance to the player's
+ * camera) as the visible tree, so a tree's shadow sways with it and fades between tiers instead of popping. One
+ * material draws both geometry groups (the shadow pass takes one per object), so the leaf atlas is its own uniform
+ * and the leaf attribute tells the cards from the bark.
+ */
+function treeDepth(o: TreeMatOpts, leaves: THREE.Texture) {
+  const d = new THREE.MeshDepthMaterial({ side: THREE.DoubleSide });
+  d.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, vegUniforms, { uLod: { value: o.band }, uLeafMap: { value: leaves } });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `${VERTEX_HEAD}\nvarying float vLeaf;\nvarying vec2 vLeafUv;`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${WIND_VERTEX(o.wind)}\n${LOD_VERTEX}\n  vLeaf = leaf;\n  vLeafUv = uv;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vLodT;\nvarying float vLeaf;\nvarying vec2 vLeafUv;\nuniform sampler2D uLeafMap;')
+      .replace('#include <map_fragment>', '')
+      .replace('#include <alphatest_fragment>', `${LOD_DITHER}
+  if (vLeaf > 0.0) {
+    diffuseColor.a = texture2D(uLeafMap, vLeafUv).a;
+${MIP_ALPHA(`${(o.texSize ?? 2048).toFixed(1)}`, 'vLeafUv')}
+    if (diffuseColor.a < 0.42) discard;
+  }`);
+  };
+  d.customProgramCacheKey = () => `treedepth-${o.key}`;
+  return d;
 }
 
 export interface TreeTextures { leaves: THREE.Texture; bark: THREE.Texture; barkNormal: THREE.Texture }
@@ -124,13 +190,22 @@ export async function loadTreeTextures(): Promise<TreeTextures> {
   return { leaves, bark, barkNormal };
 }
 
+export interface TreeTierMaterials {
+  /** Bark and leaves, in the order of the geometry groups. */
+  mats: [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial];
+  /** Shadow caster (customDepthMaterial) for both. */
+  depth: THREE.MeshDepthMaterial;
+}
+
 /** Bark and leaf material for one detail tier. */
-export function treeMaterials(tex: TreeTextures, tier: number, band: LodBand): [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial] {
-  const wood = new THREE.MeshStandardMaterial({ map: tex.bark, normalMap: tex.barkNormal, vertexColors: true, roughness: 0.95 });
+export function treeMaterials(tex: TreeTextures, tier: number, band: LodBand): TreeTierMaterials {
+  // The bark's tiny alpha test keeps the shared shadow material's defines the same for both groups (no recompiles).
+  const wood = new THREE.MeshStandardMaterial({ map: tex.bark, normalMap: tex.barkNormal, vertexColors: true, roughness: 0.95, alphaTest: 0.01 });
   patchTree(wood, { key: `wood${tier}`, band, wind: 0.3, tier });
+  const texSize = (tex.leaves.image as { width?: number } | undefined)?.width ?? 2048;
   const leaf = new THREE.MeshStandardMaterial({ map: tex.leaves, vertexColors: true, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 0.82 });
-  patchTree(leaf, { key: `leaf${tier}`, band, wind: 0.3, leaves: true, texSize: (tex.leaves.image as { width?: number } | undefined)?.width ?? 2048, tier });
-  return [wood, leaf];
+  patchTree(leaf, { key: `leaf${tier}`, band, wind: 0.3, leaves: true, texSize, tier });
+  return { mats: [wood, leaf], depth: treeDepth({ key: `${tier}`, band, wind: 0.3, texSize, tier }, tex.leaves) };
 }
 
 /** Generated geometry of every species, by id. */
@@ -250,42 +325,8 @@ export function impostorGeometry(g: TreeGeometry) {
   return geo;
 }
 
-/** Material of one species' impostors: camera-facing quad, two nearest frames blended, baked normals. */
-export function impostorMaterial(atlas: ImpostorAtlas, id: string, g: TreeGeometry, band: LodBand): THREE.MeshStandardMaterial {
-  const mat = new THREE.MeshStandardMaterial({ map: atlas.albedo.texture, alphaTest: 0.45, roughness: 0.85, side: THREE.DoubleSide });
-  const uniforms = {
-    uImpNormal: { value: atlas.normal.texture },
-    uImpBox: { value: new THREE.Vector2(g.boxR, g.boxH) },
-    // First frame, frames per row, frame size in uv.
-    uImpGrid: { value: new THREE.Vector4(atlas.start[id], atlas.cols, 1 / atlas.cols, 1 / atlas.rows) },
-  };
-  mat.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, vegUniforms, uniforms, { uLod: { value: band } });
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>
-attribute float wind;
-uniform float uVegTime;
-uniform float uVegWind;
-uniform vec2 uVegDir;
-uniform vec4 uLod;
-uniform vec2 uImpBox;
-uniform vec4 uImpGrid;
-varying vec2 vLodT;
-varying vec2 vImpUv0;
-varying vec2 vImpUv1;
-varying float vImpW;
-varying vec3 vImpX;
-varying vec3 vImpY;
-varying vec3 vImpZ;`)
-      .replace('#include <beginnormal_vertex>', `
-  mat4 impM = modelMatrix * instanceMatrix;
-  vec3 impCam = (inverse(impM) * vec4(cameraPosition, 1.0)).xyz;
-  vec2 impD = normalize(impCam.xz + vec2(1e-5, 0.0));
-  vec3 objectNormal = vec3(impD.x, 0.0, impD.y);
-  #ifdef USE_TANGENT
-  vec3 objectTangent = vec3(1.0, 0.0, 0.0);
-  #endif`)
-      .replace('#include <begin_vertex>', `
+// Picks the two frames nearest to the direction impD (object space, xz) and turns the quad to face it.
+const IMP_QUAD = `
   vec3 transformed = vec3(impD.y, 0.0, -impD.x) * position.x + vec3(0.0, position.y, 0.0);
   {
     float N = ${IMPOSTOR_FRAMES.toFixed(1)};
@@ -297,17 +338,64 @@ varying vec3 vImpZ;`)
     float k0 = uImpGrid.x + f0, k1 = uImpGrid.x + mod(f0 + 1.0, N);
     vImpUv0 = (vec2(mod(k0, uImpGrid.y), floor(k0 / uImpGrid.y)) + local) * uImpGrid.zw;
     vImpUv1 = (vec2(mod(k1, uImpGrid.y), floor(k1 / uImpGrid.y)) + local) * uImpGrid.zw;
+  }`;
+
+const IMP_HEAD = `
+uniform vec2 uImpBox;
+uniform vec4 uImpGrid;
+varying vec2 vImpUv0;
+varying vec2 vImpUv1;
+varying float vImpW;`;
+
+const IMP_SAMPLE = `
+  vec4 impC = mix(texture2D(map, vImpUv0), texture2D(map, vImpUv1), vImpW);
+  diffuseColor *= impC;`;
+
+/** Material of one species' impostors: camera-facing quad, two nearest frames blended, baked normals. */
+export function impostorMaterial(atlas: ImpostorAtlas, id: string, g: TreeGeometry, band: LodBand): { mat: THREE.MeshStandardMaterial; depth: THREE.MeshDepthMaterial } {
+  const mat = new THREE.MeshStandardMaterial({ map: atlas.albedo.texture, alphaTest: 0.45, roughness: 0.85, side: THREE.DoubleSide });
+  const uniforms = {
+    uImpNormal: { value: atlas.normal.texture },
+    uImpBox: { value: new THREE.Vector2(g.boxR, g.boxH) },
+    // First frame, frames per row, frame size in uv.
+    uImpGrid: { value: new THREE.Vector4(atlas.start[id], atlas.cols, 1 / atlas.cols, 1 / atlas.rows) },
+  };
+  const mip = MIP_ALPHA(`vec2(${(atlas.cols * atlas.frame).toFixed(1)}, ${(atlas.rows * atlas.frame).toFixed(1)})`, 'vImpUv0');
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, vegUniforms, uniforms, { uLod: { value: band } });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `${VERTEX_HEAD}${IMP_HEAD}
+varying vec3 vImpX;
+varying vec3 vImpY;
+varying vec3 vImpZ;`)
+      .replace('#include <beginnormal_vertex>', `
+  mat4 impM = modelMatrix * instanceMatrix;
+  vec2 impD = normalize((inverse(impM) * vec4(cameraPosition, 1.0)).xz + vec2(1e-5, 0.0));
+  vec3 objectNormal = vec3(impD.x, 0.0, impD.y);
+  #ifdef USE_TANGENT
+  vec3 objectTangent = vec3(1.0, 0.0, 0.0);
+  #endif`)
+      .replace('#include <begin_vertex>', `${IMP_QUAD}
+  {
     mat3 vm = mat3(viewMatrix * impM);
     vImpX = normalize(vm[0]);
     vImpY = normalize(vm[1]);
     vImpZ = normalize(vm[2]);
   }
 ${WIND_VERTEX(0.3)}
-${LOD_VERTEX}`);
+${LOD_VERTEX}`)
+      // The quad stands in the middle of the tree, where its own shadow caster (facing the sun) cuts through it:
+      // look up the shadow from a point moved towards the light past the crown, so the tree does not shade
+      // half of itself, while the shadows of other trees and buildings still fall on it.
+      .replace('#include <shadowmap_vertex>', `#ifdef USE_SHADOWMAP
+  worldPosition.xyz += uVegLight * uImpBox.x * length(impM[0].xyz) / max(length(uVegLight.xz), 0.25);
+  #endif
+  #include <shadowmap_vertex>`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 uniform sampler2D uImpNormal;
 uniform float uVegDebug;
+uniform float uVegThrough;
 varying vec2 vLodT;
 varying vec2 vImpUv0;
 varying vec2 vImpUv1;
@@ -316,19 +404,40 @@ varying vec3 vImpX;
 varying vec3 vImpY;
 varying vec3 vImpZ;`)
       .replace('#include <color_fragment>', `#include <color_fragment>\n${LOD_FRAGMENT(2)}`)
-      .replace('#include <map_fragment>', `
-  vec4 impC = mix(texture2D(map, vImpUv0), texture2D(map, vImpUv1), vImpW);
-  diffuseColor *= impC;
-${MIP_ALPHA(`vec2(${(atlas.cols * atlas.frame).toFixed(1)}, ${(atlas.rows * atlas.frame).toFixed(1)})`, 'vImpUv0')}`)
+      .replace('#include <map_fragment>', `${IMP_SAMPLE}\n${mip}`)
       .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
   {
     vec3 nl = mix(texture2D(uImpNormal, vImpUv0).xyz, texture2D(uImpNormal, vImpUv1).xyz, vImpW) * 2.0 - 1.0;
     normal = normalize(vImpX * nl.x + vImpY * nl.y + vImpZ * nl.z);
     nonPerturbedNormal = normal;
-  }`);
+  }`)
+      .replace('#include <lights_fragment_end>', TRANSLUCENCY);
   };
   patchMaterial(mat, { wet: 0.3, snow: 0.4, upFrom: 0.5 });
   const wx = mat.customProgramCacheKey.bind(mat);
   mat.customProgramCacheKey = () => `tree-impostor-${wx()}`;
-  return mat;
+
+  // Shadow caster: the same quad turned towards the light, showing the frames seen from the sun's direction.
+  const depth = new THREE.MeshDepthMaterial({ map: atlas.albedo.texture, alphaTest: 0.45, side: THREE.DoubleSide });
+  depth.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, vegUniforms, uniforms, { uLod: { value: band } });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `${VERTEX_HEAD}${IMP_HEAD}`)
+      .replace('#include <begin_vertex>', `
+  mat4 impM = modelMatrix * instanceMatrix;
+  vec2 impD = normalize((inverse(impM) * vec4(uVegLight, 0.0)).xz + vec2(1e-5, 0.0));
+${IMP_QUAD}
+${WIND_VERTEX(0.3)}
+${LOD_VERTEX}`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec2 vLodT;
+varying vec2 vImpUv0;
+varying vec2 vImpUv1;
+varying float vImpW;`)
+      .replace('#include <map_fragment>', `${IMP_SAMPLE}\n${mip}`)
+      .replace('#include <alphatest_fragment>', `${LOD_DITHER}\n#include <alphatest_fragment>`);
+  };
+  depth.customProgramCacheKey = () => 'tree-impostor-depth';
+  return { mat, depth };
 }

@@ -1,32 +1,13 @@
-// Combustion engine as an AudioWorklet (inline module via a blob URL): every firing is its
-// own exhaust pulse (pressure kick + noise chuff + resonant knock) with per-cylinder spread,
-// misfires at a lumpy idle, the shift cut and limiter bounce. Adapted from warehouse-racing.
-// Without AudioWorklet support a periodic-wave oscillator approximation takes over.
+// The engine voice as an AudioWorklet (inline module via a blob URL) around EngineDsp (engineDsp.ts):
+// output 0 is the exhaust (stereo, left and right tailpipe), output 1 the intake and the mechanical side
+// (mono). Without AudioWorklet support a periodic-wave oscillator approximation takes over.
 
-export interface PulseSpec {
-  /** Share of noise "chuff" per firing (0..1). */
-  noise: number;
-  /** Share of resonant knock per firing (0..1). */
-  tone: number;
-  toneHz: number;
-  /** Decay length relative to the firing interval. */
-  decay: number;
-  /** Brightness of the noise part (0..1). */
-  color: number;
-}
+import { EngineDsp, type EngineVoiceSpec, firingHz, resolveVoice } from './engineDsp.ts';
 
-export interface EngineVoiceSpec {
-  cylinders: number;
-  idleRpm: number;
-  maxRpm: number;
-  /** Rough idle (0..1). */
-  lumpy: number;
-  /** Spread between cylinders (0..1). */
-  irregular: number;
-  pulse: PulseSpec;
-}
+export type { EngineVoiceSpec, PulseSpec } from './engineDsp.ts';
 
-const ENGINE_WORKLET_SOURCE = `
+const workletSource = () => `
+const EngineDsp = (${EngineDsp.toString()});
 class SlsEngine extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return [
@@ -34,110 +15,28 @@ class SlsEngine extends AudioWorkletProcessor {
       { name: 'throttle', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
       { name: 'cut', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
       { name: 'limiter', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
+      { name: 'crackle', defaultValue: 0, minValue: 0, maxValue: 1, automationRate: 'k-rate' },
     ];
   }
   constructor(options) {
     super();
-    const o = (options && options.processorOptions) || {};
-    this.cyl = Math.max(1, o.cylinders | 0);
-    this.irregular = +o.irregular || 0;
-    this.lumpy = +o.lumpy || 0;
-    this.idleRpm = +o.idleRpm || 800;
-    this.maxRpm = +o.maxRpm || 6000;
-    const p = o.pulse || {};
-    this.pNoise = +p.noise || 0;
-    this.pTone = +p.tone || 0;
-    this.toneInc = (2 * Math.PI * (+p.toneHz || 120)) / sampleRate;
-    this.pDecay = Math.max(0.1, +p.decay || 0.5);
-    this.lpA = 0.04 + 0.5 * Math.max(0, Math.min(1, +p.color || 0.5));
-    this.seed = (o.seed >>> 0) || 0x9e3779b9;
-    this.cylGain = new Float32Array(this.cyl);
-    this.cylOffset = new Float32Array(this.cyl);
-    for (let i = 0; i < this.cyl; i++) {
-      this.cylGain[i] = 1 + this.irregular * 0.7 * (this.rand() - 0.5);
-      this.cylOffset[i] = this.irregular * 0.12 * (this.rand() - 0.5);
-    }
-    this.fp = 0;
-    this.nextCyl = 0;
-    this.wobble = 0;
-    this.wobbleTarget = 0;
-    this.limPhase = 0;
-    this.x1 = 0;
-    this.y1 = 0;
+    this.dsp = new EngineDsp(options.processorOptions, sampleRate);
+    this.spare = new Float32Array(128);
     this.alive = true;
-    const N = 16;
-    this.pAge = new Float32Array(N);
-    this.pLen = new Float32Array(N);
-    this.pAmp = new Float32Array(N);
-    this.pPh = new Float32Array(N);
-    this.pLp = new Float32Array(N);
-    this.pOn = new Uint8Array(N);
-    this.port.onmessage = (e) => { if (e.data === 'stop') this.alive = false; };
-  }
-  rand() {
-    let x = this.seed;
-    x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0;
-    this.seed = x;
-    return x / 4294967296;
-  }
-  fire(amp, skipProb, len) {
-    const k = this.nextCyl;
-    this.nextCyl = (k + 1) % this.cyl;
-    let g = this.cylGain[k] * (1 + this.irregular * 0.35 * (this.rand() - 0.5));
-    if (skipProb > 0 && this.rand() < skipProb) g *= 0.12;
-    let slot = -1, oldest = -1, oldestAge = -1;
-    for (let i = 0; i < this.pOn.length; i++) {
-      if (!this.pOn[i]) { slot = i; break; }
-      if (this.pAge[i] > oldestAge) { oldestAge = this.pAge[i]; oldest = i; }
-    }
-    if (slot < 0) slot = oldest;
-    this.pOn[slot] = 1; this.pAge[slot] = 0; this.pLen[slot] = len;
-    this.pAmp[slot] = amp * g; this.pPh[slot] = 0; this.pLp[slot] = 0;
+    this.port.onmessage = (e) => {
+      const d = e.data;
+      if (d === 'stop') this.alive = false;
+      else if (d && d.bang) this.dsp.bang(d.bang, d.k);
+    };
   }
   process(inputs, outputs, params) {
     if (!this.alive) return false;
-    const out = outputs[0] && outputs[0][0];
-    if (!out) return true;
-    const n = out.length;
-    const rpmP = params.rpm[0], thr = params.throttle[0];
-    const cut = params.cut[0] > 0.5, lim = params.limiter[0] > 0.5;
-    const rpm01 = Math.max(0, Math.min(1, (rpmP - this.idleRpm) / Math.max(1, this.maxRpm - this.idleRpm)));
-    const lumpAmt = this.lumpy * (1 - rpm01) * (1 - rpm01) * (1 - 0.6 * thr);
-    if (this.rand() < 0.04) this.wobbleTarget = (this.rand() - 0.5) * 0.08 * lumpAmt;
-    this.wobble += (this.wobbleTarget - this.wobble) * 0.03;
-    const rpm = Math.max(60, rpmP * (1 + this.wobble));
-    const firePerSample = (rpm / 120) * this.cyl / sampleRate;
-    const interval = 1 / Math.max(1e-6, firePerSample);
-    this.limPhase = (this.limPhase + (n * 13) / sampleRate) % 1;
-    const limOn = lim && this.limPhase < 0.4;
-    const amp = (0.45 + 0.55 * thr) * (cut ? 0.1 : 1) * (limOn ? 0.06 : 1);
-    const len = Math.max(24, interval * this.pDecay * (0.8 + 0.4 * thr));
-    const skipProb = lumpAmt * 0.35 + (cut ? 0.3 : 0);
-    const lpA = this.lpA, toneInc = this.toneInc, pN = this.pNoise, pT = this.pTone;
-    for (let i = 0; i < n; i++) {
-      this.fp += firePerSample;
-      if (this.fp >= 1 + this.cylOffset[this.nextCyl]) {
-        this.fp -= 1;
-        this.fire(amp, skipProb, len);
-      }
-      let s = 0;
-      for (let j = 0; j < this.pOn.length; j++) {
-        if (!this.pOn[j]) continue;
-        const u = this.pAge[j] / this.pLen[j];
-        if (u >= 1) { this.pOn[j] = 0; continue; }
-        const env = (1 - u) * (1 - u);
-        const th = u < 0.55 ? 0.5 * (1 - Math.cos((2 * Math.PI * u) / 0.55)) : 0;
-        const nz = this.rand() * 2 - 1;
-        this.pLp[j] += lpA * (nz - this.pLp[j]);
-        const tone = Math.sin(this.pPh[j]) * env;
-        this.pPh[j] += toneInc;
-        s += this.pAmp[j] * (0.8 * th + pN * this.pLp[j] * env * 2.2 + pT * tone);
-        this.pAge[j] += 1;
-      }
-      const y = s - this.x1 + 0.995 * this.y1;
-      this.x1 = s; this.y1 = y;
-      out[i] = y * 0.5;
-    }
+    const ex = outputs[0], ia = outputs[1];
+    if (!ex || !ex[0]) return true;
+    const n = ex[0].length;
+    if (this.spare.length < n) this.spare = new Float32Array(n);
+    this.dsp.process(ex[0], ex[1] || this.spare, (ia && ia[0]) || this.spare, n,
+      params.rpm[0], params.throttle[0], params.cut[0] > 0.5, params.limiter[0] > 0.5, params.crackle[0]);
     return true;
   }
 }
@@ -145,9 +44,15 @@ registerProcessor('sls-engine', SlsEngine);
 `;
 
 export interface EngineSource {
-  node: AudioNode;
+  /** Exhaust, stereo on the worklet. */
+  exhaust: AudioNode;
+  /** Intake roar, valvetrain and injectors (mono). */
+  intake: AudioNode;
   worklet: boolean;
-  set(rpm: number, load: number, cut: boolean, limiter: boolean, t: number): void;
+  set(rpm: number, load: number, cut: boolean, limiter: boolean, t: number, crackle?: number): void;
+  /** Lift-off backfire: n cracks of strength k. */
+  bang(n: number, k: number): void;
+  stop(): void;
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -158,33 +63,49 @@ export function loadEngineWorklet(ctx: AudioContext): Promise<boolean> {
   let p = loaded.get(ctx);
   if (p) return p;
   if (!ctx.audioWorklet || typeof AudioWorkletNode === 'undefined') return Promise.resolve(false);
-  const url = URL.createObjectURL(new Blob([ENGINE_WORKLET_SOURCE], { type: 'application/javascript' }));
+  const url = URL.createObjectURL(new Blob([workletSource()], { type: 'application/javascript' }));
   p = ctx.audioWorklet.addModule(url).then(() => true, () => false).finally(() => URL.revokeObjectURL(url));
   loaded.set(ctx, p);
   return p;
 }
+
+let seed = 0x5eed1234;
 
 export function createEngineSource(ctx: AudioContext, spec: EngineVoiceSpec, noise: AudioBuffer, worklet: boolean): EngineSource {
   if (worklet) {
     try {
       const node = new AudioWorkletNode(ctx, 'sls-engine', {
         numberOfInputs: 0,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        processorOptions: { ...spec, seed: 0x5eed1234 },
+        numberOfOutputs: 2,
+        outputChannelCount: [2, 1],
+        processorOptions: { ...resolveVoice(spec), seed: (seed = (seed * 1664525 + 1013904223) >>> 0) },
       });
+      const exhaust = ctx.createGain();
+      const intake = ctx.createGain();
+      node.connect(exhaust, 0);
+      node.connect(intake, 1);
       const rpm = node.parameters.get('rpm')!;
       const throttle = node.parameters.get('throttle')!;
       const cut = node.parameters.get('cut')!;
       const limiter = node.parameters.get('limiter')!;
+      const crackle = node.parameters.get('crackle')!;
       return {
-        node,
+        exhaust,
+        intake,
         worklet: true,
-        set(r, load, c, lim, t) {
+        set(r, load, c, lim, t, crk = 0) {
           rpm.setTargetAtTime(clamp(r, 0, 20000), t, 0.03);
           throttle.setTargetAtTime(clamp(load, 0, 1), t, 0.04);
           cut.setValueAtTime(c ? 1 : 0, t);
           limiter.setValueAtTime(lim ? 1 : 0, t);
+          crackle.setValueAtTime(clamp(crk, 0, 1), t);
+        },
+        bang(n, k) {
+          node.port.postMessage({ bang: n, k });
+        },
+        stop() {
+          node.port.postMessage('stop');
+          node.disconnect();
         },
       };
     } catch {
@@ -193,8 +114,6 @@ export function createEngineSource(ctx: AudioContext, spec: EngineVoiceSpec, noi
   }
   return createFallbackSource(ctx, spec, noise);
 }
-
-const firingHz = (rpm: number, cylinders: number) => (rpm / 60) * (cylinders / 2);
 
 function createFallbackSource(ctx: AudioContext, spec: EngineVoiceSpec, noiseBuf: AudioBuffer): EngineSource {
   const n = 24;
@@ -226,11 +145,15 @@ function createFallbackSource(ctx: AudioContext, spec: EngineVoiceSpec, noiseBuf
   mix.gain.value = 0.4;
   osc.connect(oscGain).connect(mix);
   am.connect(mix);
+  const intake = ctx.createGain();
+  intake.gain.value = 0.3;
+  mix.connect(intake);
   osc.start();
   mod.start();
   noise.start();
   return {
-    node: mix,
+    exhaust: mix,
+    intake,
     worklet: false,
     set(r, load, c, lim, t) {
       const hz = Math.max(5, firingHz(r, spec.cylinders));
@@ -238,6 +161,12 @@ function createFallbackSource(ctx: AudioContext, spec: EngineVoiceSpec, noiseBuf
       mod.frequency.setTargetAtTime(hz, t, 0.03);
       const limOn = lim && Math.floor(t * 14) % 2 === 0;
       mix.gain.setTargetAtTime(0.4 * (0.45 + 0.55 * load) * (c ? 0.1 : 1) * (limOn ? 0.06 : 1), t, c || limOn ? 0.01 : 0.05);
+    },
+    bang() {},
+    stop() {
+      for (const s of [osc, mod, noise]) s.stop();
+      mix.disconnect();
+      intake.disconnect();
     },
   };
 }

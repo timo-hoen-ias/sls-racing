@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { EngineSound } from './audio/engineSound.ts';
+import { registerSoundCommands } from './audio/soundCommands.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
 import { registerAddressCommands } from './nav/addressCommands.ts';
@@ -275,6 +276,10 @@ async function boot() {
   let hit = 0;
   let hitDir = { x: 0, y: 0, z: 0 };
   let hitCooldown = 0;
+  // Glancing hits that glide along a wall (speed along it), for the scrape sound.
+  let scraped = 0;
+  // Suspension travel per wheel last frame, for bump thumps.
+  const lastComp = [0, 0, 0, 0];
 
   const setManual = (on: boolean) => {
     car.drivetrain.manual = on;
@@ -425,6 +430,7 @@ async function boot() {
   const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, traffic, props });
   feel.registerCommands();
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
+  const soundCmds = registerSoundCommands(() => sound);
 
   let acc = 0;
   let wasBursting = false;
@@ -617,6 +623,7 @@ async function boot() {
       if (dv > 3.5 && dv > hit) { hit = dv; hitDir = { x: dvx / dv, y: dvy / dv, z: dvz / dv }; }
       // Glancing hits on walls and rails: glide along instead of bouncing off.
       const glided = glide.apply(car.body, prevVel);
+      if (glided) scraped = Math.max(scraped, Math.hypot(prevVel.x, prevVel.z));
       const nv = glided ? car.body.linvel() : lv;
       prevVel.x = nv.x; prevVel.y = nv.y; prevVel.z = nv.z;
       acc -= STEP;
@@ -662,12 +669,22 @@ async function boot() {
       // A real crash ends the running combo.
       if (strength > 0.45) score.crash();
       effects.impact({ x: ip.x - hitDir.x * 2, y: ip.y - Math.max(0, hitDir.y) * 0.3, z: ip.z - hitDir.z * 2 }, strength);
-      sound?.impact(strength);
+      // Straight up is a hard landing; gliding along a wall scrapes; everything else is a crash.
+      if (hitDir.y > 0.8) sound?.landing(0.4 + 0.6 * strength);
+      else {
+        if (scraped > 0) sound?.scrape(Math.min(1, scraped / 35));
+        sound?.impact(scraped > 0 ? strength * 0.4 : strength);
+      }
       worldAudio.impact(ip, car.heading(), strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
       hitCooldown = 0.25;
     }
+    else if (scraped > 0 && worldReady && hitCooldown <= 0) {
+      sound?.scrape(Math.min(1, scraped / 35));
+      hitCooldown = 0.25;
+    }
     hit = 0;
+    scraped = 0;
     debris.update(dt);
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;
@@ -753,6 +770,13 @@ async function boot() {
 
     mixer.update({ engine: sound, traffic: traffic.sound, ambience: worldAudio.ambience, weather: weather.sound });
     const dtr = car.drivetrain;
+    if (sound && soundCmds.view === 'auto') sound.view = cam.mode;
+    let susp = 0;
+    for (let i = 0; i < 4; i++) {
+      const c = car.wheels[i].compression;
+      if (dt > 0) susp = Math.max(susp, (c - lastComp[i]) / dt);
+      lastComp[i] = c;
+    }
     if (rs) {
       sound?.update({
         rpm: rs.rpm, load: rs.load, cut: false, blip: false, limiter: false, shifted: null,
@@ -761,7 +785,7 @@ async function boot() {
     } else sound?.update({
       rpm: dtr.rpm, load: dtr.load, cut: dtr.cut, blip: dtr.blip, limiter: dtr.limiter, shifted: shiftedSince(dtr),
       speed: Math.abs(car.speed), boosting: car.boosting, slip: car.slip, airborne: car.airborne,
-      rumble: roadSurface.rumble, crunch: roadSurface.crunch, squeal: roadSurface.squeal,
+      rumble: roadSurface.rumble, crunch: roadSurface.crunch, squeal: roadSurface.squeal, gear: dtr.gear, susp: paused ? 0 : susp,
     });
     for (const k of roadSurface.kerbs) { sound?.kerb(k); input.rumble(0.35 + 0.4 * k, 90); }
     if (car.boosting) input.rumble(0.25, 60);

@@ -72,3 +72,20 @@ describe('pins at one end only', () => {
     for (let k = 1; k < y.length; k++) expect(Math.abs(y[k] - y[k - 1])).toBeLessThan(0.25);
   });
 });
+
+describe('bumps under half a metre', () => {
+  it('a 30 cm wave over 60 m on a grade is pressed flat, a 3 m hill stays', () => {
+    const wave = (e: number) => 200 + 0.04 * e + 0.3 * Math.sin((e / 60) * 2 * Math.PI);
+    const a: Way = { id: 1, tags: { highway: 'residential' }, pts: [[0, 0], [600, 0]], ids: [1, 2], closed: false };
+    roadProfiles([a], (e) => wave(e), new Map());
+    const { dist, y } = a.profile!;
+    let worst = 0;
+    for (let k = 0; k < y.length; k++) if (dist[k] > 100 && dist[k] < 500) worst = Math.max(worst, Math.abs(y[k] - (200 + 0.04 * dist[k])));
+    expect(worst).toBeLessThan(0.05);
+    const hill = (e: number) => 200 + 3 * Math.exp(-(((e - 300) / 80) ** 2));
+    const b: Way = { id: 2, tags: { highway: 'residential' }, pts: [[0, 0], [600, 0]], ids: [3, 4], closed: false };
+    roadProfiles([b], (e) => hill(e), new Map());
+    const top = Math.max(...b.profile!.y);
+    expect(top).toBeGreaterThan(202);
+  });
+});

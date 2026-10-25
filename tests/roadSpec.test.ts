@@ -46,9 +46,9 @@ describe('game road profile (S1)', () => {
     setRoadProfile('game');
     try {
       const res = roadSection({ highway: 'residential' })!;
-      expect(res.width).toBeCloseTo(7.2);
-      expect(res.lane).toBeCloseTo(3.6);
-      expect(roadSection({ highway: 'motorway' })!.lane).toBeCloseTo(4.24, 1);
+      expect(res.width).toBeCloseTo(8.1);
+      expect(res.lane).toBeCloseTo(4.05);
+      expect(roadSection({ highway: 'motorway' })!.lane).toBeCloseTo(4.31, 1);
       // Street space 9 m: room for 6.6 m with two 1.2 m sidewalks.
       expect(roadSection({ highway: 'residential', 'sls:street': '9' })!.width).toBeCloseTo(6.6);
       // Never narrower than the real road, however tight the street.

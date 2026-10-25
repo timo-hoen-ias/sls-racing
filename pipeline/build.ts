@@ -28,7 +28,7 @@ import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
-import { smoothBends } from './lib/smooth.ts';
+import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
 import { activeRoadProfile, KERB, noCars } from '../src/world/roadSpec.ts';
@@ -82,6 +82,8 @@ function main() {
   // Game road profile: kinks in the mapped lines become short arcs, before anything reads the geometry.
   const smoothed = smoothBends(osm.ways, new Set(osm.points.map((p) => p.id)));
   if (smoothed) console.log(`Bends: ${smoothed} kinks rounded`);
+  const curves = splineCurves(osm.ways);
+  if (curves.ways) console.log(`Curves: ${curves.ways} ways as splines, ${curves.points} points added`);
   const tiles = new TileMap(info.tileSize);
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
@@ -520,7 +522,7 @@ function main() {
     tiles: index,
     graph: 'graph.json',
     roadProfile: activeRoadProfile(),
-    ...(fillets.length || smoothed ? { roadShape: { corners: fillets.length, bends: smoothed } } : {}),
+    ...(fillets.length || smoothed || curves.ways ? { roadShape: { corners: fillets.length, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',

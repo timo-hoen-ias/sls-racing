@@ -89,11 +89,11 @@ jobs:
         run: npm run world:drivetest -- --routes=200
       - name: Gap check (every road, every 2 m, no holes or steps)
         if: steps.key.outputs.skip != 'true'
-        run: npm run world:gaps -- --max=70 # ratchet: lower as bridge fixes land (68 after the surface-check repairs; the surface check is the stricter gate)
+        run: npm run world:gaps -- --max=55 # ratchet: lower as bridge fixes land (49 after road smoothing and curve splines, 2026-10-25)
       # Full coverage: every 0.5 m cell of every carriageway (junctions, ramps, bridges, tile borders), as wheel and chassis.
       - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags)
         if: steps.key.outputs.skip != 'true'
-        run: npm run world:surface -- --max-critical=225 --max=2100 # ratchet (2026-10-25: 219 critical, 2091 total): lower as fixes land
+        run: npm run world:surface -- --max-critical=150 --max=2000 # ratchet (2026-10-25: 132 critical, 1867 total after road smoothing): lower as fixes land
       # Tiles that fail the checks must not count as tested: the next run with this key builds again.
       - name: Withdraw tiles after a failed check
         if: failure() && steps.key.outputs.skip != 'true' && steps.key.outputs.publish == 'true'

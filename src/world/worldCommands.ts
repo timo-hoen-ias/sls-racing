@@ -9,6 +9,7 @@ import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { Landmarks } from './landmarks.ts';
 import type { Materials } from '../render/materials.ts';
 import { TERRAIN_STEP, type TileContent, type WorldIndex } from './format.ts';
+import { GAME_WIDEN } from './roadSpec.ts';
 import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
 import {
   SURFACE_KINDS, cellCentre, clusterIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
@@ -65,7 +66,24 @@ export function registerWorldCommands(g: WorldCommandContext) {
 
   registerCommand({
     name: 'road.profile', help: 'Straßenprofil der Kacheln: game (breitere Fahrbahnen, Fun-Racer) oder real. Neu bauen mit SLS_ROAD_PROFILE=real npm run world:build',
-    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrstreifen 13–20 % breiter, Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.bends} Knicke zu Bögen` : ''}`,
+    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrbahnen 15–35 % breiter (road.widen), Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.bends} Knicke zu Bögen` : ''}${g.index.roadShape?.curves ? `, ${g.index.roadShape.curves} Straßen als runde Kurven (${g.index.roadShape.curvePoints} Stützpunkte ergänzt)` : ''}`,
+  });
+  registerCommand({
+    name: 'road.widen',
+    help: 'Verbreiterung je Straßenklasse im Profil game (gegenüber der echten Breite, begrenzt durch den Straßenraum zwischen den Häusern)',
+    run: () => `${g.index.roadProfile === 'game' ? 'aktiv' : 'aus (Profil real)'}: ${Object.entries(GAME_WIDEN).map(([k, f]) => `${k} +${Math.round((f - 1) * 100)} %`).join(', ')}`,
+  });
+  registerCommand({
+    name: 'road.curves',
+    help: 'Runde Kurven: wie viele Straßen als Spline gebaut sind und mit wie vielen Stützpunkten; "wire" zeigt die Fahrbahn als Drahtgitter (Polygondichte), "solid" wieder normal',
+    args: '[wire|solid]',
+    complete: () => ['wire', 'solid'],
+    run([a]) {
+      if (a === 'wire' || a === 'solid') { g.mats.road.wireframe = a === 'wire'; g.mats.road.needsUpdate = true; }
+      const r = g.index.roadShape;
+      const info = r?.curves ? `${r.curves} Straßen als Spline, ${r.curvePoints} Stützpunkte ergänzt (je höchstens 3° Richtungsänderung, ab 0,75 m)` : 'Keine Splines in diesen Kacheln (nur im Straßenprofil game)';
+      return `${info}${a ? ` · Fahrbahn ${g.mats.road.wireframe ? 'als Drahtgitter' : 'normal'}` : ''}`;
+    },
   });
   // Where the deployed tiles come from (pipeline/deploy-tiles.ts, world build on GitHub).
   registerCommand({

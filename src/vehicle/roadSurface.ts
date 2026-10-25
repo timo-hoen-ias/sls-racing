@@ -1,6 +1,7 @@
 import { Ground } from '../world/format.ts';
 import type { Edge, RoadGraph } from '../world/roadGraph.ts';
 import type { CarPhysics } from './carPhysics.ts';
+import { CAR } from './tuning.ts';
 
 // What each wheel is rolling on: asphalt, cobbles, gravel, grass, field, forest floor, pavement or water.
 // Decided from the road graph (on a carriageway or not, road class) and the tile ground class.
@@ -78,6 +79,9 @@ export function classify(graph: RoadGraph, groundAt: (x: number, z: number) => n
   }
 }
 
+/** Unpaved ground where the tread decides the grip. */
+const LOOSE = new Set<SurfaceKind>(['schotter', 'gras', 'acker', 'waldboden']);
+
 export class RoadSurface {
   readonly kinds: SurfaceKind[] = ['asphalt', 'asphalt', 'asphalt', 'asphalt'];
   /** Debug override for all four wheels. */
@@ -123,8 +127,10 @@ export class RoadSurface {
         this.kerbed[i] = kerb;
       }
       const s = SURFACES[this.kinds[i]];
-      car.wheelGrip[i] = s.grip * (extraGrip[i] ?? 1);
-      car.wheelRolling[i] = s.rolling;
+      // All-terrain tyres (CAR.tyre.loose) keep more grip and roll easier on loose ground.
+      const loose = LOOSE.has(this.kinds[i]) ? CAR.tyre.loose : 0;
+      car.wheelGrip[i] = (s.grip + (1 - s.grip) * loose) * (extraGrip[i] ?? 1);
+      car.wheelRolling[i] = s.rolling * (1 - 0.5 * loose);
       car.wheelRumble[i] = s.rumble;
       if (w.contact) { rumble = Math.max(rumble, s.rumble); crunch = Math.max(crunch, s.crunch); squeal += s.squeal; n++; }
     }

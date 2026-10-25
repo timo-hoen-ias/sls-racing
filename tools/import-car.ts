@@ -21,8 +21,13 @@ interface CarConfig {
   name: string;
   /** Source credit, written into the extras (CREDITS.md has the full line). */
   credit: string;
-  /** Which way the car points in the source file, in its world space. */
+  /** Which way the car points in the source file, in its world space, or the yaw (degrees) that turns it to +z. */
   forward: '+x' | '-x' | '+z' | '-z';
+  yaw?: number;
+  /** Source file in another folder of assets-src/cars (a pack with several cars), e.g. "passenger-pack/x.glb". */
+  file?: string;
+  /** Only the mesh nodes within radius (m, source world space) of this node: one car out of a pack. */
+  near?: { node: string; radius: number };
   /** Uniform scale to metres, or the real overall length the car is scaled to. */
   scale?: number;
   length?: number;
@@ -34,6 +39,8 @@ interface CarConfig {
   /** Parts that become the head- and brake-light material of the game (they light up at night / when braking). */
   head?: string;
   brake?: string;
+  /** Material names of lamp clusters textured in one piece: red texels become brake, the rest head. */
+  optics?: string[];
   /** Material names whose meshes are split into paint and the rest by the colour of the base texture. */
   paint: { materials: string[]; key?: string; tolerance?: number; whole?: boolean };
   /** Material names renamed "tyre" (they cast shadows like the Blender cars' tyres). */
@@ -52,7 +59,7 @@ const INFO = process.argv.includes('--info');
 if (!id) throw new Error('Aufruf: node tools/import-car.ts <id> [--info]');
 const DIR = join('assets-src/cars', id);
 const cfg = JSON.parse(readFileSync(join(DIR, 'car.json'), 'utf8')) as CarConfig;
-const src = readdirSync(DIR).find((f) => f.endsWith('.glb'));
+const src = cfg.file ? join('..', cfg.file) : readdirSync(DIR).find((f) => f.endsWith('.glb'));
 if (!src) throw new Error(`${DIR}: keine GLB`);
 const OUT = `public/models/cars/${id}.glb`;
 
@@ -68,7 +75,7 @@ const re = (s?: string) => (s ? new RegExp(s, 'i') : null);
 const DROP = re(cfg.drop), WHEELS = re(cfg.wheels)!, CALIPERS = re(cfg.calipers), HEAD = re(cfg.head), BRAKE = re(cfg.brake), EXHAUST = re(cfg.exhaust);
 
 /** Source world space → car space without the final offset: forward to +z, y stays up. */
-const yaw = { '+z': 0, '-z': Math.PI, '+x': -Math.PI / 2, '-x': Math.PI / 2 }[cfg.forward];
+const yaw = cfg.yaw !== undefined ? THREE.MathUtils.degToRad(cfg.yaw) : { '+z': 0, '-z': Math.PI, '+x': -Math.PI / 2, '-x': Math.PI / 2 }[cfg.forward];
 const orient = new THREE.Matrix4().makeRotationY(yaw);
 
 interface Part {
@@ -93,12 +100,16 @@ function boxOf(prim: Primitive) {
   return box;
 }
 
+const worldPos = (n: Node) => new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().fromArray(n.getWorldMatrix()));
+const nearNode = cfg.near && root.listNodes().find((n) => n.getName() === cfg.near!.node);
+if (cfg.near && !nearNode) throw new Error(`${cfg.near.node}: Knoten fehlt`);
 const parts: Part[] = [];
 for (const node of root.listNodes()) {
   const mesh = node.getMesh();
   if (!mesh) continue;
   const path = pathOf(node);
   if (DROP?.test(path)) continue;
+  if (nearNode && worldPos(node).distanceTo(worldPos(nearNode)) > cfg.near!.radius) continue;
   const kind = WHEELS.test(path) ? 'wheel' : CALIPERS?.test(path) ? 'caliper' : 'body';
   const world = orient.clone().multiply(new THREE.Matrix4().fromArray(node.getWorldMatrix()));
   for (const src of mesh.listPrimitives()) {
@@ -220,6 +231,30 @@ for (const { part: p, mat, s } of toSplit) {
   p.prim.setIndices(doc.createAccessor().setType('SCALAR').setArray(new Uint32Array(keep)).setBuffer(root.listBuffers()[0]));
   compactPrimitive(p.prim);
   parts.push({ ...p, prim: painted });
+}
+
+// Lamp clusters in one textured piece: red texels light up as brake lights, the rest as head lights.
+for (const p of parts.filter((q) => q.kind === 'body' && cfg.optics?.includes(q.prim.getMaterial()?.getName() ?? ''))) {
+  const s = p.prim.getMaterial()!.getBaseColorTexture() ? await sampleTriangles(p.prim, p.prim.getMaterial()!) : null;
+  if (!s) {
+    p.prim.setMaterial(named(doc, 'head'));
+    continue;
+  }
+  // Red at the back only: side markers and reflectors at the front stay head lights.
+  const pos = p.prim.getAttribute('POSITION')!;
+  const red: number[] = [], rest: number[] = [];
+  for (let t = 0; t < s.idx.length; t += 3) {
+    const [r, g] = [s.colours[t], s.colours[t + 1]];
+    const z = pos.getElement(s.idx[t], [])[2];
+    (r > 1.6 * g && r > 90 && z < 0 ? red : rest).push(s.idx[t], s.idx[t + 1], s.idx[t + 2]);
+  }
+  const brake = p.prim.clone().setMaterial(named(doc, 'brake'));
+  brake.setIndices(doc.createAccessor().setType('SCALAR').setArray(new Uint32Array(red)).setBuffer(root.listBuffers()[0]));
+  compactPrimitive(brake);
+  p.prim.setMaterial(named(doc, 'head')).setIndices(doc.createAccessor().setType('SCALAR').setArray(new Uint32Array(rest)).setBuffer(root.listBuffers()[0]));
+  compactPrimitive(p.prim);
+  p.box = boxOf(p.prim);
+  if (red.length) parts.push({ ...p, prim: brake, box: boxOf(brake) });
 }
 
 /** Joins the primitives by material (and vertex layout): one draw call per material. */

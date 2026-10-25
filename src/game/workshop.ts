@@ -34,6 +34,7 @@ export const CAR_SHOP: Record<string, { price: number; level: number; ls: number
   sedan: { price: 38000, level: 4, ls: 135 },
   coupe: { price: 55000, level: 7, ls: 155 },
   goblin: { price: 95000, level: 10, ls: 175 },
+  offroad: { price: 24000, level: 2, ls: 105 },
 };
 
 /**
@@ -77,6 +78,7 @@ export function applySpec(spec: Spec) {
     car.suspension.compression *= 0.85;
     car.suspension.relaxation *= 0.85;
     car.tyre.mu *= 0.96;
+    (car.tyre as { loose?: number }).loose = Math.min(1, (CAR.tyre.loose ?? 0) + 0.3);
     car.aero.downforce *= 0.7;
   }
 }

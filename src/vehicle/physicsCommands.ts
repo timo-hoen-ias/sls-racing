@@ -100,6 +100,7 @@ export function registerPhysicsCommands(car: CarPhysics) {
     },
   });
   registerValue('drive.front', 'Antriebsanteil vorn 0..1 (0 = Heckantrieb, 1 = Frontantrieb)', () => CAR.frontDrive, (v) => { (CAR as { frontDrive: number }).frontDrive = v; }, [0, 1]);
+  registerValue('tyre.loose', 'Geländereifen 0..1: wie viel des auf Schotter, Gras, Acker und Waldboden verlorenen Grips das Profil zurückholt', () => CAR.tyre.loose, (v) => { (CAR.tyre as { loose: number }).loose = v; }, [0, 1]);
   registerCommand({
     name: 'surface.grip',
     help: 'Fahrbahn-Multiplikatoren lesen oder setzen (überschreibt das Wetter bis zum nächsten Frame)',

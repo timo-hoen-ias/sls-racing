@@ -2,6 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
 import { classify, RoadSurface } from '../src/vehicle/roadSurface.ts';
+import { CAR } from '../src/vehicle/tuning.ts';
 import { Ground } from '../src/world/format.ts';
 import { RoadGraph } from '../src/world/roadGraph.ts';
 
@@ -55,5 +56,30 @@ describe('road surface', () => {
     expect(grass.grip).toBeLessThan(0.7);
     expect(grass.rumble).toBeGreaterThan(0);
     expect(road.rumble).toBe(0);
+  });
+
+  it('gives all-terrain tyres back grip on loose ground only', () => {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    world.timestep = 1 / 60;
+    const s = 50;
+    world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array([-s, 0, -s, s, 0, -s, -s, 0, s, s, 0, s]), new Uint32Array([0, 2, 1, 1, 2, 3])), world.createRigidBody(RAPIER.RigidBodyDesc.fixed()));
+    const car = new CarPhysics(RAPIER, world, { x: 0, y: 1, z: 0 }, 0);
+    const idle = { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
+    for (let i = 0; i < 60; i++) { car.update(idle, 1 / 60); world.step(); }
+    const rs = new RoadSurface(graph(5), () => Ground.grass);
+    const tyre = CAR.tyre as { loose: number };
+    const grip = (force: 'asphalt' | 'acker', loose: number) => {
+      tyre.loose = loose;
+      rs.force = force;
+      rs.update(car);
+      return car.wheelGrip[0];
+    };
+    try {
+      expect(grip('acker', 0.55)).toBeCloseTo(0.5 + 0.5 * 0.55, 3);
+      expect(grip('acker', 0)).toBeCloseTo(0.5, 3);
+      expect(grip('asphalt', 0.55)).toBe(1);
+    } finally {
+      tyre.loose = 0;
+    }
   });
 });

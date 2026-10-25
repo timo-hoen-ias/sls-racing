@@ -8,10 +8,12 @@
 //   step   the surface jumps between neighbouring cells (a seam the car bangs into)
 //   snag   terrain, a deck or another solid pokes up through the road high enough to catch the underbody
 //   seam   the terrain of two neighbouring tiles does not meet at their shared edge (pipeline only)
+//   gap    a slot up to 1.5 m wide between two carriageways at one height (two decks side by side) where a
+//          wheel drops through
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { CAR_GROUPS } from '../vehicle/carPhysics.ts';
 
-export const SURFACE_KINDS = ['hole', 'bump', 'dip', 'step', 'snag', 'seam'] as const;
+export const SURFACE_KINDS = ['hole', 'bump', 'dip', 'step', 'snag', 'seam', 'gap'] as const;
 export type SurfaceKind = (typeof SURFACE_KINDS)[number];
 
 /** Thresholds in metres (per kind: the size above which a cell counts), plus probe geometry. */
@@ -28,6 +30,10 @@ export const SURFACE_LIMITS = {
   snag: 0.12,
   /** Terrain of neighbouring tiles apart at their shared edge. */
   seam: 0.02,
+  /** A wheel over a slot between two carriageways sinks this far. */
+  gap: 0.25,
+  /** Widest slot between two carriageways that is checked (cells). */
+  slot: 3,
   /** Rays start this far above the drawn road … */
   above: 0.6,
   /** … and reach this far below it. */
@@ -41,7 +47,7 @@ export const SURFACE_LIMITS = {
  * 0.25 m (the step assist lifts the car over 0.3 m above its underbody, the springs take 0.18 m). Seams from 5 cm.
  */
 export function isCritical(kind: SurfaceKind, size: number) {
-  return kind === 'hole' || kind === 'snag' || size >= (kind === 'seam' ? 0.05 : 0.25);
+  return kind === 'hole' || kind === 'snag' || kind === 'gap' || size >= (kind === 'seam' ? 0.05 : 0.25);
 }
 
 /** One drawn level of a cell: drawn height, where the wheels and the chassis rest (null: nothing) and on what. */
@@ -89,6 +95,43 @@ function rasterize(pos: Float32Array, a: number, b: number, c: number, g: CellGr
       if (!ys) out.set(key, (ys = []));
       ys.push(l1 * ay + l2 * by + l3 * cy);
     }
+}
+
+/**
+ * Cells of narrow slots between drawn carriageways: runs of at most SURFACE_LIMITS.slot undrawn cells across
+ * (along x or z) with road on both sides at about one height. Each gets the height interpolated between the
+ * two sides, to be probed like a road cell (gapIssues).
+ */
+export function slotCells(levels: Map<number, number[]>, g: CellGrid): Map<number, number[]> {
+  const cols = gridCols(g), rows = g.r1 - g.r0;
+  const top = (k: number) => Math.max(...levels.get(k)!);
+  const out = new Map<number, number[]>();
+  for (const key of levels.keys()) {
+    const c = key % cols, r = (key - c) / cols;
+    for (const [dc, dr] of [[1, 0], [0, 1]]) {
+      let n = 1;
+      const at = (i: number) => (r + dr * i) * cols + c + dc * i;
+      const ok = (i: number) => c + dc * i < cols && r + dr * i < rows;
+      while (n <= SURFACE_LIMITS.slot && ok(n) && !levels.has(at(n))) n++;
+      if (n === 1 || n > SURFACE_LIMITS.slot || !ok(n)) continue;
+      const ya = top(key), yb = top(at(n));
+      if (Math.abs(ya - yb) > 0.5) continue;
+      for (let i = 1; i < n; i++) if (!out.has(at(i))) out.set(at(i), [ya + ((yb - ya) * i) / n]);
+    }
+  }
+  return out;
+}
+
+/** Slot cells (slotCells, probed) where a wheel would drop: nothing under them, or far below the two roads. */
+export function gapIssues(cells: Map<number, SurfaceCell[]>, cols: number, inside: (c: number, r: number) => boolean = () => true): SurfaceIssue[] {
+  const out: SurfaceIssue[] = [];
+  for (const [key, [s]] of cells) {
+    const c = key % cols, r = (key - c) / cols;
+    if (!inside(c, r)) continue;
+    const drop = s.yw === null ? SURFACE_LIMITS.hole : s.yd - s.yw;
+    if (drop > SURFACE_LIMITS.gap) out.push({ key, y: s.yd, kind: 'gap', size: Math.min(drop, SURFACE_LIMITS.hole), what: s.wheel });
+  }
+  return out;
 }
 
 /** Drawn heights of one cell grouped into levels (overlapping roads at a junction are one level, the top one). */
@@ -166,7 +209,7 @@ export function surfaceIssues(cells: Map<number, SurfaceCell[]>, cols: number, i
 /** One issue per place: the worst within `radius` m (and 3 m in height), worst first. */
 export function clusterIssues<T extends { x: number; y: number; z: number; kind: SurfaceKind; size: number }>(issues: T[], radius = 6): T[] {
   // Holes first, then whatever catches the car, by how far past its limit.
-  const rank = (s: T) => (s.kind === 'hole' ? 1e3 : 0) + s.size / SURFACE_LIMITS[s.kind];
+  const rank = (s: T) => (s.kind === 'hole' || s.kind === 'gap' ? 1e3 : 0) + s.size / SURFACE_LIMITS[s.kind];
   const sorted = issues.slice().sort((a, b) => rank(b) - rank(a));
   const kept: T[] = [];
   const grid = new Map<string, T[]>();

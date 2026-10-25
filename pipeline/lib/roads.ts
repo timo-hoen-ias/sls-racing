@@ -258,6 +258,17 @@ export class CarriagewayIndex {
     }
     return false;
   }
+  /** Whether (x, z) lies on the carriageway of another road at about height y (within `tol`). */
+  level(self: Way, x: number, z: number, y: number, tol: number) {
+    for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
+      if (s.way === self) continue;
+      const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+      const t = Math.min(1, Math.max(0, ((x - s.x0) * dx + (z - s.z0) * dz) / (dx * dx + dz * dz || 1)));
+      if (Math.abs(s.y0 + (s.y1 - s.y0) * t - y) > tol) continue;
+      if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw) return true;
+    }
+    return false;
+  }
   /**
    * Lowest surface of another road under (x, z) that lies below height y (by less than `within`, so a car could
    * not pass between them), or undefined.
@@ -422,8 +433,15 @@ export function buildRoads(
         // Another road just below beside this one (a junction arm, a road alongside at another height): the
         // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.
         const lower = (p: typeof a, o: number) => carriageways.below(way, ...off(p, o), p.y - STRIP_DROP);
-        const extra = (p: typeof a, side: number) => (lifted && lower(p, side * (side > 0 ? left(p) + 0.5 : -right(p) + 0.5)) === undefined ? 0.5 : 0);
-        const lw = (p: typeof a) => left(p) + extra(p, 1), rw = (p: typeof a) => right(p) - extra(p, -1);
+        // Decks and lifted roads reach 0.5 m wider, so a wheel at the edge has ground; where another deck or road
+        // runs alongside at the same height with a slot of up to 1.5 m between them, across the slot.
+        const reach = (p: typeof a, side: number) => {
+          if (!lifted) return 0;
+          const edge = side > 0 ? left(p) : -right(p);
+          for (const o of [0.5, 1, 1.5]) if (carriageways.level(way, ...off(p, side * (edge + o)), p.y, 0.5)) return o + 0.25;
+          return 0.5;
+        };
+        const lw = (p: typeof a) => left(p) + reach(p, 1), rw = (p: typeof a) => right(p) - reach(p, -1);
         strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
         if (!lifted) {
           // Bevel 1 m out and down under the terrain, but never above a lower road there.

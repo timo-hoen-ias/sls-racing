@@ -16,7 +16,7 @@ import { readOsm, type Way } from './lib/osm.ts';
 import { loadWorld, paths } from './lib/region.ts';
 import { densify, isDrivable } from './lib/roads.ts';
 import {
-  SURFACE_KINDS, SURFACE_LIMITS, cellCentre, isCritical, clusterIssues, gridCols, probeCells, rasterizeMesh, surfaceIssues,
+  SURFACE_KINDS, SURFACE_LIMITS, cellCentre, clusterIssues, gapIssues, gridCols, isCritical, probeCells, rasterizeMesh, slotCells, surfaceIssues,
   type CellGrid, type SurfaceCell, type SurfaceKind,
 } from '../src/world/surfaceScan.ts';
 
@@ -97,7 +97,10 @@ async function main() {
       const x = (c0 + c + 0.5) * CELL, z = (r0 + r + 0.5) * CELL;
       return x >= ox && x < ox + T && z >= oz && z < oz + T;
     };
-    for (const s of surfaceIssues(cells, cols, inside)) {
+    // Slots between two carriageways (decks side by side) where a wheel drops through.
+    const slots = probeCells(RAPIER, world, slotCells(levels, grid), grid, (c) => kinds.get(c.handle) ?? '?');
+    nRays += 2 * slots.size;
+    for (const s of [...surfaceIssues(cells, cols, inside), ...gapIssues(slots, cols, inside)]) {
       const [x, z] = cellCentre(grid, s.key);
       issues.push({ x, y: s.y, z, kind: s.kind, size: s.size, what: s.what });
     }

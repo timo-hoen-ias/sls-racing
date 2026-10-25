@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ROAD_GROUPS } from '../src/vehicle/carPhysics.ts';
 import {
-  cellCentre, clusterIssues, gridCols, probeCells, rasterizeMesh, surfaceIssues, type CellGrid,
+  cellCentre, clusterIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
 } from '../src/world/surfaceScan.ts';
 import type { Way } from '../pipeline/lib/osm.ts';
 import { matchLevels } from '../pipeline/lib/levels.ts';
@@ -34,7 +34,8 @@ function scan(roads: { pos: Float32Array; idx: Uint32Array }[], solids: { pos: F
   const levels = new Map<number, number[]>();
   for (const r of roads) rasterizeMesh(r.pos, r.idx, grid, levels);
   const cells = probeCells(RAPIER, world, levels, grid, (c) => kind.get(c.handle) ?? '?');
-  return { cells, issues: surfaceIssues(cells, gridCols(grid)).map((s) => ({ ...s, x: cellCentre(grid, s.key)[0], z: cellCentre(grid, s.key)[1] })) };
+  const slots = probeCells(RAPIER, world, slotCells(levels, grid), grid, (c) => kind.get(c.handle) ?? '?');
+  return { cells, gaps: gapIssues(slots, gridCols(grid)), issues: surfaceIssues(cells, gridCols(grid)).map((s) => ({ ...s, x: cellCentre(grid, s.key)[0], z: cellCentre(grid, s.key)[1] })) };
 }
 
 describe('surface scan', () => {
@@ -66,6 +67,17 @@ describe('surface scan', () => {
     // Road meshes do not catch the chassis: a raised road piece is only a bump/step for the wheels, never a snag.
     const roadOnly = scan([quad(-10, 10, -2, 2, 0), quad(-1, 1, -1, 1, 0.2)]).issues;
     expect(roadOnly.some((s) => s.kind === 'snag')).toBe(false);
+  });
+});
+
+describe('slots between carriageways', () => {
+  it('a 1 m slot between two decks over a valley is a gap, a wide median is not', () => {
+    const decks = (gap: number) => scan([quad(-10, 10, -4, -gap / 2, 0), quad(-10, 10, gap / 2, 4, 0)], [], -6).gaps;
+    expect(decks(1).length).toBeGreaterThan(0);
+    expect(decks(1).every((s) => s.kind === 'gap')).toBe(true);
+    expect(decks(3)).toEqual([]);
+    // With ground under the slot at road height there is nothing to drop into.
+    expect(scan([quad(-10, 10, -4, -0.5, 0), quad(-10, 10, 0.5, 4, 0)], [], -0.15).gaps).toEqual([]);
   });
 });
 

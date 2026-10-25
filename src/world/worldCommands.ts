@@ -11,7 +11,7 @@ import type { Materials } from '../render/materials.ts';
 import { TERRAIN_STEP, type TileContent, type WorldIndex } from './format.ts';
 import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
 import {
-  SURFACE_KINDS, cellCentre, clusterIssues, gridCols, probeCells, rasterizeMesh, surfaceIssues, type CellGrid,
+  SURFACE_KINDS, cellCentre, clusterIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
 } from './surfaceScan.ts';
 
 /** [name, x, z, plane height, area m², RMS cm, tilt %] per flattened plaza (pipeline/lib/plazas.ts). */
@@ -20,10 +20,10 @@ type PlazaRow = [string, number, number, number, number, number, number];
 interface Gaps { kinds: string[]; issues: [number, number, number, number, number, number][] }
 
 const KIND_DE: Record<string, string> = {
-  hole: 'Loch', bump: 'Kante/Hindernis', dip: 'Senke', step: 'Stufe', snag: 'Aufsetzer', seam: 'Kachelnaht',
+  hole: 'Loch', bump: 'Kante/Hindernis', dip: 'Senke', step: 'Stufe', snag: 'Aufsetzer', seam: 'Kachelnaht', gap: 'Spalt',
   terrain: 'Gelände', road: 'Fahrbahn', bridge: 'Fahrbahnkollision/Brücke', building: 'Gebäude', rail: 'Leitplanke', tree: 'Baum', lamp: 'Laterne', solid: 'Bauwerk',
 };
-const KIND_COLOR: Record<string, number> = { hole: 0xff2020, bump: 0xff9900, dip: 0x3399ff, step: 0xffee00, snag: 0xff00cc, seam: 0x00ffcc };
+const KIND_COLOR: Record<string, number> = { hole: 0xff2020, bump: 0xff9900, dip: 0x3399ff, step: 0xffee00, snag: 0xff00cc, seam: 0x00ffcc, gap: 0x8a2be2 };
 
 export interface WorldCommandContext {
   R: typeof RAPIER_NS;
@@ -60,7 +60,7 @@ export function registerWorldCommands(g: WorldCommandContext) {
   });
   registerIssueList(g, {
     name: 'world.surface', file: 'surface.json', script: 'world:surface',
-    help: 'Flächenprüfung der Pipeline: jede 0,5-m-Zelle jeder Fahrbahn als Rad und Unterboden geprüft. show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe, magenta Aufsetzer, türkis Kachelnaht), list die nächsten, next/prev/<nr> teleportiert hin, <art> filtert (z. B. "world.surface step")',
+    help: 'Flächenprüfung der Pipeline: jede 0,5-m-Zelle jeder Fahrbahn als Rad und Unterboden geprüft. show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe, magenta Aufsetzer, türkis Kachelnaht, lila Spalt zwischen Fahrbahnen), list die nächsten, next/prev/<nr> teleportiert hin, <art> filtert (z. B. "world.surface step")',
   });
 
   registerCommand({
@@ -88,7 +88,7 @@ export function registerWorldCommands(g: WorldCommandContext) {
   let scanMarks: THREE.Group | null = null;
   registerCommand({
     name: 'road.scan',
-    help: 'Prüft jede 0,5-m-Zelle der Fahrbahnen um das Auto wie world:surface (Loch, Kante, Senke, Stufe, Aufsetzer) und markiert Fundstellen; "hide" blendet aus',
+    help: 'Prüft jede 0,5-m-Zelle der Fahrbahnen um das Auto wie world:surface (Loch, Kante, Senke, Stufe, Aufsetzer, Spalt zwischen Fahrbahnen) und markiert Fundstellen; "hide" blendet aus',
     args: '[radius m, Standard 40] [hide]',
     complete: () => ['hide'],
     run(a) {
@@ -113,7 +113,8 @@ export function registerWorldCommands(g: WorldCommandContext) {
         : c.collisionGroups() === ROAD_GROUPS ? 'road' : 'solid';
       // Only the world: the car and traffic are left out.
       const cells = probeCells(g.R, g.world, levels, grid, what, (c) => !!c.parent() && !c.parent()!.isFixed());
-      const found = clusterIssues(surfaceIssues(cells, gridCols(grid)).map((s) => {
+      const slots = probeCells(g.R, g.world, slotCells(levels, grid), grid, what, (c) => !!c.parent() && !c.parent()!.isFixed());
+      const found = clusterIssues([...surfaceIssues(cells, gridCols(grid)), ...gapIssues(slots, gridCols(grid))].map((s) => {
         const [x, z] = cellCentre(grid, s.key);
         return { ...s, x, z };
       }), 3);

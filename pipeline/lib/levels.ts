@@ -73,9 +73,11 @@ export function matchLevels(ways: Way[], height: (e: number, n: number) => numbe
               if (s.prio < prio || s.prio < bestPrio) continue;
               const dx = s.e1 - s.e0, dy = s.n1 - s.n0;
               const t = Math.min(1, Math.max(0, ((p.e - s.e0) * dx + (p.n - s.n0) * dy) / (dx * dx + dy * dy || 1)));
-              if (Math.hypot(s.e0 + dx * t - p.e, s.n0 + dy * t - p.n) > hw + s.hw + TOUCH) continue;
-              // Two bridge decks, or the same way where it comes back to itself (hairpin), not its own neighbourhood.
-              if (s.way === way ? Math.abs(s.d0 + (s.d1 - s.d0) * t - p.dist) < 4 * (hw + s.hw) + 4 : !(bridge && isBridge(s.way.tags))) continue;
+              const apart = Math.hypot(s.e0 + dx * t - p.e, s.n0 + dy * t - p.n);
+              if (apart > hw + s.hw + TOUCH) continue;
+              // Two bridge decks, or the same way where it comes back to itself: on a hairpin the legs are much
+              // farther apart along the way than across, in its own neighbourhood (and along a bend) about as far.
+              if (s.way === way ? Math.abs(s.d0 + (s.d1 - s.d0) * t - p.dist) < 2 * apart + hw : !(bridge && isBridge(s.way.tags))) continue;
               const other = s.b0 + (s.b1 - s.b0) * t;
               const gap = other - base;
               if (Math.abs(gap) < TOLERANCE || Math.abs(gap) > APART) continue;

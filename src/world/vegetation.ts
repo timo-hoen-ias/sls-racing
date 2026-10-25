@@ -562,6 +562,7 @@ export class Vegetation {
       for (const t of this.tiles.values()) for (const g of t.groups) g.meshes.forEach((im, l) => (im.castShadow = t.shadows && !g.bush && l < this.shadowTiers));
     }, [0, 3]);
     registerValue('veg.far', 'Bäume blenden bis zu dieser Entfernung (m) geditherten aus, damit sie nicht mit ihrer Kachel auftauchen (höchstens stream.radius)', () => this.farDistance, (v) => { this.farDistance = v; bands(); }, [100, 10000]);
+    registerValue('veg.selfshadow', 'Blätter fragen den Sonnenschatten so viele Kronenradien zur Sonne hin ab: 0 = Krone beschattet sich selbst über die Schattenkarte, 1 = nur über Normalen und Verdeckung (wie Impostor)', () => vegUniforms.uVegLift.value, (v) => (vegUniforms.uVegLift.value = v), [0, 3]);
     registerValue('veg.translucency', 'Durchscheinendes Sonnenlicht in den Blättern bei Gegenlicht 0..2 (im Schatten keins)', () => vegUniforms.uVegThrough.value, (v) => (vegUniforms.uVegThrough.value = v), [0, 2]);
     registerCommand({
       name: 'veg.lod.force', help: 'Alle Bäume in einer Detailstufe zeigen (0 = detailliert, 1 = einfach, 2 = Impostor) oder auto', args: '0|1|2|auto',

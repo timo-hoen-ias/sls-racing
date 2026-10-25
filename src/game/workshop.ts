@@ -30,6 +30,9 @@ export const CAR_SHOP: Record<string, { price: number; level: number; ls: number
   rally: { price: 26000, level: 4, ls: 125 },
   muscle: { price: 34000, level: 5, ls: 135 },
   hyper: { price: 120000, level: 12, ls: 185 },
+  sedan: { price: 38000, level: 4, ls: 135 },
+  coupe: { price: 55000, level: 7, ls: 155 },
+  goblin: { price: 95000, level: 10, ls: 175 },
 };
 
 /** Performance level of a car with its parts. */
@@ -96,7 +99,7 @@ export function carStats() {
 }
 
 /** A spot in town the player drives to: the dealer or the home garage. */
-export interface Place { id: 'dealer' | 'home'; name: string; x: number; z: number; heading: number; color: string }
+export interface Place { id: 'dealer' | 'home' | 'courier'; name: string; x: number; z: number; heading: number; color: string }
 
 /** Finds the dealer (by the Ford plant's street, else a big road far from home) and the home garage beside the start. */
 export function findPlaces(graph: RoadGraph, home: { x: number; z: number }): Place[] {
@@ -115,6 +118,12 @@ export function findPlaces(graph: RoadGraph, home: { x: number; z: number }): Pl
   const s = graph.snap(home.x, home.z, 400, (e) => !e.noCars && e.rank >= 2 && e.rank <= 4 && e.length > 30);
   const homeEdge = s?.edge;
   if (homeEdge) out.push({ id: 'home', name: 'Heimatgarage', color: '#3aa0ff', ...side(homeEdge, homeEdge.width / 2 + 4) });
+  // Courier depot (E6): a side street 250–600 m from home, so the first delivery is close by.
+  const depot = graph.edges.filter((e) => !e.noCars && e.rank >= 3 && e.rank <= 5 && e.length > 50 && e !== homeEdge)
+    .map((e) => ({ e, d: Math.hypot(e.p[0] - home.x, e.p[2] - home.z) }))
+    .filter((c) => c.d > 250 && c.d < 600)
+    .sort((a, b) => Math.abs(a.d - 400) - Math.abs(b.d - 400))[0]?.e;
+  if (depot) out.push({ id: 'courier', name: 'Kurierdienst', color: '#34c759', ...side(depot, depot.width / 2 + 4) });
   return out;
 }
 
@@ -257,6 +266,7 @@ export class Workshop {
     } });
     registerCommand({ name: 'car.use', help: 'Eigenes Auto fahren (wird im Spielstand gemerkt)', args: '<id>', complete: () => this.d.save.data.cars, run: ([id]) => { void this.use(id ?? '').catch((e) => this.d.toast(String((e as Error).message), 2)); return id ?? ''; } });
     registerCommand({ name: 'garage.tp', help: 'Schnellreise zur Heimatgarage', run: () => goTo('home') });
+    registerCommand({ name: 'courier.tp', help: 'Schnellreise zum Kurierdienst (Kurierfahrten zu echten Adressen)', run: () => goTo('courier') });
     registerCommand({ name: 'dealer.tp', help: 'Zum Autohändler fahren (Schnellreise)', run: () => goTo('dealer') });
   }
 }

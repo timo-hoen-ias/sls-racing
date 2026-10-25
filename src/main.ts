@@ -5,6 +5,7 @@ import { registerSoundCommands } from './audio/soundCommands.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
 import { registerAddressCommands } from './nav/addressCommands.ts';
+import { type AddressBook, loadAddresses } from './nav/addresses.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
@@ -42,7 +43,7 @@ import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
 import { Water } from './render/water.ts';
 import { registerWaterCommands } from './render/waterCommands.ts';
-import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
+import { localToUtm, type RoadGraphData, utmToLocal, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerScaleCommands } from './world/scaleCommands.ts';
 import { registerPathCommands } from './world/pathCommands.ts';
@@ -79,6 +80,7 @@ import { patchWorldMaterials } from './weather/weatherMaterials.ts';
 import { FacadeControl } from './render/facades.ts';
 import { WeatherSystem } from './weather/weatherSystem.ts';
 import { Mixer } from './audio/mixer.ts';
+import { Radio } from './audio/radio.ts';
 import { helpLine } from './input/bindings.ts';
 import { registerSettingsCommands } from './settings/commands.ts';
 import { registerGameSettings } from './settings/gameSettings.ts';
@@ -241,11 +243,15 @@ async function boot() {
   sfx.registerCommands();
   const startBtn = $('start') as HTMLButtonElement;
   let started = false;
+  // Generative music (T2), louder and busier in races and chases.
+  const radio = new Radio();
+  radio.registerCommands();
   const startAudio = async () => {
     if (started) return;
     started = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sfx.attach(sound.context, sound.world);
+    radio.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
@@ -374,6 +380,11 @@ async function boot() {
     lookup: (c) => { const h = props.lookup(c); return h?.kind === Prop.parkedCar ? h : undefined; },
     remove: (c) => { props.remove(c); },
   }, (k) => props.parkedCarDebris(k as PropHit), 1100, { minSpeed: 7, loss: 0.22, fling: 0.5, spin: 0.25 });
+  // Recycling containers by the road (S5): heavy, but they slide away instead of stopping the car dead.
+  knockdown.addSource({
+    lookup: (c) => { const h = props.lookup(c); return h?.kind === Prop.recycling ? h : undefined; },
+    remove: (c) => { props.remove(c); },
+  }, propDebris(), 600, { minSpeed: 6, loss: 0.15, fling: 0.6, spin: 0.4 });
   props.roadWidthAt = (x, z) => graph.snap(x, z, 15, (e) => e.rank >= 2)?.edge.width;
   // Style moves (near misses, slipstream, jumps …): nitro right away, points for the combo.
   const style = new StyleTracker(graph);
@@ -487,10 +498,23 @@ async function boot() {
   });
   police.registerCommands();
   let thinPath: number[] | undefined;
+  let addressBook: Promise<AddressBook | undefined> | undefined;
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
   const game = new Game({
     rivals, barriers, police,
+    destination: async (near, min, max) => {
+      addressBook ??= loadAddresses(`${import.meta.env.BASE_URL}data/addresses.json`);
+      const book = await addressBook;
+      if (!book?.list.length) return undefined;
+      for (let i = 0; i < 60; i++) {
+        const a = book.list[Math.floor(Math.random() * book.list.length)];
+        const [x, z] = utmToLocal(index.world, a.e, a.n);
+        const d = Math.hypot(x - near.x, z - near.z);
+        if (d >= min && d <= max) return { label: a.label, x, z };
+      }
+      return undefined;
+    },
     viewpoints: landmarks.list.filter((l) => !l.info.bridge && !l.info.id.startsWith('bruecke-')).map(({ info }) => ({
       id: info.id, x: info.x, z: info.z, radius: info.radius,
       name: info.name ?? info.id.split('-').map((w) => ({ sw: 'SW', no: 'NO', nw: 'NW', so: 'SO', st: 'St.', am: 'am' })[w] ?? w[0].toUpperCase() + w.slice(1)).join(' '),
@@ -518,6 +542,7 @@ async function boot() {
   void game.load();
   minimap.markers = bigMap.markers = () => game.markers();
   bigMap.areas = () => game.areas();
+  bigMap.stats = () => game.mapStats();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
@@ -782,6 +807,7 @@ async function boot() {
     game.update({ x: ip.x, z: ip.z, speed: Math.hypot(lvel.x, lvel.z), dt: paused ? 0 : dt });
     styleFeed.setCombo(score.bank, score.multiplier, score.timer / score.window);
     speedLines.update(dt, Math.abs(rs ? rs.speed : car.speed) * 3.6, boostFx);
+    if (car.boosting) game.nitroUsed();
     if (car.bursting > 0 && !wasBursting) { sfx.play('burst'); input.rumble(0.8, 220); }
     wasBursting = car.bursting > 0;
     viewDist.afterCamera();
@@ -831,6 +857,8 @@ async function boot() {
     perf.gpuEnd();
     perf.end('render');
 
+    radio.setIntensity(game.racing || police.heat ? 1 : 0.3 + Math.min(0.3, Math.abs(car.speed) / 150));
+    radio.update(dt, paused || !game.inGame);
     mixer.update({ engine: sound, traffic: traffic.sound, ambience: worldAudio.ambience, weather: weather.sound });
     const dtr = car.drivetrain;
     if (sound && soundCmds.view === 'auto') sound.view = cam.mode;

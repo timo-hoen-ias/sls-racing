@@ -112,6 +112,9 @@ export const SECTIONS: MenuSection[] = [
       e('traffic.sound', 'Verkehrsgeräusche'),
       e('audio.ambience', 'Umgebung'),
       e('audio.weather', 'Wetter'),
+      'Radio',
+      e('radio', 'Sender'),
+      e('radio.volume', 'Lautstärke'),
     ],
   },
   {

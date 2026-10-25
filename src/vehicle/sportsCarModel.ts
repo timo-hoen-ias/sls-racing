@@ -189,6 +189,8 @@ export interface SportsCarModel {
 /** Wheel positions (z, + = forward), track (centre to centre), wheel radius and width, body length and width (m). */
 export interface CarGeometry {
   name?: string;
+  /** Credit of an imported model (author, licence, link). */
+  source?: string;
   wheel: { front: number; rear: number; track: number; radius: number; width: number };
   length: number;
   width: number;

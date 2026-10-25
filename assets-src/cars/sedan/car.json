@@ -1,0 +1,13 @@
+{
+  "name": "Limousine",
+  "credit": "Generic Sedan Car von Márcio Meireles (mmcworks), CC BY 4.0, sketchfab.com/3d-models/58c33766470d46e7b2aed542650494e5",
+  "forward": "+z",
+  "wheels": "Wheel\\.(Ft|Bk)|/brake-disc-",
+  "calipers": "/brake-caliper-",
+  "head": "/headlights-(drl|led)[-.][^/]*/",
+  "brake": "/taillight-led",
+  "paint": { "materials": ["Car_Paint_-_All_Colors"] },
+  "tyre": ["tire-low"],
+  "hidden": ["interior", "engine", "suspension-pipe-brakes", "car-bottom"],
+  "exhaust": "/escape-pipes"
+}

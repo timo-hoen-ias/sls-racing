@@ -100,6 +100,20 @@ export class CarPhysics {
   /** From damage: engine power factor and a steering offset (rad, + = right). */
   power = 1;
   steerPull = 0;
+  /**
+   * Arcade feel on top of the tuning (feel.* commands, src/game/feel.ts): engine torque and downforce factors,
+   * air drag factor (higher top speed below 1), self-levelling in the air and a soft landing (0..1).
+   */
+  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0 };
+  /** A short tap on nitro fires a burst instead of the steady boost (feel.burst). */
+  burst = { enabled: true, tap: 0.22, kick: 5, cost: 0.14 };
+  /** Nitro gained from style moves since the last frame (near misses, jumps …), added by the game. */
+  nitroGain = 0;
+  /** Seconds the current burst still pushes. */
+  bursting = 0;
+  /** Seconds the car has been in the air (0 on the ground). */
+  airTime = 0;
+  private nitroHeld = 0;
   private wheelspin = 0;
   private R: R;
   private tyreOut: TyreOutput = { fx: 0, fy: 0, alpha: 0, spin: 0, lock: 0, usage: 0 };
@@ -190,7 +204,10 @@ export class CarPhysics {
     const absV = Math.abs(v);
     let contacts = 0;
     for (let i = 0; i < 4; i++) if (vc.wheelIsInContact(i)) contacts++;
+    const wasAirborne = this.airborne;
     this.airborne = contacts === 0;
+    this.airTime = this.airborne ? this.airTime + dt : 0;
+    if (wasAirborne && !this.airborne && this.feel.landing > 0) this.land();
 
     // Speed-sensitive steering: full lock when parking, only a few degrees at motorway speed,
     // and the wheel turns slower the faster the car goes. The handbrake keeps enough lock to drift.
@@ -218,10 +235,27 @@ export class CarPhysics {
     vc.setWheelSteering(0, -this.steer);
     vc.setWheelSteering(1, -this.steer);
 
-    // Nitro.
-    this.boosting = input.nitro && this.nitro > 0.02 && input.throttle > 0.1;
-    if (this.boosting) this.nitro = Math.max(0, this.nitro - CAR.nitro.drain * dt);
-    else this.nitro = Math.min(1, this.nitro + (this.drifting ? CAR.nitro.driftRefill : CAR.nitro.refill) * dt);
+    // Nitro: holding boosts steadily; a short tap fires a burst (a quick kick forward for a share of the tank).
+    const bu = this.burst;
+    if (input.nitro) this.nitroHeld += dt;
+    else {
+      if (bu.enabled && this.nitroHeld > 0 && this.nitroHeld < bu.tap && this.nitro > bu.cost * 0.5 && !this.airborne) {
+        this.nitro = Math.max(0, this.nitro - bu.cost);
+        this.bursting = 0.35;
+        const f = rotate(this.body.rotation(), 0, 0, 1);
+        const m = this.body.mass() * bu.kick;
+        this.body.applyImpulse({ x: f.x * m, y: 0, z: f.z * m }, true);
+      }
+      this.nitroHeld = 0;
+    }
+    this.bursting = Math.max(0, this.bursting - dt);
+    // Below the tap time the press may still turn into a burst, so the steady boost starts after it.
+    const held = !bu.enabled || this.nitroHeld >= bu.tap;
+    this.boosting = (input.nitro && held && this.nitro > 0.02 && input.throttle > 0.1) || this.bursting > 0;
+    if (this.boosting && this.bursting <= 0) this.nitro = Math.max(0, this.nitro - CAR.nitro.drain * dt);
+    else if (!this.boosting) this.nitro = Math.min(1, this.nitro + (this.drifting ? CAR.nitro.driftRefill : CAR.nitro.refill) * dt);
+    this.nitro = Math.min(1, this.nitro + this.nitroGain);
+    this.nitroGain = 0;
 
     // Pedals: the brake pedal selects reverse once (nearly) stopped, the gas pedal brakes while reversing.
     const dt0 = this.drivetrain;
@@ -239,7 +273,7 @@ export class CarPhysics {
       reverse: reversing,
       airborne: this.airborne,
       freeRev: input.handbrake && input.throttle > 0 && absV < 25,
-      boost: this.boosting ? CAR.nitro.torque : 1,
+      boost: (this.boosting ? CAR.nitro.torque : 1) * this.feel.torque,
       wheelspin: this.wheelspin,
       dt,
     });
@@ -257,7 +291,7 @@ export class CarPhysics {
     this.drifting = input.handbrake && absV > 8;
     if (!this.airborne) {
       // Downforce on each axle, so the aero balance shifts grip between front and rear.
-      const df = CAR.aero.downforce * v * v * dt;
+      const df = CAR.aero.downforce * this.feel.downforce * v * v * dt;
       const t = body.translation();
       for (const [z, share] of [[CAR.wheel.front, CAR.aero.balance], [CAR.wheel.rear, 1 - CAR.aero.balance]]) {
         const p = { x: t.x + fwd.x * z, y: t.y + fwd.y * z, z: t.z + fwd.z * z };
@@ -310,6 +344,18 @@ export class CarPhysics {
       const pitch = (input.brake - input.throttle) * CAR.airControl * dt;
       const yaw = -input.steer * CAR.airControl * dt;
       body.applyTorqueImpulse({ x: right.x * pitch + up.x * yaw, y: right.y * pitch + up.y * yaw, z: right.z * pitch + up.z * yaw }, true);
+      // Self-levelling: turns the car's up axis back towards the sky (a spring on up × world-up), damped,
+      // so jumps end on four wheels. Pitch input still wins while the player holds gas or brake.
+      const lv0 = this.feel.airLevel;
+      if (lv0 > 0) {
+        const ax = -up.z, az = up.x; // up × (0, 1, 0)
+        const w = body.angvel();
+        const free = 1 - 0.6 * Math.min(1, Math.abs(input.brake - input.throttle));
+        const k = this.k.roll * 14 * lv0 * free * dt;
+        const d = this.k.roll * 3 * lv0 * free * dt;
+        const ww = w.x * up.x + w.y * up.y + w.z * up.z;
+        body.applyTorqueImpulse({ x: ax * k - (w.x - up.x * ww) * d, y: -(w.y - up.y * ww) * d, z: az * k - (w.z - up.z * ww) * d }, true);
+      }
     }
     if (this.boosting && !this.airborne) {
       const push = CAR.nitro.push * dt;
@@ -319,7 +365,7 @@ export class CarPhysics {
     const lv = body.linvel();
     const sp = Math.hypot(lv.x, lv.y, lv.z);
     if (sp > 0.3) {
-      const f = (CAR.aero.drag * sp * sp + (this.airborne ? 0 : CAR.aero.rolling * mass * 9.81)) * dt;
+      const f = (CAR.aero.drag * this.feel.drag * sp * sp + (this.airborne ? 0 : CAR.aero.rolling * mass * 9.81)) * dt;
       body.applyImpulse({ x: (-lv.x / sp) * f, y: (-lv.y / sp) * f, z: (-lv.z / sp) * f }, true);
     }
     // Acceleration in the body frame (from the last step's velocity change).
@@ -461,6 +507,19 @@ export class CarPhysics {
     }
     this.slip = max;
     this.wheelspin = absV < 40 ? spinRear : 0;
+  }
+
+  /** Touch-down after a jump: takes out most of the bounce and the roll/pitch tumble (feel.landing). */
+  private land() {
+    const k = this.feel.landing;
+    const b = this.body;
+    const v = b.linvel();
+    if (v.y < 0) b.setLinvel({ x: v.x, y: v.y * (1 - 0.7 * k), z: v.z }, true);
+    const w = b.angvel();
+    const up = rotate(b.rotation(), 0, 1, 0);
+    const yaw = w.x * up.x + w.y * up.y + w.z * up.z;
+    const keep = 1 - 0.8 * k;
+    b.setAngvel({ x: up.x * yaw + (w.x - up.x * yaw) * keep, y: up.y * yaw + (w.y - up.y * yaw) * keep, z: up.z * yaw + (w.z - up.z * yaw) * keep }, true);
   }
 
   get rpm() { return this.drivetrain.rpm; }

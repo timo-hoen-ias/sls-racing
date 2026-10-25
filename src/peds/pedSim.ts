@@ -90,6 +90,8 @@ export class PedSim {
   signals?: PedSignals;
   /** Pedestrians ignore red lights (debug). */
   jaywalk = false;
+  /** Nobody gets run over: pedestrians always leap clear in time (peds.safe). */
+  safe = true;
   /** Shop fronts: shopping streets are busier and people stop at the windows. */
   shops?: PedShops;
   /** Chance to stop at a shop window when walking past one. */
@@ -206,7 +208,18 @@ export class PedSim {
       const v = Math.hypot(threat.vx, threat.vz);
       const rx = p.x - threat.x, rz = p.z - threat.z;
       const dist = Math.hypot(rx, rz);
-      if (v > 2 && dist < 2 + threat.halfWidth && this.isHit(p, threat)) {
+      if (v > 2 && dist < 2 + threat.halfWidth && this.isHit(p, threat) && this.safe && p.state !== 'dodge') {
+        // Safe mode: a last-moment leap clear of the car instead of being run over.
+        const ux = threat.vx / v, uz = threat.vz / v;
+        const away = -rx * uz + rz * ux >= 0 ? 1 : -1;
+        p.dodgeX = -uz * away * 1.6;
+        p.dodgeZ = ux * away * 1.6;
+        p.state = 'dodge';
+        p.visit = undefined;
+        p.timer = 0.45;
+        p.dodged = 0;
+        this.events.dodged?.(p);
+      } else if (v > 2 && dist < 2 + threat.halfWidth && this.isHit(p, threat) && !this.safe) {
         p.state = 'down';
         p.visit = undefined;
         p.timer = 3 + this.rng() * 2;
@@ -219,7 +232,7 @@ export class PedSim {
         const ahead = rx * ux + rz * uz;
         const lateral = -rx * uz + rz * ux;
         const t = ahead / v;
-        if (ahead > 0 && t < 1.6 && Math.abs(lateral) < threat.halfWidth + 1.4) {
+        if (ahead > 0 && t < (this.safe ? 2.2 : 1.6) && Math.abs(lateral) < threat.halfWidth + (this.safe ? 2.2 : 1.4)) {
           // Jump away from the car's path.
           const away = lateral >= 0 ? 1 : -1;
           p.dodgeX = -uz * away;

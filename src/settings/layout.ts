@@ -61,6 +61,10 @@ export const SECTIONS: MenuSection[] = [
   },
   {
     id: 'fahren', label: 'Fahren', items: [
+      'Spielgefühl',
+      e('feel', 'Fun-Racer oder realistisch'),
+      e('cam.style', 'Verfolgerkamera'),
+      e('fx.speedlines', 'Tempo-Linien'),
       'Auto',
       e('car.select', 'Modell'),
       'Fahrhilfen',

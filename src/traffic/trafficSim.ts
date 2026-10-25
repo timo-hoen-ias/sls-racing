@@ -89,6 +89,8 @@ export interface Agent {
   z: number;
   yaw: number;
   pitch: number;
+  /** Full orientation of a wreck tumbling loose (traffic.ts); overrides yaw and pitch for drawing. */
+  quat?: { x: number; y: number; z: number; w: number };
 }
 
 export interface PlayerState {
@@ -128,6 +130,8 @@ export class TrafficSim {
   events: TrafficEvents = {};
   /** Extra things in the road that vehicles stop for (pedestrians crossing). Same shape as the player. */
   obstacles: PlayerState[] = [];
+  /** Wrecks the player knocked out of traffic, lying in the road (set by traffic.ts each frame). */
+  wrecks: PlayerState[] = [];
   /** Traffic lights at signalised junctions. */
   readonly signals: Signals;
   private graph: RoadGraph;
@@ -331,9 +335,9 @@ export class TrafficSim {
       if (stop < gap) { gap = Math.max(0.1, stop); vLead = 0; a.state = 'yield'; a.reason = why; }
     }
     // Other obstacles in the lane, e.g. pedestrians crossing.
-    if (this.obstacles.length) {
+    if (this.obstacles.length || this.wrecks.length) {
       const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw);
-      for (const o of this.obstacles) {
+      for (const o of [...this.obstacles, ...this.wrecks]) {
         const rx = o.x - a.x, rz = o.z - a.z;
         const f = rx * fx + rz * fz;
         if (f < 0 || f > 30) continue;

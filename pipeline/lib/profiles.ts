@@ -31,6 +31,8 @@ const JUNCTION_BLEND = 10;
 const PLATEAU_GRADE = 0.12;
 /** Grade of a road end is measured over this length, and matched to the road it continues into over this reach (m). */
 const GRADE_SPAN = 4, GRADE_REACH = 16;
+/** Grade of each road at a junction, for the plateau's tilt, is measured over this much either side (m). */
+const TILT_SPAN = 8;
 
 const median = (vs: number[]) => {
   const s = vs.slice().sort((a, b) => a - b);
@@ -211,24 +213,36 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
     return [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
   };
-  // Junction plateaus are planes through the node height, tilted with the main road (highest class, then
-  // widest): a flat plateau on a steep street makes the main road climb twice as steeply into it and leaves
-  // a crest to jump from. The other roads follow the plane, so all surfaces still meet at the node.
-  const tilt = new Map<number, { rank: number; hw: number; g: [number, number] }>();
+  // Junction plateaus are planes through the node height, tilted with the roads that meet there: a flat
+  // plateau on a steep street makes the street climb twice as steeply into it and leaves a crest to jump
+  // from. The plane's gradient is fitted to the grade of every road at the node (weighted by class and
+  // width), so on a hillside both the street and the side road keep their grade through the junction; where
+  // all roads run one way it takes the main road's grade. All surfaces still meet at the node.
+  const fits = new Map<number, { see: number; snn: number; sen: number; ses: number; sns: number; best: number; g: [number, number] }>();
   for (const w of roads) {
     const { nodeAt } = raw.get(w)!;
     const len = dists.get(w)!.at(-1)!;
-    const rank = ROAD_CLASSES[w.tags.highway].rank, hw = roadWidth(w.tags)! / 2;
+    const wt = (ROAD_CLASSES[w.tags.highway].rank + 1) * roadWidth(w.tags)!;
     w.ids.forEach((id, i) => {
       if (!isJunction(id)) return;
-      const best = tilt.get(id);
-      if (best && (best.rank > rank || (best.rank === rank && best.hw >= hw))) return;
-      const x0 = Math.max(0, nodeAt[i] - GRADE_SPAN), x1 = Math.min(len, nodeAt[i] + GRADE_SPAN);
+      const x0 = Math.max(0, nodeAt[i] - TILT_SPAN), x1 = Math.min(len, nodeAt[i] + TILT_SPAN);
       if (x1 - x0 < 1) return;
-      const s = Math.max(-PLATEAU_GRADE, Math.min(PLATEAU_GRADE, (at(w, x1) - at(w, x0)) / (x1 - x0)));
+      const s = (at(w, x1) - at(w, x0)) / (x1 - x0);
       const [ue, un] = heading(w, i);
-      tilt.set(id, { rank, hw, g: [s * ue, s * un] });
+      if (!fits.has(id)) fits.set(id, { see: 0, snn: 0, sen: 0, ses: 0, sns: 0, best: 0, g: [0, 0] });
+      const f = fits.get(id)!;
+      f.see += wt * ue * ue; f.snn += wt * un * un; f.sen += wt * ue * un; f.ses += wt * ue * s; f.sns += wt * un * s;
+      if (wt > f.best) { f.best = wt; f.g = [s * ue, s * un]; }
     });
+  }
+  const tilt = new Map<number, [number, number]>();
+  for (const [id, f] of fits) {
+    const det = f.see * f.snn - f.sen * f.sen;
+    // Roads crossing at less than about 15° do not fix a plane: keep the main road's grade.
+    let g: [number, number] = det > 0.07 * (f.see + f.snn) ** 2 ? [(f.ses * f.snn - f.sns * f.sen) / det, (f.sns * f.see - f.ses * f.sen) / det] : f.g;
+    const m = Math.hypot(g[0], g[1]);
+    if (m > PLATEAU_GRADE) g = [(g[0] * PLATEAU_GRADE) / m, (g[1] * PLATEAU_GRADE) / m];
+    tilt.set(id, g);
   }
 
   for (const w of roads) {
@@ -237,18 +251,23 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     const prof = pinned.get(w)!;
     const flats = w.ids.flatMap((id, i) => {
       if (!isJunction(id)) return [];
-      const [ge, gn] = tilt.get(id)?.g ?? [0, 0];
+      const [ge, gn] = tilt.get(id) ?? [0, 0];
       const [ue, un] = heading(w, i);
       return [{ at: nodeAt[i], y: nodeH.get(id)!, r: widest.get(id)! + 0.5, slope: ge * ue + gn * un }];
     });
     if (flats.length)
       for (let k = 0; k < prof.length; k++) {
-        let wt = 0, y = 0;
+        // Plateaus close together share the stretch between them: weighted by closeness, so the profile
+        // passes continuously from one to the next instead of stepping where the nearer one changes.
+        let wt = 0, sw = 0, sy = 0;
         for (const f of flats) {
           const off = Math.abs(d[k] - f.at);
           const t = off <= f.r ? 1 : Math.max(0, 1 - (off - f.r) / JUNCTION_BLEND);
-          if (t > wt) { wt = t; y = f.y + f.slope * (d[k] - f.at); }
+          if (!t) continue;
+          const tw = off <= f.r ? 1e6 : t;
+          wt = Math.max(wt, t); sw += tw; sy += tw * (f.y + f.slope * (d[k] - f.at));
         }
+        const y = sw ? sy / sw : 0;
         // Smoothstep so the grade changes gently into and out of the plateau.
         if (wt > 0) prof[k] += (y - prof[k]) * wt * wt * (3 - 2 * wt);
       }

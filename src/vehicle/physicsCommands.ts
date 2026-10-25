@@ -147,6 +147,11 @@ export function registerSurfaceCommands(rs: RoadSurface, car: CarPhysics, pad: {
       return `${s.label}: Grip ${s.grip}, Rollwiderstand ${s.rolling}, Rütteln ${s.rumble}`;
     },
   });
+  const field = SURFACES.feldweg;
+  registerValue('feldweg.grip', 'Feldweg: Grip der Reifen (Asphalt = 1)', () => field.grip, (v) => { field.grip = v; }, [0.3, 1.5]);
+  registerValue('feldweg.heck', 'Feldweg: Seitenhalt der Hinterräder relativ zum Grip (unter 1 = Heck kommt unter Gas, Rallye)', () => field.rearSide ?? 1, (v) => { field.rearSide = v; }, [0.5, 1.2]);
+  registerValue('feldweg.rollen', 'Feldweg: Rollwiderstand als Anteil der Radlast', () => field.rolling, (v) => { field.rolling = v; }, [0, 0.2]);
+  registerValue('feldweg.ruetteln', 'Feldweg: Rütteln 0..1', () => field.rumble, (v) => { field.rumble = v; }, [0, 1]);
   registerValue('pad.rumble', 'Gamepad-Vibration 0..1', () => pad.rumbleScale, (v) => { pad.rumbleScale = v; }, [0, 1]);
 }
 

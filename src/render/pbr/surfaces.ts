@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { patchPbr } from './pbrShader.ts';
 import { BUILDING, cellIndex, NATURE, STREET } from './textureSets.ts';
+import { FIELD_WAY } from '../../world/roadSpec.ts';
 import { SPLAT, SPLAT_AERIAL_REF, SPLAT_COLOUR } from '../../world/coverKinds.ts';
 
 // The GLSL bodies of the world's PBR materials. Each sets pbrAlbedo/pbrN/pbrRough/pbrHeight (see pbrShader.ts)
@@ -8,9 +9,17 @@ import { SPLAT, SPLAT_AERIAL_REF, SPLAT_COLOUR } from '../../world/coverKinds.ts
 // overlapping roads at junctions and bridge ramps carry the texture on without a seam.
 
 const S = (n: string) => `${cellIndex(STREET, n)}.0`;
+const RUT = FIELD_WAY.rut.toFixed(2), RUT_HALF = FIELD_WAY.rutHalf.toFixed(2);
 const N = (n: string) => `${cellIndex(NATURE, n)}.0`;
 
 /** Road: asphalt with wear levels and repairs, tyre tracks, edge grime, gutters, edge lines; or sett/gravel/plaza. */
+const lin = (hex: string) => { const c = new THREE.Color(hex); return `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`; };
+/** Feldweg colours: packed earth, the mud in the ruts and the grass (land cover colours, coverKinds.ts). */
+const FIELD_COLOURS = /* glsl */ `
+const vec3 FIELD_EARTH = ${lin('#8a7658')};
+const vec3 FIELD_MUD = ${lin('#5a4a38')};
+const vec3 FIELD_GRASS = ${lin(SPLAT_COLOUR.meadow)};
+`;
 const ROAD = /* glsl */ `
   float code = floor(vPbrUv.y + 0.5);
   float kind = mod(code, 8.0);
@@ -29,6 +38,8 @@ const ROAD = /* glsl */ `
   vec2 gx = dFdx(wp), gy = dFdy(wp);
   float macro = pbrFbm(wp * 0.035);
   float level = 0.0;
+  float fieldTilt = 0.0;
+  float fieldRut = 0.0, fieldGrass = 0.0;
   PbrTexel t;
   if (kind < 2.5) {
     // Asphalt: the wear level drifts with a slow noise, so a worn street has fresher and cracked stretches.
@@ -48,11 +59,60 @@ const ROAD = /* glsl */ `
       F.a *= 0.75;
       t = pbrMix(t, F, rep);
     }
+  } else if (abs(kind - 4.0) < 0.5) {
+    // Feldweg: two wheel ruts of earth or gravel, a grass strip between them and grass along the edges.
+    // The ruts meander a little; lines = grass level 0..3, gutter = gravel ruts (roadCode.ts).
+    float xc = xr - width * 0.5;
+    float wob = (pbrNoise(wp * 0.06) - 0.5) * 0.4 + (pbrNoise(wp * 0.45 + 9.0) - 0.5) * 0.08;
+    float grassK = lines / 3.0 * uPbrFieldGrass;
+    float fine = pbrNoise(wp * 1.7 + 4.0);
+    // Rut mask 1 in the wheel track, its slope across the way for the shading below.
+    #define FIELD_RUT(o) smoothstep(${RUT_HALF} + 0.14, ${RUT_HALF} - 0.08, abs(abs(xc + wob + (o)) - ${RUT}))
+    float rut = FIELD_RUT(0.0);
+    float slope = (FIELD_RUT(0.04) - FIELD_RUT(-0.04)) / 0.08;
+    float mid = smoothstep(${RUT} - ${RUT_HALF} - 0.02, 0.12, abs(xc + wob));
+    float patchy = pbrFbm(wp * 0.9 + 2.0);
+    float verge = smoothstep(width * 0.5 - 0.75 - 0.5 * patchy, width * 0.5 - 0.1, abs(xc));
+    float mr = pbrStreetMetres[int(${S('gravel')})];
+    PbrTexel G = pbrStreet(${S('gravel')}, wp / mr, gx / mr, gy / mr);
+    float mm = pbrNatureMetres[int(${N('mud')})];
+    PbrTexel M = pbrNature(${N('mud')}, wp / mm, gx / mm, gy / mm);
+    float mf = pbrNatureMetres[int(${N('field')})];
+    PbrTexel E = pbrNature(${N('field')}, wp / mf, gx / mf, gy / mf);
+    float mg = pbrNatureMetres[int(${N('meadow')})];
+    PbrTexel W = pbrNature(${N('meadow')}, wp / mg, gx / mg, gy / mg);
+    // Scan colours pulled to the land cover colours (as on the terrain, tex.groundtint), so the verge matches the meadow beside it.
+    E.a = mix(E.a, E.a * FIELD_EARTH / max(pbrNatureMean(${N('field')}), vec3(0.01)), uPbrGroundTint);
+    M.a = mix(M.a, M.a * FIELD_MUD / max(pbrNatureMean(${N('mud')}), vec3(0.01)), uPbrGroundTint);
+    W.a = mix(W.a, W.a * FIELD_GRASS / max(pbrNatureMean(${N('meadow')}), vec3(0.01)), uPbrGroundTint);
+    // Between and beside the ruts packed earth (with gravel on gravel roads), in the ruts mud or loose stone.
+    PbrTexel base = pbrMix(E, G, gutter * 0.65);
+    PbrTexel inRut = pbrMix(pbrMix(E, M, 0.6), G, step(0.5, gutter));
+    t = pbrMix(base, inRut, rut);
+    float grass = clamp(max(mid * smoothstep(0.15, 0.6, grassK + (patchy - 0.5) * 0.8 + (fine - 0.5) * 0.3), verge * (0.5 + 0.5 * grassK)), 0.0, 1.0);
+    grass *= 1.0 - rut * 0.85;
+    t = pbrMix(t, W, grass);
+    // Ruts lie lower: a little darker and smoother (pressed, moist earth); the shading tilts with their walls.
+    t.a *= 1.0 - 0.1 * rut * (1.0 - gutter * 0.5);
+    t.r *= 1.0 - 0.12 * rut * (1.0 - gutter);
+    level = 3.0;
+    fieldRut = rut;
+    fieldGrass = grass;
+    fieldTilt = slope * 0.09 * uPbrFieldRuts;
   } else {
     float m = pbrStreetMetres[int(kind)];
     t = pbrStreet(kind, wp / m, gx / m, gy / m);
   }
   pbrUse(t);
+  if (fieldTilt != 0.0) {
+    // Rut walls: tilt the normal by the slope of the rut depth across the way (gradient of xr on the ground).
+    mat2 J = mat2(gx, gy);
+    float dj = determinant(J);
+    if (abs(dj) > 1e-10) {
+      vec2 g = inverse(transpose(J)) * vec2(dFdx(xr), dFdy(xr));
+      pbrN.xy += fieldTilt * g;
+    }
+  }
   pbrUv = wp;
   pbrCell = kind;
   float paved = step(kind, 2.5);
@@ -71,7 +131,7 @@ const ROAD = /* glsl */ `
   float grime = smoothstep(0.9, 0.1, edge) * (0.5 + 0.5 * pbrNoise(wp * 1.3));
   pbrAlbedo = mix(pbrAlbedo, pbrAlbedo * vec3(0.95, 0.9, 0.82) + vec3(0.012, 0.01, 0.006), grime * uPbrMacro);
   // Gutter: a strip of small granite sett along the kerbs.
-  if (gutter > 0.5 && edge < 0.34) {
+  if (gutter > 0.5 && edge < 0.34 && abs(kind - 4.0) > 0.5) {
     float m = pbrStreetMetres[3] * 0.55;
     PbrTexel G = pbrStreet(${S('sett')}, wp / m, gx / m, gy / m);
     float g = smoothstep(0.34, 0.34 - fw * 1.5, edge);
@@ -94,7 +154,7 @@ const ROAD = /* glsl */ `
     pbrNormalK *= 1.0 - 0.55 * paint;
   }
   pbrAlbedo *= 1.0 + (pbrNoise(wp * 0.11 + 5.0) - 0.5) * 0.16 * uPbrMacro;
-  if (uPbrOn < 0.5) { pbrAlbedo = pbrStreetMean(kind); pbrRough = 0.85; }
+  if (uPbrOn < 0.5) { pbrAlbedo = abs(kind - 4.0) < 0.5 ? mix(mix(FIELD_EARTH, FIELD_MUD, fieldRut * 0.6), FIELD_GRASS, fieldGrass) : pbrStreetMean(kind); pbrRough = 0.85; }
   diffuseColor.rgb *= pbrAlbedo;
 `;
 
@@ -282,7 +342,7 @@ const metal = (atlasFetch: string, cell: string, mean: string) => /* glsl */ `
 
 export function patchRoad(m: THREE.MeshStandardMaterial) {
   m.roughness = 1;
-  patchPbr(m, { key: 'road', atlases: ['street'], body: ROAD });
+  patchPbr(m, { key: 'road', atlases: ['street', 'nature'], body: ROAD, functions: FIELD_COLOURS });
 }
 
 export function patchMarking(m: THREE.MeshStandardMaterial) {

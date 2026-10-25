@@ -15,6 +15,8 @@ const MEDIAN = 3;
 /** Gaussian smoothing after the median (sigma, m): long on fast roads with big vertical curves, shorter in town. */
 export function profileSigma(highway: string) {
   const rank = ROAD_CLASSES[highway]?.rank ?? 0;
+  // Feldwege: a little longer than service ways, so roots and ruts in the forest floor scan are not built in.
+  if (highway === 'track') return 12;
   return rank >= 8 ? 28 : rank >= 5 ? 16 : rank >= 2 ? 11 : 8;
 }
 /**

@@ -45,6 +45,10 @@ export const pbrUniforms = {
   uPbrDebug: { value: 0 },
   /** Road surface override (tex.road): -1 = from the map, else a street atlas cell. */
   uPbrRoadForce: { value: -1 },
+  /** Feldwege: depth of the wheel ruts as shading (0 = flat, 1 = as built, 2 = deep; feldweg.ruts). */
+  uPbrFieldRuts: { value: 1 },
+  /** Feldwege: grass on the middle strip and the edges (0 = bare earth, 1 = from the map, 2 = overgrown; feldweg.grass). */
+  uPbrFieldGrass: { value: 1 },
   /** 0 = textures off (flat colours, tex.off), 1 = on. */
   uPbrOn: { value: 1 },
 };

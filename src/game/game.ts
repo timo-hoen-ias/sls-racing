@@ -8,6 +8,7 @@ import { EventList, ProgressBadge, TitleMenu } from '../ui/gameMenus.ts';
 import { type CarRow, type GarageData, GarageMenu } from '../ui/garageMenu.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
 import { type BarrierView, findBarriers } from './events/barriers.ts';
+import type { JumpRamp } from '../world/jumpRamps.ts';
 import { generateEvents, mergeEvents } from './events/generate.ts';
 import { GateView, TYPE_COLORS } from './events/gates.ts';
 import { distanceToPath, EventRunner } from './events/runner.ts';
@@ -55,6 +56,8 @@ export interface GameDeps {
   rivals?: Rivals;
   /** Fences across side streets during races (S6). */
   barriers?: BarrierView;
+  /** Jump ramps in the world (W3): one jump event each. */
+  ramps?: JumpRamp[];
   /** The player car's garage (vehicle/garage.ts): parts, dealer and home garage need it (P3, P4). */
   cars?: CarControl;
   /** Where the home garage goes (beside the start). */
@@ -186,7 +189,7 @@ export class Game {
   /** Builds the events from the road graph, plus hand-made ones from events.json. */
   async load() {
     const t = performance.now();
-    const generated = generateEvents(this.d.graph);
+    const generated = generateEvents(this.d.graph, { ramps: this.d.ramps });
     // events.json: hand-made events, and generated ones the event test (pipeline/eventtest.ts) left out.
     let file: { events?: GameEvent[]; drop?: string[] } = {};
     try {
@@ -714,7 +717,7 @@ export class Game {
       return `${r.event.name} (${r.event.id}) · ${r.state} · ${r.time.toFixed(1)} s · Tor ${r.next + 1}/${r.event.gates.length} · Runde ${r.lap} · Wert ${formatValue(r.event, r.value())}`;
     } });
     registerCommand({ name: 'event.regen', help: 'Events neu erzeugen (anderer Zufallswert)', args: '[seed]', run: ([s]) => {
-      this.events = generateEvents(this.d.graph, { seed: Number(s ?? Date.now() % 1e6) });
+      this.events = generateEvents(this.d.graph, { seed: Number(s ?? Date.now() % 1e6), ramps: this.d.ramps });
       return `${this.events.length} Events`;
     } });
     registerToggle('events', 'Events in der freien Fahrt (Tore, Marker, Start-Hinweise)', () => this.enabled, (v) => (this.enabled = v));

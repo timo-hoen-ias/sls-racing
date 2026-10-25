@@ -98,6 +98,7 @@ import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';
 import { distanceToPath } from './game/events/runner.ts';
 import { BarrierView } from './game/events/barriers.ts';
+import { JumpRampView, placeJumpRamps, registerJumpCommands } from './world/jumpRamps.ts';
 import type { PropHit } from './world/props.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -497,8 +498,14 @@ async function boot() {
   let addressBook: Promise<AddressBook | undefined> | undefined;
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
+  // Jump ramps (W3): placed from the graph; the traffic leaves their streets out.
+  const jumpRamps = new JumpRampView(RAPIER, world);
+  jumpRamps.set(placeJumpRamps(graph));
+  view.scene.add(jumpRamps.root);
+  for (const r of jumpRamps.ramps) traffic.sim.closed.add(r.edge);
+  registerJumpCommands(jumpRamps, () => ip, (x, z, h) => teleport(x, z, h));
   const game = new Game({
-    rivals, barriers, police,
+    rivals, barriers, police, ramps: jumpRamps.ramps,
     destination: async (near, min, max) => {
       addressBook ??= loadAddresses(`${import.meta.env.BASE_URL}data/addresses.json`);
       const book = await addressBook;

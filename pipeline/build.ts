@@ -30,6 +30,7 @@ import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWi
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
 import { KERB, noCars } from '../src/world/roadSpec.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
+import { matchLevels } from './lib/levels.ts';
 import { matchRampHeights, planRamps, rampList } from './lib/ramps.ts';
 import { planKerbs } from './lib/kerbs.ts';
 import { buildRoadside } from './lib/roadside.ts';
@@ -82,6 +83,8 @@ function main() {
   console.log(`Motorway junctions: ${ramps.stats.runs} auxiliary lanes, ${ramps.stats.moved} ramps moved onto them, ${ramps.stats.plain} ramps as mapped`);
   roadHeights(osm.ways, regions, height, console.log);
   matchRampHeights(ramps);
+  const matched = matchLevels(osm.ways, height);
+  console.log(`Levels: ${matched.ways} roads matched to the road they overlap (${matched.overlaps} samples), max. shift ${matched.maxShift.toFixed(2)} m`);
   // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
   const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
   console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);

@@ -107,6 +107,19 @@ export function densify(pts: [number, number][], step = STEP): [number, number][
   return out;
 }
 
+/** Extra height along a way where it was matched to an overlapping road (levels.ts), 0 elsewhere. */
+export function levelAt(way: Way, dist: number): number {
+  const l = way.level;
+  if (!l) return 0;
+  const d = l.dist;
+  let i = 0, j = d.length - 1;
+  if (dist <= d[0]) return l.dy[0];
+  if (dist >= d[j]) return l.dy[j];
+  while (j - i > 1) { const m = (i + j) >> 1; if (d[m] <= dist) i = m; else j = m; }
+  const t = (dist - d[i]) / (d[j] - d[i] || 1);
+  return l.dy[i] + (l.dy[j] - l.dy[i]) * t;
+}
+
 /** Road surface height along a way: draped on the terrain, or a straight span for bridges, plus any lift. */
 function surface(way: Way, height: (e: number, n: number) => number) {
   const cls = ROAD_CLASSES[way.tags.highway];
@@ -147,8 +160,8 @@ function surface(way: Way, height: (e: number, n: number) => number) {
     return deck[dseg] + (deck[dseg + 1] - deck[dseg]) * t + ROAD_LIFT;
   };
   return isBridge(way.tags)
-    ? (_e: number, _n: number, dist: number) => span(dist) + raised(dist)
-    : (e: number, n: number, dist: number) => ground(e, n, dist) + lift + raised(dist);
+    ? (_e: number, _n: number, dist: number) => span(dist) + raised(dist) + levelAt(way, dist)
+    : (e: number, n: number, dist: number) => ground(e, n, dist) + lift + raised(dist) + levelAt(way, dist);
 }
 
 /** Surface height at each original node of a way (for the road graph). */
@@ -234,6 +247,22 @@ export class CarriagewayIndex {
       if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw + margin) return true;
     }
     return false;
+  }
+  /**
+   * Lowest surface of another road under (x, z) that lies below height y (by less than `within`, so a car could
+   * not pass between them), or undefined.
+   */
+  below(self: Way, x: number, z: number, y: number, within = 3): number | undefined {
+    let low: number | undefined;
+    for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
+      if (s.way === self) continue;
+      const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+      const t = Math.min(1, Math.max(0, ((x - s.x0) * dx + (z - s.z0) * dz) / (dx * dx + dz * dz || 1)));
+      const sy = s.y0 + (s.y1 - s.y0) * t;
+      if (sy >= y || sy < y - within) continue;
+      if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw + 0.3 && (low === undefined || sy < low)) low = sy;
+    }
+    return low;
   }
 }
 
@@ -380,12 +409,17 @@ export function buildRoads(
         if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted);
         else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted);
         const c = (p: typeof a, d: number) => p.y - d;
-        const extra = lifted ? 0.5 : 0;
-        const lw = (p: typeof a) => left(p) + extra, rw = (p: typeof a) => right(p) - extra;
+        // Another road just below beside this one (a junction arm, a road alongside at another height): the
+        // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.
+        const lower = (p: typeof a, o: number) => carriageways.below(way, ...off(p, o), p.y - STRIP_DROP);
+        const extra = (p: typeof a, side: number) => (lifted && lower(p, side * (side > 0 ? left(p) + 0.5 : -right(p) + 0.5)) === undefined ? 0.5 : 0);
+        const lw = (p: typeof a) => left(p) + extra(p, 1), rw = (p: typeof a) => right(p) - extra(p, -1);
         strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
         if (!lifted) {
-          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), c(a, ROAD_LIFT + 0.1)], [c(b, STRIP_DROP), c(b, ROAD_LIFT + 0.1)]);
-          strip(tile.collide, (p) => rw(p) - 1, rw, [c(a, ROAD_LIFT + 0.1), c(a, STRIP_DROP)], [c(b, ROAD_LIFT + 0.1), c(b, STRIP_DROP)]);
+          // Bevel 1 m out and down under the terrain, but never above a lower road there.
+          const skirt = (p: typeof a, o: number) => Math.min(c(p, ROAD_LIFT + 0.1), (lower(p, o) ?? Infinity) - STRIP_DROP);
+          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), skirt(a, lw(a) + 1)], [c(b, STRIP_DROP), skirt(b, lw(b) + 1)]);
+          strip(tile.collide, (p) => rw(p) - 1, rw, [skirt(a, rw(a) - 1), c(a, STRIP_DROP)], [skirt(b, rw(b) - 1), c(b, STRIP_DROP)]);
         }
       }
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.

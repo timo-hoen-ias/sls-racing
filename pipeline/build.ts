@@ -28,6 +28,7 @@ import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
+import { fillSlots } from './lib/slots.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
@@ -114,6 +115,9 @@ function main() {
   const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings }, ramps);
   drawFillets(fillets, info, tiles, carve);
+  // Narrow slots left between carriageways get patched, so no wheel drops between two roads.
+  const slots = fillSlots(tiles, info);
+  console.log(`Road slots: ${slots} cells of 0.5 m patched between carriageways`);
   // Footpaths, cycle paths and steps on the terrain mesh as carved for the roads, stopping at carriageways and sidewalks.
   const pathStats = (() => {
     // Scoped so the index is freed before the tiles are written.
@@ -522,7 +526,7 @@ function main() {
     tiles: index,
     graph: 'graph.json',
     roadProfile: activeRoadProfile(),
-    ...(fillets.length || smoothed || curves.ways ? { roadShape: { corners: fillets.length, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
+    ...(fillets.length || smoothed || curves.ways || slots ? { roadShape: { corners: fillets.length, slots, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',

@@ -39,7 +39,8 @@ export const paths = {
   dgm1: here('../../data/raw/dgm1/'),
   dom1: here('../../data/raw/dom1/'),
   lod2: here('../../data/raw/lod2/'),
-  out: here('../../public/tiles/'),
+  /** SLS_TILES_OUT builds somewhere else (e.g. the real world next to the test fixture). */
+  out: process.env.SLS_TILES_OUT ? `${process.env.SLS_TILES_OUT.replace(/\/$/, '')}/` : here('../../public/tiles/'),
 };
 
 export function loadRegion(id: string): RegionConfig {

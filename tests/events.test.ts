@@ -173,3 +173,29 @@ describe('event generator', () => {
     expect(merged.find((e) => e.id === gen[0].id)!.name).toBe('Eigenes');
   });
 });
+
+describe('race barriers', () => {
+  it('closes the side streets at junctions on the route, not the route itself', async () => {
+    const { findBarriers } = await import('../src/game/events/barriers.ts');
+    // A cross: main road along x through (0, 0), side street along z.
+    const data: RoadGraphData = { v: 1, names: ['Haupt', 'Seite'], nodes: [-200, 0, 0, 0, 0, 0, 200, 0, 0, 0, 0, -150, 0, 0, 150], edges: [] };
+    const line = (ax: number, az: number, bx: number, bz: number) => { const p: number[] = []; for (let k = 0; k <= 10; k++) p.push(ax + ((bx - ax) * k) / 10, 0, az + ((bz - az) * k) / 10); return p; };
+    data.edges.push({ a: 0, b: 1, n: 0, c: 5, w: 8, p: line(-200, 0, 0, 0) }, { a: 1, b: 2, n: 0, c: 5, w: 8, p: line(0, 0, 200, 0) });
+    data.edges.push({ a: 1, b: 3, n: 1, c: 3, w: 6, p: line(0, 0, 0, -150) }, { a: 1, b: 4, n: 1, c: 3, w: 6, p: line(0, 0, 0, 150) });
+    const g = new RoadGraph(data);
+    const straight = findBarriers(g, [-200, 0, 0, 0, 200, 0]);
+    expect(straight.length).toBe(2);
+    for (const b of straight) {
+      expect(Math.abs(b.x)).toBeLessThan(0.5);
+      expect(Math.abs(b.z)).toBeGreaterThan(8);
+      // Across the side street (along x).
+      expect(Math.abs(b.ax)).toBeCloseTo(1, 3);
+      expect(b.width).toBeCloseTo(7.5);
+    }
+    // Turning into the side street: the main road ahead and the other side street get closed.
+    const turn = findBarriers(g, [-200, 0, 0, 0, 0, 150]);
+    expect(turn.length).toBe(2);
+    expect(turn.some((b) => b.x > 8)).toBe(true);
+    expect(turn.some((b) => b.z < -8)).toBe(true);
+  });
+});

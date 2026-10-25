@@ -113,6 +113,19 @@ export class CarPhysics {
   bursting = 0;
   /** Seconds the car has been in the air (0 on the ground). */
   airTime = 0;
+  /**
+   * Drift on a button (F2): a short pull on the handbrake at speed starts a drift that holds without it.
+   * Throttle opens the angle, steering into the drift opens it more, steering against it closes it;
+   * lifting off, braking or slowing down ends it. angle: largest drift angle (rad); grip: rear side grip
+   * while drifting; hold: how firmly the assist keeps the angle.
+   */
+  driftKit = { enabled: true, angle: 0.65, grip: 0.6, hold: 1, minSpeed: 12 };
+  /** Running drift from driftKit: direction (+1 right, -1 left), 0 = none. */
+  driftDir = 0;
+  private driftTime = 0;
+  private driftLow = 0;
+  private lastSlip = 0;
+  private rearSide = 1;
   private nitroHeld = 0;
   private wheelspin = 0;
   private R: R;
@@ -212,12 +225,12 @@ export class CarPhysics {
     // Speed-sensitive steering: full lock when parking, only a few degrees at motorway speed,
     // and the wheel turns slower the faster the car goes. The handbrake keeps enough lock to drift.
     let maxSteer = maxSteerAngle(absV);
-    if (input.handbrake) maxSteer = Math.max(maxSteer, CAR.steer.drift);
+    if (input.handbrake || this.driftDir) maxSteer = Math.max(maxSteer, CAR.steer.drift);
     const sf = this.surface;
     const rate = (CAR.steer.rate * sf.steer) / (1 + absV / CAR.steer.rateSpeed);
     const pull = this.steerPull * clamp(absV / 8, 0, 1);
     let target = input.steer * maxSteer + pull;
-    if (as.steer > 0 && absV > 4 && !input.handbrake) {
+    if (as.steer > 0 && absV > 4 && !input.handbrake && !this.driftDir) {
       // Steering assist: no more lock than puts the front tyres at their peak slip angle (they would
       // only push wide past it). Countersteer is never limited.
       const front = this.wheels.slice(0, 2).filter((w) => w.contact);
@@ -288,7 +301,8 @@ export class CarPhysics {
     const fwd = rotate(rot, 0, 0, 1);
     const left = rotate(rot, 1, 0, 0);
     const mass = body.mass();
-    this.drifting = input.handbrake && absV > 8;
+    this.updateDrift(input, absV, dt);
+    this.drifting = (input.handbrake && absV > 8) || this.driftDir !== 0;
     if (!this.airborne) {
       // Downforce on each axle, so the aero balance shifts grip between front and rear.
       const df = CAR.aero.downforce * this.feel.downforce * v * v * dt;
@@ -314,6 +328,17 @@ export class CarPhysics {
           const k = (slip - Math.sign(slip) * cap) * this.k.yaw * 4 * as.esp * dt;
           body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
         }
+        // Drift on a button: steer the drift angle towards its target with the throttle and steering.
+        const dk = this.driftKit;
+        if (this.driftDir && !input.handbrake) {
+          const d = this.driftDir;
+          const open = clamp(0.4 + 0.4 * input.throttle + 0.35 * (this.steer / CAR.steer.drift) * d, 0.12, 1);
+          const target = d * dk.angle * open;
+          const rate = (slip - this.lastSlip) / dt;
+          const k = (-(target - slip) * 3 + rate * 0.35) * this.k.yaw * dk.hold * dt;
+          body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
+        }
+        this.lastSlip = slip;
         // Drift assist: bleed a little sideways speed into forward speed while drifting.
         if (this.drifting && as.drift > 0) {
           const bleed = sv * 0.9 * as.drift * dt;
@@ -325,7 +350,7 @@ export class CarPhysics {
         const w = body.angvel();
         const yawRate = w.x * up.x + w.y * up.y + w.z * up.z;
         // Without the handbrake no more than the tyres can hold (a bit over their grip at this speed), so turn-in does not overshoot.
-        const maxYaw = input.handbrake ? 2.4 : Math.min(1.9, (1.3 * CAR.tyre.mu * 9.81) / Math.max(absV, 1));
+        const maxYaw = input.handbrake || this.driftDir ? 2.4 : Math.min(1.9, (1.3 * CAR.tyre.mu * 9.81) / Math.max(absV, 1));
         if (Math.abs(yawRate) > maxYaw) {
           const k = -(yawRate - Math.sign(yawRate) * maxYaw) * this.k.yaw * 0.5 * as.esp;
           body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
@@ -418,7 +443,7 @@ export class CarPhysics {
       const mu = loadedMu(spec, loads[i], this.k.refLoad) * this.wheelGrip[i] * (i >= 2 ? ty.rearMu : 1);
       // The weather's grip, traction and side factors describe the same road, so they do not stack.
       capX[i] = mu * loads[i] * Math.min(sf.grip, sf.traction) * tractionBoost;
-      capY[i] = mu * loads[i] * Math.min(sf.grip, sf.side);
+      capY[i] = mu * loads[i] * Math.min(sf.grip, sf.side) * (i >= 2 ? this.rearSide : 1);
     }
 
     // Centre split, then a limited-slip diff per axle.
@@ -509,6 +534,26 @@ export class CarPhysics {
     this.wheelspin = absV < 40 ? spinRear : 0;
   }
 
+  /** Starts, holds and ends the button drift (driftKit). */
+  private updateDrift(input: DriveInput, absV: number, dt: number) {
+    const dk = this.driftKit;
+    if (!dk.enabled || this.airborne) { this.driftDir = 0; this.rearSide = 1; return; }
+    if (input.handbrake && absV > dk.minSpeed && Math.abs(input.steer) > 0.2 && this.speed > 0) {
+      if (!this.driftDir) { this.driftTime = 0; this.driftLow = 0; }
+      this.driftDir = Math.sign(input.steer);
+    }
+    if (this.driftDir) {
+      this.driftTime += dt;
+      const angle = Math.abs(this.lastSlip);
+      this.driftLow = angle < 0.1 ? this.driftLow + dt : 0;
+      const off = !input.handbrake && (input.throttle < 0.1 || input.brake > 0.3);
+      if (off || absV < dk.minSpeed * 0.6 || (this.driftTime > 0.6 && this.driftLow > 0.4)) this.driftDir = 0;
+    }
+    // Rear tyres give a little while the drift runs, so it does not grip up on its own.
+    const target = this.driftDir && !input.handbrake ? dk.grip : 1;
+    this.rearSide += (target - this.rearSide) * Math.min(1, dt * 6);
+  }
+
   /** Touch-down after a jump: takes out most of the bounce and the roll/pitch tumble (feel.landing). */
   private land() {
     const k = this.feel.landing;
@@ -535,6 +580,14 @@ export class CarPhysics {
     this.steer = 0;
     this.lastVel = { x: 0, y: 0, z: 0 };
     this.bumps.fill(0);
+    this.driftDir = 0;
+    this.rearSide = 1;
+  }
+
+  /** Takes the car out of the world (rivals after a race). */
+  dispose() {
+    this.world.removeVehicleController(this.controller);
+    this.world.removeRigidBody(this.body);
   }
 
   /** Heading in the world frame, 0 = north, clockwise positive. */

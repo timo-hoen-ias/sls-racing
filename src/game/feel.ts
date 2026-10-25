@@ -30,6 +30,8 @@ export interface FeelContext {
 interface Profile {
   car: CarPhysics['feel'];
   burst: boolean;
+  /** Drift on a handbrake pull that holds without it (F2). */
+  drift: boolean;
   refill: number;
   knockLoss: number;
   glide: boolean;
@@ -47,13 +49,13 @@ interface Profile {
 export const FEEL: Record<FeelProfile, Profile> = {
   fun: {
     car: { torque: 1.2, downforce: 1.7, drag: 0.85, airLevel: 0.7, landing: 0.8 },
-    burst: true, refill: 0.03, knockLoss: 0.04, glide: true, kerb: 0.35, punt: true, traffic: 0.5, peds: true,
+    burst: true, drift: true, refill: 0.03, knockLoss: 0.04, glide: true, kerb: 0.35, punt: true, traffic: 0.5, peds: true,
     park: 0.5, parkWidth: 6, lines: true, damagePower: false,
     cam: { lag: 1, swing: 1, height: 1.8, dist: 5.8, speedFov: 0.06, boostFov: 9, maxKmh: 280 },
   },
   real: {
     car: { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0 },
-    burst: false, refill: 0.05, knockLoss: 0.1, glide: false, kerb: 1, punt: false, traffic: 1, peds: false,
+    burst: false, drift: false, refill: 0.05, knockLoss: 0.1, glide: false, kerb: 1, punt: false, traffic: 1, peds: false,
     park: 1, parkWidth: 0, lines: false, damagePower: true,
     cam: { lag: 0, swing: 0, height: 2.1, dist: 6, speedFov: 0.045, boostFov: 6, maxKmh: 220 },
   },
@@ -78,6 +80,7 @@ export class GameFeel {
     this.profile = p;
     Object.assign(c.car.feel, f.car);
     c.car.burst.enabled = f.burst;
+    c.car.driftKit.enabled = f.drift;
     (CAR.nitro as { refill: number }).refill = f.refill;
     c.knock.speedLoss = f.knockLoss;
     c.glide.enabled = f.glide;
@@ -120,6 +123,12 @@ export class GameFeel {
     const bu = c.car.burst;
     registerToggle('feel.burst', 'Nitro kurz antippen gibt einen Stoß nach vorn', () => bu.enabled, (v) => { bu.enabled = v; });
     registerValue('feel.burstkick', 'Stärke des Nitro-Stoßes (m/s Tempo)', () => bu.kick, (v) => { bu.kick = v; }, [0, 20]);
+    const dk = c.car.driftKit;
+    registerToggle('drift', 'Drift auf Knopfdruck: kurz Handbremse ziehen, dann hält das Auto den Drift mit Gas und Lenkung', () => dk.enabled, (v) => { dk.enabled = v; });
+    registerValue('drift.angle', 'Größter Driftwinkel (Grad)', () => (dk.angle * 180) / Math.PI, (v) => { dk.angle = (v * Math.PI) / 180; }, [10, 70]);
+    registerValue('drift.grip', 'Seitengrip hinten während des Drifts 0..1', () => dk.grip, (v) => { dk.grip = v; }, [0.2, 1]);
+    registerValue('drift.hold', 'Wie fest der Assistent den Winkel hält 0..3', () => dk.hold, (v) => { dk.hold = v; }, [0, 3]);
+    registerValue('drift.minspeed', 'Mindesttempo für den Drift (km/h)', () => dk.minSpeed * 3.6, (v) => { dk.minSpeed = v / 3.6; }, [10, 120]);
     registerValue('feel.burstcost', 'Tankanteil pro Nitro-Stoß 0..1', () => bu.cost, (v) => { bu.cost = v; }, [0, 1]);
     registerValue('nitro.refill', 'Nitro füllt sich von selbst um diesen Anteil pro Sekunde', () => CAR.nitro.refill, (v) => { (CAR.nitro as { refill: number }).refill = v; }, [0, 1]);
     registerValue('kerb.bump', 'Stoß beim Überfahren eines Bordsteins (1 = realistisch)', () => c.surface.kerbBump, (v) => { c.surface.kerbBump = v; }, [0, 2]);

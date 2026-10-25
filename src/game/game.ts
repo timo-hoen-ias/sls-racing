@@ -1,17 +1,19 @@
 import type * as THREE from 'three';
 import type { GameSfx } from '../audio/gameSfx.ts';
-import { registerCommand, registerToggle } from '../debug/registry.ts';
+import { registerChoice, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import type { Navigation } from '../nav/navigation.ts';
 import type { MapMarker } from '../ui/mapDraw.ts';
 import { EventHud } from '../ui/eventHud.ts';
 import { EventList, ProgressBadge, TitleMenu } from '../ui/gameMenus.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
+import { type BarrierView, findBarriers } from './events/barriers.ts';
 import { generateEvents, mergeEvents } from './events/generate.ts';
 import { GateView, TYPE_COLORS } from './events/gates.ts';
 import { distanceToPath, EventRunner } from './events/runner.ts';
 import { crossed, EVENT_LABELS, formatValue, type GameEvent, type Gate, RACE_TYPES } from './events/types.ts';
 import { Progress } from './progress.ts';
 import { MEDAL_NAMES, SaveGame } from './save.ts';
+import { LineTracker, RIVAL_LEVELS, type RivalLevel, type Rivals } from './rivals.ts';
 import type { StyleEvent } from './style.ts';
 
 // The game around the driving (G1): spielstand, level and credits, the events in town with their gates and
@@ -36,6 +38,10 @@ export interface GameDeps {
   onPlay(): void;
   openOptions(): void;
   openGarage?(): void;
+  /** AI rivals for races (V3). */
+  rivals?: Rivals;
+  /** Fences across side streets during races (S6). */
+  barriers?: BarrierView;
 }
 
 export interface CarNow {
@@ -73,6 +79,10 @@ export class Game {
   private navGate = -1;
   private badgeTimer = 0;
   private lastRace?: GameEvent;
+  private track?: LineTracker;
+  private retrack = false;
+  /** Rivals per race; undefined: as the event says. */
+  rivalCount?: number;
 
   constructor(d: GameDeps) {
     this.d = d;
@@ -90,8 +100,8 @@ export class Game {
       go: (e) => { this.list.hide(); this.goTo(e); },
       close: () => this.list.hide(),
     });
-    this.hud.onRetry = () => { this.hud.hideCard(); this.runner.close(); if (this.lastRace) this.goTo(this.lastRace); };
-    this.hud.onClose = () => { this.hud.hideCard(); this.runner.close(); };
+    this.hud.onRetry = () => { this.hud.hideCard(); this.runner.close(); this.endRivals(); if (this.lastRace) this.goTo(this.lastRace); };
+    this.hud.onClose = () => { this.hud.hideCard(); this.runner.close(); this.endRivals(); };
     this.runner.best = (id) => this.save.data.events[id]?.best;
     this.wireRunner();
     this.progress.onLevelUp = (l) => { d.sfx.play('levelup'); d.toast(`Stufe ${l} erreicht!`, 2.5); d.rumble(0.6, 300); };
@@ -103,12 +113,13 @@ export class Game {
   async load() {
     const t = performance.now();
     const generated = generateEvents(this.d.graph);
-    let custom: GameEvent[] | undefined;
+    // events.json: hand-made events, and generated ones the event test (pipeline/eventtest.ts) left out.
+    let file: { events?: GameEvent[]; drop?: string[] } = {};
     try {
       const r = await fetch(`${this.d.tilesUrl}/events.json`);
-      if (r.ok && r.headers.get('content-type')?.includes('json')) custom = ((await r.json()) as { events: GameEvent[] }).events;
+      if (r.ok && r.headers.get('content-type')?.includes('json')) file = await r.json();
     } catch { /* optional file */ }
-    this.events = mergeEvents(generated, custom);
+    this.events = mergeEvents(generated, file.events, file.drop);
     console.info(`[events] ${this.events.length} Events in ${Math.round(performance.now() - t)} ms`);
   }
 
@@ -133,11 +144,11 @@ export class Game {
   }
 
   /** Fast travel to an event's start; races then start with a countdown. */
-  goTo(e: GameEvent) {
-    if (e.level > this.progress.level) { this.d.toast(`${e.name}: ab Stufe ${e.level}`, 1.8); return; }
+  goTo(e: GameEvent, force = false) {
+    if (!force && e.level > this.progress.level) { this.d.toast(`${e.name}: ab Stufe ${e.level}`, 1.8); return; }
     if (this.title.open) this.play();
     if (this.runner.busy) this.runner.abort('Abgebrochen');
-    const back = RACE_TYPES.has(e.type) ? 6 : 60;
+    const back = RACE_TYPES.has(e.type) ? (this.fieldOf(e) ? 14 : 6) : 60;
     this.d.teleport(e.start.x - e.start.dx * back, e.start.z - e.start.dz * back, headingOf(e.start));
     this.pending = RACE_TYPES.has(e.type) ? e : undefined;
     this.prev = undefined;
@@ -177,19 +188,60 @@ export class Game {
       this.pending = undefined;
       this.lastRace = e;
       this.runner.startRace(e);
+      this.startRivals(e);
+      if (e.path && d.barriers) d.barriers.show(findBarriers(d.graph, e.path));
     }
     if (ready && this.inGame) {
       this.runner.update(dt, car);
       if (!this.runner.busy && this.enabled && this.prev && !this.pending) this.freeRoam(car);
+      this.trackPlace(car);
       if (this.runner.racing && this.runner.state === 'running' && this.runner.event?.path && distanceToPath(this.runner.event.path, car.x, car.z) > 150) this.runner.abort('Strecke verlassen');
       this.prev = { x: car.x, z: car.z };
-    } else if (!ready) { this.prev = undefined; this.runner.skip(); }
+    } else if (!ready) { this.prev = undefined; this.runner.skip(); this.retrack = true; }
     this.gates.showActive(this.runner.busy ? this.runner.event : undefined, this.runner.next);
     this.gates.showMarkers(this.events, car.x, car.z, this.runner.busy || !this.enabled);
     this.gates.update(dt);
     this.hud.update(this.runner, dt);
     this.hud.showPrompt(this.runner.busy || this.overlay ? undefined : this.promptEvent, 'F', !!this.promptEvent && this.promptEvent.level > this.progress.level);
     this.updateNav(car);
+  }
+
+  private fieldOf(e: GameEvent) {
+    const n = this.rivalCount ?? e.rivals ?? 0;
+    return this.d.rivals?.enabled && e.path && e.path.length >= 4 ? n : 0;
+  }
+
+  private startRivals(e: GameEvent) {
+    const rv = this.d.rivals;
+    this.track = undefined;
+    if (!rv) return;
+    const n = this.fieldOf(e);
+    if (!n) { rv.clear(); return; }
+    void rv.start(e.path!, e.laps, n);
+    if (rv.line) this.track = new LineTracker(rv.line, -14);
+    this.runner.field = rv.list.length + 1;
+  }
+
+  /** Player's place among the rivals. */
+  private trackPlace(car: CarNow) {
+    const rv = this.d.rivals;
+    if (!rv?.active || !this.track || !this.runner.busy) return;
+    if (this.retrack) { this.track.relocate(car.x, car.z); this.retrack = false; }
+    else this.track.update(car.x, car.z);
+    rv.setPlayer(this.track.raced);
+    this.runner.place = rv.place(this.track.raced);
+  }
+
+  /** Rivals leave with the result card or a failed run. */
+  private endRivals() {
+    this.d.rivals?.clear();
+    this.d.barriers?.clear();
+    this.track = undefined;
+  }
+
+  /** Rivals drive (before world.step); they wait on the grid during the countdown. */
+  stepRivals(dt: number, player: { x: number; z: number }) {
+    this.d.rivals?.step(dt, this.runner.state === 'running' || this.runner.state === 'done', player);
   }
 
   private freeRoam(car: CarNow) {
@@ -242,7 +294,7 @@ export class Game {
       if (i < e.gates.length - 1 || (e.laps && lap < e.laps)) sfx.play('checkpoint');
     };
     r.onLap = (lap) => toast(`Runde ${lap}/${r.event?.laps}`, 1.2);
-    r.onFail = (e, why) => { this.hud.fail(e, why); sfx.play('fail'); };
+    r.onFail = (e, why) => { this.hud.fail(e, why); sfx.play('fail'); this.endRivals(); };
     r.onFinish = (res) => {
       const e = res.event;
       const rec = this.save.data.events[e.id];
@@ -298,11 +350,11 @@ export class Game {
           })].join('\n');
       },
     });
-    registerCommand({ name: 'event.start', help: 'Zu einem Event fahren und starten (Nummer aus event.list, id oder Name)', args: '<nr|id|name>', run: (a) => { const e = find(a.join(' ')); this.goTo(e); return `${e.name}`; } });
+    registerCommand({ name: 'event.start', help: 'Zu einem Event fahren und starten (Nummer aus event.list, id oder Name)', args: '<nr|id|name>', run: (a) => { const e = find(a.join(' ')); this.goTo(e, true); return `${e.name}`; } });
     registerCommand({ name: 'event.near', help: 'Das nächste Event starten', args: '[art]', run: ([type]) => {
       const e = this.byDistance(pos()).find((x) => !type || x.type === type);
       if (!e) throw new Error('kein Event');
-      this.goTo(e);
+      this.goTo(e, true);
       return e.name;
     } });
     registerCommand({ name: 'event.win', help: 'Laufendes Event sofort mit einer Medaille beenden (0–4, Standard Gold)', args: '[medaille]', run: ([m]) => {
@@ -327,6 +379,20 @@ export class Game {
     } });
     registerToggle('events', 'Events in der freien Fahrt (Tore, Marker, Start-Hinweise)', () => this.enabled, (v) => (this.enabled = v));
     registerToggle('event.navi', 'Navi führt im Rennen zum nächsten Checkpoint', () => this.checkpointNav, (v) => (this.checkpointNav = v));
+    const rv = this.d.rivals;
+    if (rv) {
+      registerToggle('rivals', 'KI-Gegner in Rennen', () => rv.enabled, (v) => (rv.enabled = v));
+      registerChoice('rivals.level', 'Stärke der KI-Gegner', Object.keys(RIVAL_LEVELS), () => rv.level, (v) => (rv.level = v as RivalLevel));
+      registerValue('rivals.rubber', 'Gummiband 0..1: Gegner hinter dir holen auf, vor dir lassen sie etwas nach', () => rv.rubber, (v) => (rv.rubber = v), [0, 1]);
+      registerValue('rivals.count', 'Gegner pro Rennen (-1: wie das Event sagt)', () => this.rivalCount ?? -1, (v) => (this.rivalCount = v < 0 ? undefined : Math.round(v)), [-1, 6]);
+      registerCommand({ name: 'rivals.info', help: 'Stand der Gegner im laufenden Rennen', run: () => rv.info() });
+    }
+    const bv = this.d.barriers;
+    if (bv) {
+      registerToggle('event.barriers', 'Absperrgitter an den Seitenstraßen im Rennen', () => bv.enabled, (v) => { bv.enabled = v; if (!v) bv.clear(); });
+      registerToggle('event.barriers.solid', 'Absperrgitter halten Auto und Gegner auf (aus: nur zu sehen)', () => bv.solid, (v) => (bv.solid = v));
+      registerCommand({ name: 'event.barriers.info', help: 'Wie viele Absperrungen gerade stehen', run: () => `${bv.count} Absperrungen` });
+    }
     registerCommand({ name: 'title', help: 'Titelbildschirm zeigen', run: () => { this.d.start.hidden = false; this.title.open = true; return 'Titel'; } });
   }
 

@@ -87,4 +87,35 @@ describe('game feel', () => {
     const upY = 1 - 2 * (r.x * r.x + r.z * r.z);
     expect(upY).toBeGreaterThan(0.9);
   });
+
+  it('a handbrake pull starts a drift that holds without the handbrake (F2)', () => {
+    const slipOf = (car: CarPhysics) => {
+      const v = car.body.linvel();
+      const r = car.body.rotation();
+      // Body forward (+z) and left (+x) in the world.
+      const fx = 2 * (r.x * r.z + r.w * r.y), fz = 1 - 2 * (r.x * r.x + r.y * r.y);
+      const lx = 1 - 2 * (r.y * r.y + r.z * r.z), lz = 2 * (r.x * r.z - r.w * r.y);
+      return Math.atan2(v.x * lx + v.z * lz, v.x * fx + v.z * fz);
+    };
+    const run = (latch: boolean) => {
+      const { car, drive } = setup('fun');
+      car.driftKit.enabled = latch;
+      drive({}, 1);
+      drive({ throttle: 1 }, 3.5);
+      drive({ throttle: 1, steer: 0.6, handbrake: true }, 0.35);
+      let most = 0;
+      for (let i = 0; i < 15; i++) { drive({ throttle: 0.9, steer: 0.15 }, 0.1); most = Math.max(most, Math.abs(slipOf(car))); }
+      return { car, most, slip: Math.abs(slipOf(car)) };
+    };
+    const on = run(true);
+    const off = run(false);
+    expect(on.car.driftDir).toBe(1);
+    expect(on.slip).toBeGreaterThan(0.2);
+    expect(on.slip).toBeGreaterThan(off.slip + 0.1);
+    expect(on.car.speed).toBeGreaterThan(10);
+    // Lifting off ends it.
+    const { car } = on;
+    for (let i = 0; i < 60; i++) { car.update({ throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false }, 1 / 120); }
+    expect(car.driftDir).toBe(0);
+  });
 });

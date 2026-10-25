@@ -6,7 +6,7 @@
   // The deploy builds the real Saarlouis tiles (Geofabrik OSM + terrain, ~2 min) and vite copies
   // public/tiles into dist, so they are served as static assets next to the game (about 2500 files;
   // unchanged files are not uploaded again). Move them to R2 once the world outgrows asset limits.
-  "build": { "command": "npm run world:fetch && npm run world:build && npm run build" },
+  "build": { "command": "npm run world:fetch && npm run world:build && npm run world:eventtest -- --write && npm run build" },
   "assets": { "directory": "./dist" },
   // Required by `wrangler preview`, which Workers Builds runs for non-main branches.
   "previews": {}

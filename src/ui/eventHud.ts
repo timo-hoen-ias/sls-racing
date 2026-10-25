@@ -68,6 +68,7 @@ export class EventHud {
       const v = r.state === 'countdown' ? 0 : r.value();
       this.value.textContent = formatValue(e, e.type === 'slalom' || e.unit === 's' ? r.time + (e.type === 'slalom' ? r.misses * 2 : 0) : v);
       const parts: string[] = [];
+      if (r.field > 1 && r.place) parts.push(`Platz ${r.place}/${r.field}`);
       if (e.gates.length > 1) parts.push(`Checkpoint ${Math.min(r.next + 1, e.gates.length)}/${e.gates.length}`);
       if (e.laps) parts.push(`Runde ${r.lap}/${e.laps}`);
       if (e.type === 'slalom') parts.push(`${r.misses} verpasst (+${r.misses * 2} s)`);

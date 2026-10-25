@@ -19,6 +19,9 @@ import type { StyleEvent } from './style.ts';
 import { PlaceView } from './placeView.ts';
 import { CAR_SHOP, findPlaces, PART_NAMES, type Place, ratingOf, recommendedLs, SLOT_LABELS, SLOTS, Workshop } from './workshop.ts';
 import { CARS } from '../vehicle/cars.ts';
+import type { CarPhysics } from '../vehicle/carPhysics.ts';
+import { BUST, type PlayerNow, type Police } from './police.ts';
+import { WantedHud } from '../ui/wantedHud.ts';
 
 // The game around the driving (G1): spielstand, level and credits, the events in town with their gates and
 // HUD, the title screen and the event list. main.ts feeds it the car each frame and asks it whether the
@@ -52,6 +55,8 @@ export interface GameDeps {
   home?: { x: number; z: number };
   /** Ground height for markers. */
   groundAt?(x: number, z: number): number | undefined;
+  /** Police patrols and chases in free roam (V4). */
+  police?: Police;
 }
 
 /** What the game needs from vehicle/garage.ts. */
@@ -153,6 +158,7 @@ export class Game {
     this.hud.onClose = () => { this.hud.hideCard(); this.runner.close(); this.endRivals(); };
     this.runner.best = (id) => this.save.data.events[id]?.best;
     this.wireRunner();
+    if (d.police) this.wirePolice(d.police);
     this.progress.onLevelUp = (l) => { d.sfx.play('levelup'); d.toast(`Stufe ${l} erreicht!`, 2.5); d.rumble(0.6, 300); };
     this.save.onChange = () => (this.badgeTimer = 0);
     this.refreshBadge();
@@ -341,6 +347,45 @@ export class Game {
   /** Rivals drive (before world.step); they wait on the grid during the countdown. */
   stepRivals(dt: number, player: { x: number; z: number }) {
     this.d.rivals?.step(dt, this.runner.state === 'running' || this.runner.state === 'done', player);
+  }
+
+  private wantedHud?: WantedHud;
+
+  /** Chases end with a reward for getting away, or a fine when caught (V4). */
+  private wirePolice(police: Police) {
+    const { toast, sfx, rumble } = this.d;
+    this.wantedHud = new WantedHud(this.d.hud);
+    const w = police.wanted;
+    w.onChange = (h, why) => { toast(`${'★'.repeat(h)} Fahndung: ${why}`, 2); sfx.play('fail', 0.5); rumble(0.3, 150); };
+    w.onEscape = (h, t) => {
+      const xp = 120 * h + Math.round(t * 2), credits = 400 * h + Math.round(t * 10);
+      toast(`Entkommen! ${'★'.repeat(h)} · ${Math.round(t)} s Verfolgung`, 2.5);
+      sfx.play('levelup', 0.6);
+      this.progress.reward(xp, credits, 'Polizei entkommen');
+    };
+    w.onBust = (h) => {
+      const fine = Math.min(this.progress.credits, 500 * h);
+      if (fine) this.progress.spend(fine);
+      toast(`Gestellt! Bußgeld ${fine.toLocaleString('de-DE')} Cr`, 2.5);
+      sfx.play('fail');
+      rumble(0.8, 300);
+    };
+    police.onRam = () => rumble(0.5, 160);
+    police.onSpikes = () => { toast('Nagelband! Reifen platt', 2); rumble(0.9, 400); };
+  }
+
+  /** Police drive (before world.step); only in free roam, a started event ends any chase. */
+  stepPolice(dt: number, player: PlayerNow, car: CarPhysics) {
+    const police = this.d.police;
+    if (!police) return;
+    if (!this.inGame || this.runner.busy) {
+      if (police.units.length || police.heat) { police.wanted.clear(); police.clear(); }
+      this.wantedHud?.set(0, 0, 0);
+      return;
+    }
+    police.step(dt, player, car);
+    const w = police.wanted;
+    this.wantedHud?.set(w.heat, w.heat ? w.hidden / w.escapeNeeded : 0, w.heat ? w.boxed / BUST : 0);
   }
 
   private freeRoam(car: CarNow) {

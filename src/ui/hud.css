@@ -196,3 +196,12 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 #garage-menu button.p1, #garage-menu button.p2, #garage-menu button.p3, #garage-menu button.p4, #garage-menu button.p5 { background: #1d2736; }
 @media (max-width: 760px) { #garage-menu .gm-body { grid-template-columns: 1fr; } #garage-menu .gm-car { grid-template-columns: 1fr auto; } #garage-menu .gm-bars { grid-column: 1 / -1; } }
 #event-list .el-info span.el-weak { color: #ffb000; opacity: .95; }
+
+/* Wanted level (V4) */
+#wanted { position: absolute; top: calc(52px + env(safe-area-inset-top, 0px)); right: calc(16px + env(safe-area-inset-right, 0px)); width: 150px; text-align: center; background: #0b1520d0; border-radius: 8px; padding: 6px 10px 8px; animation: wd-flash 0.5s steps(2) infinite; }
+#wanted .wd-stars { font-size: 22px; letter-spacing: .08em; color: #ffd23f; text-shadow: 0 1px 3px #000; }
+#wanted .wd-bar { height: 4px; margin-top: 4px; background: #ffffff22; border-radius: 2px; overflow: hidden; }
+#wanted .wd-fill { height: 100%; width: 0; }
+#wanted .wd-escape .wd-fill { background: #4bd37b; }
+#wanted .wd-bust .wd-fill { background: #ff4b4b; }
+@keyframes wd-flash { 0% { box-shadow: 0 0 0 2px #2a5bffaa; } 100% { box-shadow: 0 0 0 2px #ff3030aa; } }

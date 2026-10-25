@@ -18,6 +18,7 @@ export interface TitleActions {
   play(): void;
   events(): void;
   garage(): void;
+  online?(): void;
   options(): void;
 }
 
@@ -39,7 +40,7 @@ export class TitleMenu {
     start.onclick = null;
     start.addEventListener('click', () => a.play());
     const b = (text: string, fn: () => void) => { const x = el('button', '', text); x.type = 'button'; x.onclick = fn; return x; };
-    buttons.append(start, b('Events', a.events), b('Garage', a.garage), b('Optionen', a.options));
+    buttons.append(start, b('Events', a.events), b('Garage', a.garage), ...(a.online ? [b('Online', a.online)] : []), b('Optionen', a.options));
     this.root.append(logo, tag, this.stats, buttons);
     parent.append(this.root);
     this.nav = new PadNav(this.root);

@@ -48,8 +48,8 @@ export interface FuelStation {
 /** Station zone around a point (m). */
 const POINT_ZONE = 32;
 const SHOP = { w: 12, d: 8 };
-/** Service roads and tracks (driveways through the forecourt): solid parts keep this far from the centreline. */
-const SERVICE_CLEAR = 1.9;
+/** Service roads and tracks (driveways through the forecourt, also used by race routes): solid parts keep this far from the centreline, so a rival running up to 3 m wide still clears them. */
+const SERVICE_CLEAR = 3.5;
 
 export function isFuelCanopyFn(fn: string) {
   return fn.startsWith('51009_161');

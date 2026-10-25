@@ -86,7 +86,7 @@ export class RoadSurface {
   rumble = 0;
   crunch = 0;
   squeal = 1;
-  /** Factor on the jolt when a wheel goes up or down a kerb (kerb.bump; 0.35 in the fun feel, 1 real). */
+  /** Factor on the jolt when a wheel goes up or down a kerb (kerb.bump; 0.1 in the fun feel, 1 real). */
   kerbBump = 1;
   /** Kerb strikes this frame, 0..1 each. */
   readonly kerbs: number[] = [];

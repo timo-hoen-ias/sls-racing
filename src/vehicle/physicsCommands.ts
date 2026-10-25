@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import { parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import type { CarPhysics } from './carPhysics.ts';
 import type { Debris } from '../render/debris.ts';
-import { type CarDamage, type Zone, ZONES } from './damage.ts';
 import { type RoadSurface, SURFACES, type SurfaceKind } from './roadSurface.ts';
 import { ASSIST_PRESETS, type Assists, CAR } from './tuning.ts';
 import { lateralCurve } from './tyres.ts';
@@ -150,35 +149,7 @@ export function registerSurfaceCommands(rs: RoadSurface, car: CarPhysics, pad: {
   registerValue('pad.rumble', 'Gamepad-Vibration 0..1', () => pad.rumbleScale, (v) => { pad.rumbleScale = v; }, [0, 1]);
 }
 
-/** F3: damage to the car. */
-export function registerDamageCommands(damage: CarDamage, debris: Debris) {
-  const info = () => `${ZONES.map((z) => `${z} ${(damage.zones[z] * 100).toFixed(0)} %`).join(' · ')}\nLeistung ${(damage.power * 100).toFixed(0)} % · Lenkung zieht ${((damage.steerPull * 180) / Math.PI).toFixed(1)}° · lose Teile ${debris.count}`;
-  registerToggle('damage', 'Schaden am Auto an/aus', () => damage.enabled, (v) => { damage.enabled = v; });
-  registerToggle('damage.power', 'Schaden kostet Leistung und verzieht die Lenkung', () => damage.performance, (v) => { damage.performance = v; });
-  registerCommand({ name: 'damage.info', help: 'Schaden je Seite, Leistung, Lenkung', run: info });
-  registerCommand({ name: 'damage.repair', help: 'Auto reparieren (Beulen, Lack, Teile)', run: () => { damage.repair(); return 'repariert'; } });
-  registerCommand({
-    name: 'damage.hit',
-    help: 'Einschlag simulieren',
-    args: '<front|rear|left|right> [stärke 0..1]',
-    complete: (args) => (args.length <= 1 ? ZONES : []),
-    run([z, v]) {
-      const dir: Record<Zone, [number, number]> = { front: [0, 1], rear: [0, -1], left: [1, 0], right: [-1, 0] };
-      if (!(z in dir)) throw new Error('front, rear, left oder right');
-      const [x, zz] = dir[z as Zone];
-      damage.hit(new THREE.Vector3(x + (Math.random() - 0.5) * 0.4, 0, zz + (Math.random() - 0.5) * 0.4), v === undefined ? 0.6 : parseNum(v, 'Stärke', 0, 1));
-      return info();
-    },
-  });
-  registerCommand({
-    name: 'damage.break',
-    help: 'Ein Teil abbrechen lassen',
-    args: '<teil>',
-    complete: () => damage.partNames,
-    run([name]) {
-      damage.breakPart(name);
-      return `${name} abgefallen`;
-    },
-  });
-  registerCommand({ name: 'damage.debris.clear', help: 'Herumliegende Teile wegräumen', run: () => { debris.clear(); return 'aufgeräumt'; } });
+/** Loose parts lying around (knocked-over street furniture). */
+export function registerDebrisCommands(debris: Debris) {
+  registerCommand({ name: 'debris.clear', help: 'Herumliegende Teile wegräumen', run: () => { debris.clear(); return `aufgeräumt (${debris.count} übrig)`; } });
 }

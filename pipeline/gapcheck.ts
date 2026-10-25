@@ -52,7 +52,7 @@ async function main() {
   const { cfg, project } = loadWorld();
   const regions = [loadRegion(region)];
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
-  const height = terrainHeight(regions, unproject(cfg.zone));
+  const height = terrainHeight(regions, unproject(cfg.zone), undefined, osm.polygons);
   // The same rounded bends as the build (game road profile).
   smoothBends(osm.ways, new Set(osm.points.map((p) => p.id)));
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));

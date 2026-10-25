@@ -28,7 +28,7 @@ import { registerCommand, runCommand } from './debug/registry.ts';
 import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { Garage, registerGarageCommands } from './vehicle/garage.ts';
-import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
+import { loadAssists, registerDebrisCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
 import { registerReplayCommands } from './replay/commands.ts';
 import { Recorder } from './replay/recorder.ts';
@@ -48,7 +48,6 @@ import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { BridgeJoints } from './audio/bridgeJoints.ts';
-import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
 import { StallLayer } from './world/stalls.ts';
@@ -172,15 +171,10 @@ async function boot() {
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
-  // Car damage: dents, dull paint, parts breaking off as debris, optional power loss.
+  // Loose parts of knocked-over street furniture.
   const debris = new Debris(RAPIER, world);
   view.scene.add(debris.root);
-  carView.damage.onDetach = (parts) => {
-    carView.model.updateMatrixWorld(true);
-    const lv = car.body.linvel();
-    const side = new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 2, (Math.random() - 0.5) * 4);
-    debris.spawn(parts, carView.model.matrixWorld, new THREE.Vector3(lv.x, lv.y, lv.z).multiplyScalar(0.8).add(side), new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4));
-  };
+  registerDebrisCommands(debris);
   const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
   const input = new Input();
@@ -209,20 +203,13 @@ async function boot() {
     if (hedge) props.setModel(Prop.hedge, hedge.lod0);
   }, (e) => console.warn('[veg] GLB nicht geladen', e));
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
-  const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
-  view.scene.add(peds.view.root);
-  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root, guideSigns.root);
-  // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
+  water.hideInMirror.push(props.root, traffic.view.root, vegetation.root, guideSigns.root);
+  // Street furniture, signs, and traffic light heads from Blender (props.models).
   loadProps().then((set) => {
     props.setPropSet(set);
     if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
-    peds.view.setVariants(set.peds);
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
-  peds.sim.events.knocked = (_, v) => {
-    sound?.impact(Math.min(0.5, v / 30));
-    input.rumble(0.5, 150);
-  };
   const worldAudio = new WorldAudio({
     R: RAPIER, world, graph, car: car.body, scene: view.scene,
     ignore: (c) => traffic.isSolid(c.parent()),
@@ -347,7 +334,6 @@ async function boot() {
   const telemetry = new Telemetry(recorder);
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
-  registerDamageCommands(carView.damage, debris);
   // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
   const rescue = new Rescue();
   const rewind = () => {
@@ -395,7 +381,6 @@ async function boot() {
     worldAudio.impact(ip, car.heading(), strength);
     input.rumble(0.5 + strength * 0.5, 160);
     effects.impact({ x: ip.x + dir.x * 2, y: ip.y, z: ip.z + dir.z * 2 }, strength);
-    carView.damage.hit(new THREE.Vector3(dir.x, 0, dir.z).applyQuaternion(iq.clone().invert()), strength * 0.6);
   };
   registerKnockCommands(knockdown, streamer, () => ip);
   window.addEventListener('keydown', (e) => {
@@ -408,8 +393,6 @@ async function boot() {
   registerRenderCommands(view);
   registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
-  peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
-  peds.sim.shops = shops;
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
@@ -428,7 +411,7 @@ async function boot() {
   glide.registerCommands();
   const speedLines = new SpeedLines($('hud'));
   speedLines.registerCommands();
-  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, damage: carView.damage, traffic, peds: peds.sim, props });
+  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, traffic, props });
   feel.registerCommands();
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
 
@@ -509,6 +492,7 @@ async function boot() {
   const viewDist = createViewDistance(view, quality, far);
   registerWorldCommands({
     R: RAPIER, world, scene: view.scene, mats, index, baseUrl: TILES_URL, pos: () => (hold ?? ip),
+    heading: () => car.heading(),
     teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
     print: (t) => debug.print(t, 'info'),
     tiles: (fn) => streamer.forEachContent(fn),
@@ -701,16 +685,9 @@ async function boot() {
       sound?.impact(strength);
       worldAudio.impact(ip, car.heading(), strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
-      // Mostly sideways/longitudinal hits dent the body; hard landings do not.
-      if (Math.abs(hitDir.y) < 0.75) {
-        const from = new THREE.Vector3(-hitDir.x, 0, -hitDir.z).applyQuaternion(iq.clone().invert());
-        carView.damage.hit(from, strength);
-      }
       hitCooldown = 0.25;
     }
     hit = 0;
-    car.power = carView.damage.power;
-    car.steerPull = carView.damage.steerPull;
     debris.update(dt);
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;
@@ -718,7 +695,6 @@ async function boot() {
     const lvel = car.body.linvel();
     const simDt = debugState.frozen || paused ? 0 : dt * debugState.timeScale;
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
-    peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
@@ -734,6 +710,8 @@ async function boot() {
     cam.motion.az = motion.az;
     cam.motion.steer = rs ? rs.steer : car.steer;
     cam.motion.yaw = car.body.angvel().y;
+    cam.stick.x = paused ? 0 : input.look.x;
+    cam.stick.y = paused ? 0 : input.look.y;
     if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     // Style moves and their combo, while really driving.
     if (worldReady && !rs && !paused && !debugState.frozen) {
@@ -826,7 +804,6 @@ async function boot() {
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,
-      peds: peds.sim,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),

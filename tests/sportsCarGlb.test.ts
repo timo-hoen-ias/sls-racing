@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
-import { CarDamage } from '../src/vehicle/damage.ts';
 import { sportsCarFromScene, triangleCount } from '../src/vehicle/sportsCarGlb.ts';
 
 async function load() {
@@ -42,18 +41,6 @@ describe('sports car GLB', () => {
     const wb = new THREE.Box3().setFromObject(w.spin);
     expect(wb.max.y).toBeCloseTo(0.35, 1);
     expect(wb.min.x).toBeLessThan(-0.1); // mirrored for the right side
-  });
-
-  it('dents in model space (float positions) and repairs', async () => {
-    const car = await load();
-    const damage = new CarDamage(car.body, car.materials.paint);
-    const shell = car.body.getObjectByName('lod0')!;
-    const before = new THREE.Box3().setFromObject(shell);
-    damage.hit(new THREE.Vector3(0, 0, 1), 1);
-    const after = new THREE.Box3().setFromObject(shell);
-    expect(after.max.z).toBeLessThan(before.max.z - 0.02);
-    damage.repair();
-    expect(new THREE.Box3().setFromObject(shell).max.z).toBeCloseTo(before.max.z, 4);
   });
 });
 

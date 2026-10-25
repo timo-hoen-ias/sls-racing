@@ -483,6 +483,10 @@ async function boot() {
   view.scene.add(barriers.root);
   const game = new Game({
     rivals, barriers, police,
+    viewpoints: landmarks.list.filter((l) => !l.info.bridge && !l.info.id.startsWith('bruecke-')).map(({ info }) => ({
+      id: info.id, x: info.x, z: info.z, radius: info.radius,
+      name: info.name ?? info.id.split('-').map((w) => ({ sw: 'SW', no: 'NO', nw: 'NW', so: 'SO', st: 'St.', am: 'am' })[w] ?? w[0].toUpperCase() + w.slice(1)).join(' '),
+    })),
     pose: () => ({ x: ip.x, y: ip.y, z: ip.z, qx: iq.x, qy: iq.y, qz: iq.z, qw: iq.w }),
     ghostModel: () => loadSportsCar('#7fd4ff', garage.current.url).then((m) => new CarView('#7fd4ff', m).root, () => undefined),
     graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
@@ -505,6 +509,7 @@ async function boot() {
   game.registerCommands(() => ip);
   void game.load();
   minimap.markers = bigMap.markers = () => game.markers();
+  bigMap.areas = () => game.areas();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.

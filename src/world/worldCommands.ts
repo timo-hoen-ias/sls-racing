@@ -278,6 +278,45 @@ export function registerWorldCommands(g: WorldCommandContext) {
     },
   });
 
+  // OSM details the pipeline placed (details.json): turning circles, speed bumps, mini roundabouts and later more.
+  let details: [string, number, number, string][] | null = null;
+  const detailCursor = new Map<string, number>();
+  const runDetails = (kind: string | undefined, a: string): string => {
+    const all = details!;
+    const kinds = [...new Set(all.map((d) => d[0]))].sort();
+    if (!kind || kind === 'list') return kinds.length ? kinds.map((k) => `${k}: ${all.filter((d) => d[0] === k).length}`).join(' · ') + ' · osm.details <art> [next|prev|<nr>|near]' : 'Keine OSM-Details in dieser Welt.';
+    const list = all.filter((d) => d[0] === kind);
+    if (!list.length) return `Keine "${kind}" (${kinds.join(', ')})`;
+    const p = g.pos();
+    const line = (i: number) => `${kind} #${i + 1}/${list.length}: ${list[i][3] || '–'} · ${Math.hypot(list[i][1] - p.x, list[i][2] - p.z).toFixed(0)} m entfernt`;
+    if (a === 'near') {
+      const near = list.map((d, i) => [i, Math.hypot(d[1] - p.x, d[2] - p.z)] as const).sort((x, y) => x[1] - y[1]).slice(0, 8);
+      return near.map(([i]) => line(i)).join('\n');
+    }
+    const n = list.length, cur = detailCursor.get(kind) ?? -1;
+    const i = /^\d+$/.test(a) ? Math.min(n, Math.max(1, +a)) - 1 : (cur + (a === 'prev' ? n - 1 : 1)) % n;
+    detailCursor.set(kind, i);
+    g.teleport(list[i][1], list[i][2]);
+    return line(i);
+  };
+  registerCommand({
+    name: 'osm.details',
+    help: 'Aus OSM gebaute Details (Wendehämmer, Schwellen, Aufpflasterungen, Mini-Kreisel …): ohne Art die Anzahl, mit Art next/prev/<nr> teleportiert hin, near listet die nächsten',
+    args: '[<art>] [next|prev|<nr>|near]',
+    complete: (a) => (a.length <= 1 ? ['list', ...new Set((details ?? []).map((d) => d[0]))] : ['next', 'prev', 'near']),
+    run([kind, a = 'next']) {
+      if (details) return runDetails(kind, a);
+      fetch(`${g.baseUrl}/details.json`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`details.json fehlt (HTTP ${res.status}), "npm run world:build" ausführen`);
+          return res.json() as Promise<{ spots: [string, number, number, string][] }>;
+        })
+        .then((j) => { details = j.spots; g.print(runDetails(kind, a)); })
+        .catch((e) => g.print(`Fehler: ${(e as Error).message}`));
+      return 'Lade details.json …';
+    },
+  });
+
   registerToggle('terrain.wire', 'Gelände als Drahtgitter (zeigt das 4-m-Netz und wie es an die Straßen angepasst ist)', () => g.mats.ground.wireframe, (v) => {
     g.mats.ground.wireframe = v;
     g.mats.ground.needsUpdate = true;

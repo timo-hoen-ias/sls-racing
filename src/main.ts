@@ -10,6 +10,7 @@ import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
+import { PhotoMode } from './render/photoMode.ts';
 import { createMaterials } from './render/materials.ts';
 import { PbrTextures } from './render/pbr/pbrTextures.ts';
 import { registerTextureCommands } from './render/pbr/texCommands.ts';
@@ -350,6 +351,9 @@ async function boot() {
   const telemetry = new Telemetry(recorder);
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
+  const photo = new PhotoMode(view.camera, view.renderer.domElement);
+  photo.registerCommands(() => ip);
+  photo.onToggle = (on) => { if (!on) cam.snap(); };
   // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
   const rescue = new Rescue();
   const rewind = () => {
@@ -588,6 +592,8 @@ async function boot() {
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
+      if (photo.active) { if (e === 'photo') photo.toggle(false); continue; }
+      if (e === 'photo' && !menu.open && !game.overlay && !replay.active) { photo.toggle(true, ip); continue; }
       // The open menu reads the gamepad itself and eats the keyboard.
       if (menu.open || game.overlay) { if (e === 'interact' && game.hud.cardOpen) game.interact(); continue; }
       if (e === 'menu' && !debug.open) menu.toggle(true);
@@ -613,7 +619,7 @@ async function boot() {
       if (e === 'time') view.daylight.nextPreset();
     }
     menu.poll(dt);
-    const paused = menu.open;
+    const paused = menu.open || photo.active;
 
     // Hold the car until the ground under it exists.
     perf.begin('stream');
@@ -788,7 +794,8 @@ async function boot() {
     cam.motion.yaw = car.body.angvel().y;
     cam.stick.x = paused ? 0 : input.look.x;
     cam.stick.y = paused ? 0 : input.look.y;
-    if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    if (photo.active) photo.update(dt, ip);
+    else if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     // Style moves and their combo, while really driving.
     if (worldReady && !rs && !paused && !debugState.frozen) {
       style.update({ dt: dt * debugState.timeScale, x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, heading: car.heading(), airborne: car.airborne, airTime: car.airTime, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x }, traffic.sim.agents);
@@ -845,6 +852,7 @@ async function boot() {
     view.renderer.info.reset();
     water.update(dt);
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
+    photo.takeShot();
     perf.gpuEnd();
     perf.end('render');
 

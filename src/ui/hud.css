@@ -214,3 +214,11 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 #map-bar .map-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 #map-bar .map-chip { font: 600 13px system-ui, sans-serif; padding: 5px 10px; border-radius: 14px; border: 1px solid #3d4a5c; background: transparent; color: #8b97a6; cursor: pointer; }
 #map-bar .map-chip.on { background: #1f6feb33; border-color: #3d8bff; color: #e8f1ff; }
+
+/* Photo mode (K3): only the picture and the hint bar. */
+body.photo > :not(#game):not(#photo-bar):not(#console) { visibility: hidden !important; }
+#photo-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 60;
+  max-width: calc(100vw - 32px); font: 12px/1.4 system-ui, sans-serif; color: #fff;
+  background: #000a; padding: 6px 12px; border-radius: 6px; text-align: center; pointer-events: none;
+}

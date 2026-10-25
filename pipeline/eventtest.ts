@@ -4,7 +4,8 @@
 // than MAX_RESCUES of those fail the event. Uses the same physics and colliders as the game (drivetest.ts).
 //   node pipeline/eventtest.ts [region] [--only=<event id>] [--level=mittel] [--max=<n>] [--trace]
 //   --min=<share> events that must finish (default 0.85).
-//   --write: saves the failed events as "drop" in events.json, so the game leaves them out.
+//   --write: saves the failed events as "drop" in events.json, so the game leaves them out (and only fails
+//   below --min when that is given explicitly).
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -160,8 +161,8 @@ async function main() {
     writeFileSync(file, JSON.stringify({ events: old.events ?? [], drop }));
     console.log(`${drop.length} events left out in ${file}`);
   }
-  // With --write the build goes on: the failed events are simply left out.
-  if (!WRITE && ok < list.length * MIN) process.exitCode = 1;
+  // With --write the build goes on (the failed events are simply left out), unless --min is given as well.
+  if ((!WRITE || process.argv.some((a) => a.startsWith('--min='))) && ok < list.length * MIN) process.exitCode = 1;
 }
 
 main();

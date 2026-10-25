@@ -1,5 +1,6 @@
 // world.* and terrain.* debug commands: road gaps found by the pipeline's gap check, terrain under the car,
-// bumps on the road ahead (road.bumps) and the plazas the pipeline flattened (plaza).
+// bumps on the road ahead (road.bumps), the plazas the pipeline flattened (plaza) and where the tiles come
+// from (world.build).
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addTeleportPlace } from '../debug/gameCommands.ts';
@@ -109,6 +110,23 @@ export function registerWorldCommands(g: WorldCommandContext) {
     const nearest = gaps!.issues.map((s, i) => [i, Math.hypot(s[0] - p.x, s[2] - p.z)] as const).sort((x, y) => x[1] - y[1]).slice(0, 8);
     return [`${n} Stellen: ${counts}`, ...nearest.map(([i]) => describe(i))].join('\n');
   };
+
+  // Where the deployed tiles come from (pipeline/deploy-tiles.ts, world build on GitHub).
+  registerCommand({
+    name: 'world.build',
+    help: 'Herkunft der Welt-Kacheln: Welt-Schlüssel, vom GitHub-Weltbau geladen oder im Deploy gebaut, Commit und Zeitpunkt',
+    run() {
+      const get = (f: string) => fetch(`${g.baseUrl}/${f}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      Promise.all([get('deploy.json'), get('build.json')]).then(([d, b]) => {
+        if (!d && !b) return g.print('Keine Bauinfo (lokal gebaute Kacheln?)');
+        const lines: string[] = [];
+        if (d) lines.push(`Deploy: ${d.source === 'download' ? 'fertige Kacheln geladen' : 'Welt im Deploy gebaut'} · Schlüssel ${d.key} · ${d.at}`);
+        if (b) lines.push(`Weltbau: ${b.event} ${String(b.commit).slice(0, 7)} · ${b.at} · ${b.run}`);
+        g.print(lines.join('\n'));
+      });
+      return 'Lade Bauinfo …';
+    },
+  });
 
   const down = (x: number, z: number) => {
     const ray = new g.R.Ray({ x, y: 2000, z }, { x: 0, y: -1, z: 0 });

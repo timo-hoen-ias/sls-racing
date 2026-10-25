@@ -1,15 +1,33 @@
 # Builds the real world tiles from OpenStreetMap and terrain data.
-# Runs on GitHub's runners because they can reach Overpass; the result is uploaded as an artifact
-# (later: synced to Cloudflare R2).
+# Runs on GitHub's runners because they are fast and keep the laser-scan downloads in a cache. Finished tiles
+# are published as release assets world-tiles/tiles-<key>.tar.gz (key: pipeline/worldkey.ts), which the
+# Cloudflare deploy downloads instead of building the world itself (pipeline/deploy-tiles.ts).
 name: World build
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and republish even if tiles for this key exist (fresh OSM data)
+        type: boolean
+        default: false
+  # Fresh OSM data once a week.
+  schedule:
+    - cron: '17 3 * * 1'
+  push:
+    branches: [main]
   pull_request:
-    paths: ['pipeline/**', 'src/world/format.ts', 'src/world/tileColliders.ts', 'src/world/signSpec.ts', 'src/world/signColliders.ts']
+    paths: ['pipeline/**', 'src/**', 'data/derived/**', 'package-lock.json', '.github/workflows/world.yml']
+permissions:
+  contents: write
+concurrency:
+  group: world-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,8 +35,24 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Everything is skipped when tiles for this key are already published (same inputs, same tiles, already
+      # tested), except on the weekly run and a forced manual run, which refresh the OSM data. Forks cannot publish.
+      - name: World key
+        id: key
+        run: |
+          key=$(node pipeline/worldkey.ts)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          publish=true
+          if [ "${{ github.event_name }}" = pull_request ] && [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then publish=false; fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          skip=false
+          if [ "${{ github.event_name }}" != schedule ] && [ "${{ inputs.force }}" != true ] &&
+            gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null | grep -qx "tiles-$key.tar.gz"; then skip=true; fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "World key $key, publish $publish, skip $skip"
       # Laser-scan tiles (DGM1/DOM1) come from a slow server; keep them between runs.
       - uses: actions/cache@v4
+        if: steps.key.outputs.skip != 'true'
         with:
           path: |
             data/raw/dgm1
@@ -26,19 +60,45 @@ jobs:
             data/raw/lod2
           key: laser-${{ hashFiles('pipeline/regions/*.json') }}
       - name: Download OSM and terrain
+        if: steps.key.outputs.skip != 'true'
         run: npm run world:fetch
-      - run: npm run world:build
-      - name: Drive test (autopilot on 200 real roads)
-        run: npm run world:drivetest -- --routes=200
+      - if: steps.key.outputs.skip != 'true'
+        run: npm run world:build
+      # --write leaves undrivable events out of events.json, exactly like the deploy used to; --min still fails the run.
       - name: Event test (rival autopilot through every race, zone and slalom)
-        run: npm run world:eventtest -- --min=0.6 # ratchet: raise as the world gets fixed where cars get stuck
+        if: steps.key.outputs.skip != 'true'
+        run: npm run world:eventtest -- --write --min=0.6 # ratchet: raise as the world gets fixed where cars get stuck
+      # Published before the slower checks so a waiting Cloudflare deploy can go on.
+      - name: Publish tiles for the Cloudflare deploy
+        if: steps.key.outputs.skip != 'true' && steps.key.outputs.publish == 'true'
+        run: |
+          key=${{ steps.key.outputs.key }}
+          echo "{\"key\":\"$key\",\"commit\":\"$GITHUB_SHA\",\"event\":\"$GITHUB_EVENT_NAME\",\"at\":\"$(date -u +%FT%TZ)\",\"run\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > public/tiles/build.json
+          tar -czf "tiles-$key.tar.gz" -C public tiles
+          gh release view world-tiles >/dev/null 2>&1 || gh release create world-tiles --prerelease --title "Welt-Kacheln" \
+            --notes "Fertige Saarlouis-Kacheln für den Cloudflare-Deploy, je Welt-Schlüssel (pipeline/worldkey.ts). Wird automatisch gepflegt." || true
+          gh release upload world-tiles "tiles-$key.tar.gz" --clobber
+          # Keep the 12 newest keys.
+          gh api "repos/${{ github.repository }}/releases/tags/world-tiles" -q '.assets | sort_by(.created_at) | reverse | .[12:] | .[].name' |
+            while read -r old; do gh release delete-asset world-tiles "$old" -y || true; done
+          echo "Kacheln veröffentlicht: tiles-$key.tar.gz ($(du -h "tiles-$key.tar.gz" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
+      - name: Drive test (autopilot on 200 real roads)
+        if: steps.key.outputs.skip != 'true'
+        run: npm run world:drivetest -- --routes=200
       - name: Gap check (every road, every 2 m, no holes or steps)
+        if: steps.key.outputs.skip != 'true'
         run: npm run world:gaps -- --max=65 # ratchet: lower as bridge fixes land
+      # Tiles that fail the checks must not count as tested: the next run with this key builds again.
+      - name: Withdraw tiles after a failed check
+        if: failure() && steps.key.outputs.skip != 'true' && steps.key.outputs.publish == 'true'
+        run: gh release delete-asset world-tiles "tiles-${{ steps.key.outputs.key }}.tar.gz" -y || true
       - name: Summary
+        if: steps.key.outputs.skip != 'true'
         run: |
           echo "### Welt-Kacheln" >> $GITHUB_STEP_SUMMARY
           echo "Dateien: $(ls public/tiles/t | wc -l), Größe: $(du -sh public/tiles | cut -f1)" >> $GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.skip != 'true'
         with:
           name: world-tiles
           path: public/tiles

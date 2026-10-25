@@ -63,6 +63,7 @@ import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
 import { loadShops } from './world/shopGlb.ts';
 import { ShopLayer } from './world/shops.ts';
+import { FuelLayer } from './world/fuel.ts';
 import { loadHouses } from './world/houseGlb.ts';
 import { HouseLayer } from './world/houses.ts';
 import { Prop } from './world/propKinds.ts';
@@ -158,6 +159,10 @@ async function boot() {
   stalls.register();
   const shops = new ShopLayer(index.world);
   shops.register();
+  // Petrol stations (fuel.json lists them all for fuel.list / fuel.tp).
+  const fuel = await FuelLayer.fetch(TILES_URL);
+  fuel.register();
+  view.scene.add(fuel.lights);
   // Freely designed houses, villas and administrative buildings with front gardens.
   const houses = new HouseLayer({ shadows: quality.shadows > 0 });
   houses.register();
@@ -215,14 +220,14 @@ async function boot() {
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
-  // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  // Pack cars and Blender vehicles replace the procedural ones once loaded (traffic.models switches).
   // Generated trees: foliage textures, species and impostors (treeRender.ts); the Blender GLB still has the hedge.
   vegetation.init(view.renderer).catch((e) => console.warn('[veg] Bäume nicht geladen', e));
   loadVegetation().then((set) => {
     const hedge = set.species.hecke;
     if (hedge) props.setModel(Prop.hedge, hedge.lod0);
   }, (e) => console.warn('[veg] GLB nicht geladen', e));
-  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
+  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'pack'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   water.hideInMirror.push(props.root, traffic.view.root, vegetation.root, guideSigns.root);
   // Street furniture, signs, and traffic light heads from Blender (props.models).
   loadProps().then((set) => {
@@ -260,6 +265,7 @@ async function boot() {
     radio.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
+    net.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
     joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});
@@ -432,6 +438,7 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  fuel.registerCommands(() => ({ x: ip.x, z: ip.z }));
   houses.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   stalls.registerCommands();
@@ -499,7 +506,9 @@ async function boot() {
     groundAt: (x, z) => groundAt(x, z) ?? graph.snap(x, z, 40)?.y,
     loaded: (x, z) => streamer.isLoadedAround(x, z),
     feel: () => car.feel,
+    roadWidth: (x, z) => graph.snap(x, z, 12, (e) => !e.noCars)?.edge.width,
   });
+  rivals.registerCommands();
   // Police patrols and chases in free roam (V4): the same car with a light bar.
   const police = new Police({
     R: RAPIER, world, scene: view.scene, graph,
@@ -658,6 +667,8 @@ async function boot() {
       if (e === 'online') net.toggleMenu();
       if (e === 'chat' && !bigMap.open && !debug.open) net.openChat();
       if (e === 'events') game.openList();
+      // The home garage from anywhere (outside events); the dealer is still a drive away.
+      if (e === 'garage') game.openGarage('home');
       if (e === 'rewind') rewind();
       if (e === 'camera') cam.next();
       if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
@@ -836,6 +847,7 @@ async function boot() {
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
+    fuel.update(view.camera, view.daylight.daylight);
     houses.update(view.camera, view.daylight.daylight);
     vegetation.update(dt, view.camera, weather.weather, view.sun);
     effects.surface = roadSurface.kinds;

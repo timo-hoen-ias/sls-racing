@@ -18,6 +18,7 @@ import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
 import { buildGuideSigns, type Place } from './lib/guideSigns.ts';
 import { type ShopBuilding, buildShops } from './lib/shops.ts';
+import { type FuelBuilding, isFuelCanopyFn, isFuelShopFn, planFuel } from './lib/fuel.ts';
 import { signalJunctions } from './lib/signals.ts';
 import { RoadLines, RoadMask } from './lib/clearance.ts';
 import { halfWidths } from './lib/overlap.ts';
@@ -25,6 +26,7 @@ import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
+import { applyOsmFixes } from './lib/osmFixes.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
@@ -78,6 +80,7 @@ function main() {
     }
   }
 
+  for (const line of applyOsmFixes(merged)) console.log(`OSM fix: ${line}`);
   const osm = readOsm(merged, project);
   const height = terrainHeight(regions, toLonLat, console.log, osm.polygons);
   // Game road profile: kinks in the mapped lines become short arcs, before anything reads the geometry.
@@ -99,7 +102,8 @@ function main() {
   // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
   const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
   console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
-  const { graph, junctions } = buildGraph(osm.ways, info, height);
+  const { graph, junctions, banned } = buildGraph(osm.ways, info, height, osm);
+  console.log(`Turn restrictions: ${osm.restrictions?.length ?? 0} mapped → ${banned} banned turns · bus lines: ${graph.b?.length ?? 0} (${osm.busRoutes?.length ?? 0} routes)`);
   // Rounded junction corners (game road profile): kerbs, lamps and props keep clear of them like of a junction.
   const fillets = planFillets(osm.ways, height);
   for (const f of fillets) {
@@ -143,10 +147,24 @@ function main() {
   const footprints = new Footprints();
   // LoD2 buildings that may become freely designed houses (houses.ts): one ground ring each.
   const lod2Rings: { id: string; ring: [number, number][]; fn: string; parts: number }[] = [];
+  const fuelBuildings: FuelBuilding[] = [];
   if (lod2Dir) for (const b of lod2Buildings(lod2Dir)) if (!isTrafficStructure(b)) {
     footprints.add(b.ground);
     if (b.ground.length) lod2Rings.push({ id: b.id, ring: b.ground.reduce((a, r) => (ringArea(r) > ringArea(a) ? r : a)), fn: b.fn, parts: b.ground.length });
+    for (const ring of b.ground) fuelBuildings.push({ ring, kind: isFuelCanopyFn(b.fn) ? 'canopy' : isFuelShopFn(b.fn) ? 'shop' : 'other' });
   }
+  for (const p of osm.polygons)
+    if (p.tags.building && !footprints.covers(p.outer)) fuelBuildings.push({ ring: p.outer, kind: /^(roof|canopy)$/.test(p.tags.building) ? 'canopy' : 'other' });
+  const onRoad = new RoadMask(osm.ways);
+  // Tree trunks, fences and hedges keep clear of the carriageway edge too: narrow roads are mapped narrower
+  // than the car drives them, and the car must not clip them.
+  const nearLanes = new RoadMask(osm.ways, 0.5);
+  // Petrol stations: canopies, pumps, shops and price pylons; the survey's canopy blocks make way for them.
+  // Service roads through the forecourt are checked against their centreline in fuel.ts.
+  const fuelLanes = new RoadMask(osm.ways, 0.5, (t) => !/^(service|track)$/.test(t.highway));
+  const fuel = planFuel(osm, { world: info, height, nearLanes: (e, n) => fuelLanes.has(e, n), onRoad: (e, n) => onRoad.has(e, n), buildings: fuelBuildings });
+  fuelBuildings.length = 0;
+  console.log(`Petrol stations: ${fuel.list.length} of ${fuel.zones} placed (${fuel.list.filter((f) => f.mapped).length} on the surveyed canopy, ${fuel.list.reduce((a, f) => a + f.pumps, 0)} pumps)${fuel.failed.length ? `, no room: ${fuel.failed.join(', ')}` : ''}`);
   // Only where the region has something already (roads, OSM buildings): the survey tiles reach past it.
   const T0 = info.tileSize;
   const used = new Set(tiles.tiles.keys());
@@ -199,8 +217,8 @@ function main() {
   const houseIndex = new HouseIndex(houses.plans);
   const shopBuildings: ShopBuilding[] = [];
   const onBuilding = (b: ShopBuilding) => shopBuildings.push(b);
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, roofColour: roofColourAt, skip: (b) => isTrafficStructure(b) || houses.replaced.has(`L${b.id}`) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
-  const nBuildings = buildBuildings(osm.polygons.filter((p) => !houses.replaced.has(`O${p.id}`)), info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding, roofColour: roofColourAt });
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, roofColour: roofColourAt, skip: (b) => isTrafficStructure(b) || houses.replaced.has(`L${b.id}`) || outside(b) || b.ground.some(fuel.skip) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
+  const nBuildings = buildBuildings(osm.polygons.filter((p) => !houses.replaced.has(`O${p.id}`)), info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || fuel.skip(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding, roofColour: roofColourAt });
   if (landcover) console.log(`Roofs: ${[...roofInfo.values()].reduce((a, v) => a + v.length / 5, 0)} buildings with their surveyed colour`);
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM, ${blocking} left out on roads`);
 
@@ -223,13 +241,9 @@ function main() {
   let coverTiles = 0;
   const water = new WaterLines(osm.ways);
   const waterways = water.polylines(info, height);
-  const onRoad = new RoadMask(osm.ways);
   // Lamps stand beside their own road; drop the ones that end up on another road's lanes.
   const onLanes = new RoadMask(osm.ways, -0.5);
   const onMotorLanes = new RoadMask(osm.ways, -0.5, (t) => !noCars(t));
-  // Tree trunks, fences and hedges keep clear of the carriageway edge too: narrow roads are mapped narrower
-  // than the car drives them, and the car must not clip them.
-  const nearLanes = new RoadMask(osm.ways, 0.5);
   // Trees a little further: their trunk collider is up to TREE_COLLIDER_MAX wide and the mask is a 2 m grid.
   const treeLanes = new RoadMask(osm.ways, 1.0);
   for (const m of [onRoad, onLanes, onMotorLanes, nearLanes, treeLanes]) m.addFillets(fillets);
@@ -427,6 +441,13 @@ function main() {
   const levels = waterLevels(grids, TERRAIN_N, Ground.water);
   console.log(`Water: smooth levels in ${levels.size} tiles`);
 
+  const osmLamps = new Map<string, typeof props.lamps>();
+  for (const l of props.lamps) {
+    const k = tileKey(Math.floor(l.e / T), Math.floor(l.n / T));
+    if (!osmLamps.has(k)) osmLamps.set(k, []);
+    osmLamps.get(k)!.push(l);
+  }
+  let mappedLamps = 0;
   let bytes = 0;
   const index: [number, number][] = [];
   for (const k of [...want].sort()) {
@@ -465,7 +486,7 @@ function main() {
     const tile: TileData = {
       v: 1, ix, iy, terrain: encode(h), ground: encode(g),
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
-      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(), paths: b?.paths.pack(),
+      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(), paths: b?.paths.pack(), details: b?.details.pack(),
     };
     const cover = landcover && tileCover(landcover, E0, N0, g);
     if (cover) {
@@ -475,6 +496,12 @@ function main() {
       coverTiles++;
     }
     const lamps = offLanes(b?.lamps ?? []);
+    // Mapped lamps where the generated ones have none within 12 m.
+    for (const l of osmLamps.get(k) ?? []) {
+      let near = false;
+      for (let i = 0; i < lamps.length && !near; i += 4) near = Math.hypot(lamps[i] - l.x, lamps[i + 2] - l.z) < 12;
+      if (!near) { lamps.push(l.x, l.y, l.z, l.heading); mappedLamps++; }
+    }
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const ri = roofInfo.get(k);
     if (ri) tile.roofInfo = encode(new Float32Array(ri));
@@ -494,6 +521,8 @@ function main() {
     if (bushes?.length) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
     const rails = railTiles.get(k);
     if (rails) tile.rails = encode(new Float32Array(rails));
+    const tileFuel = fuel.tiles.get(k);
+    if (tileFuel) tile.fuel = encode(new Float32Array(tileFuel));
     const tileHouses = houseRecs.tiles.get(k);
     if (tileHouses) tile.houses = encode(new Float32Array(tileHouses));
     const tileGardens = gardens.tiles.get(k);
@@ -561,6 +590,7 @@ function main() {
   const placed = landmarkList(landmarks, info, height, (e, n) => want.has(`${Math.floor(e / T)}_${Math.floor(n / T)}`));
   writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
   console.log(`Landmarks: ${placed.length} models placed`);
+  writeFileSync(`${paths.out}fuel.json`, JSON.stringify({ v: 1, stations: fuel.list }));
   const districts = districtList(osm, (e, n) => utmToLocal(info, e, n));
   writeFileSync(`${paths.out}districts.json`, JSON.stringify({ v: 1, districts }));
   console.log(`Districts: ${districts.map((d) => d.name).join(', ') || '–'}`);
@@ -577,6 +607,7 @@ function main() {
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
   console.log(`Vegetation: ${nTrees} trees (${lidar.trees.length} from LiDAR, ${lidar.merged.size} of them mapped in OSM), ${nBushes} bushes`);
   if (landcover) console.log(`Land cover: ${coverTiles} tiles with survey colours and textures`);
+  console.log(`Street lamps: ${mappedLamps} of ${props.lamps.length} mapped ones added where the generated rows have none`);
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 

@@ -15,6 +15,8 @@ export interface NetPlayer {
   /** Hash of the Access e-mail: the same person on two tabs is one player. */
   key: string;
   name: string;
+  /** Hash of the address the request came from (limits on opening servers). */
+  ip?: string;
 }
 
 /** Short hash of an e-mail address (hex). */
@@ -36,7 +38,7 @@ export async function handleNet(req: Request, env: NetEnv, player: NetPlayer): P
     return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
   }
   if (parts.length === 1 && req.method === 'POST') {
-    return dir.fetch('https://directory/create', { method: 'POST', body: await req.text() });
+    return dir.fetch('https://directory/create', { method: 'POST', body: await req.text(), headers: { 'x-sls-ip': player.ip ?? '' } });
   }
   if (parts.length === 3 && parts[2] === 'ws' && validRoomId(parts[1])) {
     if (req.headers.get('upgrade')?.toLowerCase() !== 'websocket') return fail(426, 'WebSocket erwartet');

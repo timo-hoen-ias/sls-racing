@@ -14,6 +14,8 @@ export interface Materials {
   sidewalk: THREE.MeshStandardMaterial;
   lampPole: THREE.MeshStandardMaterial;
   lampHead: THREE.MeshStandardMaterial;
+  /** Vertex-coloured detail meshes from OSM (tile field "details": tracks, wires, pitch markings, islands …). */
+  detail: THREE.MeshStandardMaterial;
 }
 
 /** World materials with PBR atlas textures (render/pbr/); load them with PbrTextures. */
@@ -29,6 +31,7 @@ export function createMaterials(): Materials {
     sidewalk: new THREE.MeshStandardMaterial({ polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
     lampPole: new THREE.MeshStandardMaterial({ color: '#4a5058', metalness: 0.35, roughness: 0.8 }),
     lampHead: new THREE.MeshStandardMaterial({ color: '#fff4d6', emissive: '#ffd9a0', emissiveIntensity: 0.4, roughness: 0.3 }),
+    detail: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, metalness: 0.15, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }),
   };
   patchGround(m.ground);
   patchRoad(m.road);
@@ -37,5 +40,6 @@ export function createMaterials(): Materials {
   patchTrunk(m.trunk);
   patchCrown(m.crown);
   patchPaintedMetal(m.lampPole, 'lamp-pole');
+  patchPaintedMetal(m.detail, 'detail');
   return m;
 }

@@ -266,3 +266,5 @@ body.photo > :not(#game):not(#photo-bar):not(#console) { visibility: hidden !imp
 #net-hud .nh-row em { font-style: normal; font-size: 12px; opacity: .75; }
 #net-hud .nh-row.me { color: #ffd23f; }
 #net-hud .nh-chat div { margin-top: 3px; font-size: 13px; }
+#net-menu .nm-name { padding: 0 18px 8px; align-items: center; margin: 0; }
+#net-menu .nm-name span { font-size: 14px; opacity: .8; }

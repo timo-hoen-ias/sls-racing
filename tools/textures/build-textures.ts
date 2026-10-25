@@ -1,5 +1,6 @@
-// Builds the PBR texture atlases (public/textures/pbr/) from CC0 materials on ambientCG.
-// Downloads each set listed in src/render/pbr/textureSets.ts (1K JPG), packs it into atlas cells with a
+// Builds the PBR texture atlases (public/textures/pbr/) from CC0 materials on ambientCG and the Scenario PATINA
+// sets in tools/textures/patina/. Downloads each set listed in src/render/pbr/textureSets.ts (1K JPG; local sets
+// are read from their folder), packs it into atlas cells with a
 // wrapped gutter (so mipmaps of a tiling texture do not bleed into neighbours), and encodes three KTX2
 // files per atlas and quality step:
 //   <atlas>-<px>-albedo.ktx2  sRGB colour with the ambient occlusion baked in
@@ -25,9 +26,10 @@ mkdirSync(OUT, { recursive: true });
 
 const magick = (args: string[]) => execFileSync('convert', args, { stdio: ['ignore', 'ignore', 'inherit'] });
 
-/** Downloads and unpacks one ambientCG material; returns its map files by kind. */
-async function fetchSet(asset: string) {
-  const dir = join(RAW, asset);
+/** Downloads and unpacks one ambientCG material (or uses a local folder); returns its map files by kind. */
+async function fetchSet(asset: string, local?: string) {
+  const dir = local ?? join(RAW, asset);
+  if (local && !existsSync(dir)) throw new Error(`${asset}: Ordner ${local} fehlt`);
   if (!existsSync(dir)) {
     const url = `https://ambientcg.com/get?file=${asset}_1K-JPG.zip`;
     console.log(`lade ${url}`);
@@ -91,7 +93,7 @@ async function encode(png: string, out: string, kind: Kind) {
 
 async function buildAtlas(a: AtlasSpec, manifest: Record<string, unknown>) {
   const sets = [];
-  for (const s of a.sets) sets.push({ ...s, files: await fetchSet(s.asset) });
+  for (const s of a.sets) sets.push({ ...s, files: await fetchSet(s.asset, s.local) });
   const means = sets.map((s) => meanLinear(s.files.color));
   const sizes: Record<string, number> = {};
   for (const px of Object.values(TEX_QUALITY)) {

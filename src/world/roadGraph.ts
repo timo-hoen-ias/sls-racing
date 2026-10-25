@@ -74,6 +74,14 @@ export class RoadGraph {
   private grid = new Map<number, number[]>(); // cell → [edge, segment, edge, segment, …]
   /** Junctions with traffic lights: [node, group]. */
   readonly signals: [number, number][];
+  /** Banned turns from OSM turn restrictions, keyed "from,via,to" (edge, node, edge). */
+  readonly bans = new Set<string>();
+  /** The router keeps to the turn restrictions (nav.verbote); traffic always does. */
+  respectBans = true;
+  /** Bus lines: number, name and the edges they use. */
+  readonly busLines: { ref: string; name: string; edges: Set<number> }[];
+  /** Bus line indices per edge. */
+  readonly busOnEdge = new Map<number, number[]>();
   readonly paths: PathLine[] = [];
   private pathGrid = new Map<number, number[]>(); // cell → [path, segment, …]
   bounds = { minX: Infinity, minZ: Infinity, maxX: -Infinity, maxZ: -Infinity };
@@ -81,6 +89,15 @@ export class RoadGraph {
   constructor(data: RoadGraphData) {
     this.nodes = Float32Array.from(data.nodes);
     this.signals = data.s ?? [];
+    const t = data.t ?? [];
+    for (let i = 0; i + 2 < t.length; i += 3) this.bans.add(`${t[i]},${t[i + 1]},${t[i + 2]}`);
+    this.busLines = (data.b ?? []).map((b, i) => {
+      for (const e of b.e) {
+        if (!this.busOnEdge.has(e)) this.busOnEdge.set(e, []);
+        this.busOnEdge.get(e)!.push(i);
+      }
+      return { ref: b.r, name: b.n, edges: new Set(b.e) };
+    });
     this.adj = Array.from({ length: data.nodes.length / 3 }, () => []);
     data.edges.forEach((e, id) => {
       const p = Float32Array.from(e.p);
@@ -208,51 +225,66 @@ export class RoadGraph {
   /** Shortest route by distance between two points on the network (A*). One-way streets are ignored: this is arcade.
    *  Roads closed to cars are only used where the route starts or ends on one. */
   route(from: Snap, to: Snap): Route | undefined {
-    const N = this.adj.length;
-    const S = N, G = N + 1; // virtual start and goal nodes
-    const nx = (n: number) => (n === S ? from.x : n === G ? to.x : this.nodes[n * 3]);
-    const nz = (n: number) => (n === S ? from.z : n === G ? to.z : this.nodes[n * 3 + 2]);
-    const h = (n: number) => Math.hypot(nx(n) - to.x, nz(n) - to.z);
-    const neighbours = (n: number): [number, number, number][] => {
-      // [node, cost, edge] where edge = -1 for direct start→goal on the same edge
+    // A* over states "arrived at node n along edge e", so banned turns (from edge, via node, to edge) can be
+    // left out. State id = edge * 2 + end (0: at node a, 1: at node b); S and G are the virtual start and goal.
+    const S = -1, G = -2;
+    const nodeOf = (st: number) => (st === S ? -1 : st === G ? -2 : (st & 1 ? this.edges[st >> 1].b : this.edges[st >> 1].a));
+    const pos = (st: number): [number, number] => {
+      if (st === S) return [from.x, from.z];
+      if (st === G) return [to.x, to.z];
+      const n = nodeOf(st);
+      return [this.nodes[n * 3], this.nodes[n * 3 + 2]];
+    };
+    const h = (st: number) => { const [x, z] = pos(st); return Math.hypot(x - to.x, z - to.z); };
+    const bans = this.respectBans && this.bans.size ? this.bans : undefined;
+    // [state, cost, edge] where edge = -1 for direct start→goal on the same edge
+    const neighbours = (st: number): [number, number, number][] => {
       const out: [number, number, number][] = [];
-      if (n === S) {
-        out.push([from.edge.a, from.along, from.edge.id], [from.edge.b, from.edge.length - from.along, from.edge.id]);
+      if (st === S) {
+        const e = from.edge;
+        out.push([e.id * 2, from.along, e.id], [e.id * 2 + 1, e.length - from.along, e.id]);
         if (from.edge === to.edge) out.push([G, Math.abs(to.along - from.along), -1]);
         return out;
       }
-      for (const [e, o] of this.adj[n]) if (!this.edges[e].noCars) out.push([o, this.edges[e].length, e]);
-      if (n === to.edge.a) out.push([G, to.along, to.edge.id]);
-      if (n === to.edge.b) out.push([G, to.edge.length - to.along, to.edge.id]);
+      const via = st >> 1, n = nodeOf(st);
+      for (const [e, o] of this.adj[n]) {
+        if (this.edges[e].noCars || bans?.has(`${via},${n},${e}`)) continue;
+        const end = this.edges[e].a === n ? 1 : 0;
+        out.push([e * 2 + end, this.edges[e].length, e]);
+      }
+      if (n === to.edge.a && !bans?.has(`${via},${n},${to.edge.id}`)) out.push([G, to.along, to.edge.id]);
+      if (n === to.edge.b && !bans?.has(`${via},${n},${to.edge.id}`)) out.push([G, to.edge.length - to.along, to.edge.id]);
       return out;
     };
     const g = new Map<number, number>([[S, 0]]);
-    const prev = new Map<number, [number, number]>(); // node → [previous node, via edge]
+    const prev = new Map<number, [number, number]>(); // state → [previous state, via edge]
     const open = new Heap();
     open.push(S, h(S));
     const closed = new Set<number>();
     while (open.size) {
-      const n = open.pop()!;
-      if (n === G) break;
-      if (closed.has(n)) continue;
-      closed.add(n);
-      for (const [m, cost, e] of neighbours(n)) {
-        const c = g.get(n)! + cost;
+      const st = open.pop()!;
+      if (st === G) break;
+      if (closed.has(st)) continue;
+      closed.add(st);
+      for (const [m, cost, e] of neighbours(st)) {
+        const c = g.get(st)! + cost;
         if (c < (g.get(m) ?? Infinity)) {
           g.set(m, c);
-          prev.set(m, [n, e]);
+          prev.set(m, [st, e]);
           open.push(m, c + h(m));
         }
       }
     }
-    if (!prev.has(G)) return undefined;
+    if (!prev.has(G)) return bans ? this.withoutBans(from, to) : undefined;
 
     // Walk back and stitch the polyline.
     const hops: [number, number, number][] = []; // [from node, to node, edge]
-    for (let n = G; n !== S; ) {
-      const [p, e] = prev.get(n)!;
-      hops.unshift([p, n, e]);
-      n = p;
+    const SN = this.adj.length, GN = SN + 1; // virtual start and goal nodes
+    const asNode = (st: number) => (st === S ? SN : st === G ? GN : nodeOf(st));
+    for (let st = G; st !== S; ) {
+      const [p, e] = prev.get(st)!;
+      hops.unshift([asNode(p), asNode(st), e]);
+      st = p;
     }
     const pts: number[] = [];
     const streets: [number, string][] = [];
@@ -264,9 +296,9 @@ export class RoadGraph {
     };
     for (const [a, b, e] of hops) {
       const edge = e >= 0 ? this.edges[e] : from.edge;
-      const startAlong = a === S ? from.along : a === edge.a ? 0 : edge.length;
-      const endAlong = b === G ? to.along : b === edge.a ? 0 : edge.length;
-      if (a !== S) junctionIdx.push(pts.length / 3 - 1);
+      const startAlong = a === SN ? from.along : a === edge.a ? 0 : edge.length;
+      const endAlong = b === GN ? to.along : b === edge.a ? 0 : edge.length;
+      if (a !== SN) junctionIdx.push(pts.length / 3 - 1);
       streets.push([Math.max(0, pts.length / 3 - 1), edge.name]);
       for (const q of slice(edge, startAlong, endAlong)) push(q[0], q[1], q[2]);
     }
@@ -291,6 +323,17 @@ export class RoadGraph {
       if (Math.abs(angle) > 0.5 && cum[i] > 15) turns.push({ at: cum[i], angle, street: streets[k + 1]?.[1] ?? '' });
     }
     return { pts: P, cum, length: cum[cum.length - 1], turns, streets };
+  }
+
+  /** Route ignoring the turn restrictions, when they leave no way at all (a ban mapped across a dead end). */
+  private withoutBans(from: Snap, to: Snap): Route | undefined {
+    this.respectBans = false;
+    try { return this.route(from, to); } finally { this.respectBans = true; }
+  }
+
+  /** Whether turning from edge `from` at node `via` into edge `to` is banned by a turn restriction. */
+  banned(from: number, via: number, to: number) {
+    return this.bans.size > 0 && this.bans.has(`${from},${via},${to}`);
   }
 }
 

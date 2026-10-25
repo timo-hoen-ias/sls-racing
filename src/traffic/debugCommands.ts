@@ -5,6 +5,8 @@ import { loadVehicleParts, proceduralVehicleSet } from './vehicleGlb.ts';
 
 // Debug commands for AI traffic (traffic.*).
 
+const KINDS_ORDER: VehicleKind[] = ['car', 'van', 'bus', 'truck'];
+
 export function registerTrafficCommands(t: Traffic, player: () => { x: number; z: number; heading: number }) {
   const sim = t.sim;
   registerValue('traffic.density', 'Verkehrsdichte 0..1 (Anteil der maximalen Fahrzeugzahl)', () => sim.density, (v) => (sim.density = v), [0, 1]);
@@ -45,6 +47,19 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
       return `Fahrzeug #${near.a.id} in ${near.d.toFixed(0)} m ist jetzt ein Wrack · ${t.wrecks.length} Wracks`;
     },
   });
+  registerToggle('traffic.verbote', 'KI-Verkehr beachtet Abbiegeverbote aus OSM', () => sim.respectBans, (v) => (sim.respectBans = v));
+  registerValue('traffic.busanteil', 'Anteil Busse unter neuen Fahrzeugen auf Straßen mit Buslinie', () => sim.busShare, (v) => (sim.busShare = v), [0, 1]);
+  registerCommand({
+    name: 'traffic.buslinien', help: 'Buslinien aus OSM mit Länge und Zahl der Busse darauf', args: '[filter]',
+    run([f]) {
+      const lines = t.graph.busLines;
+      if (!lines.length) return 'Keine Buslinien in dieser Welt';
+      const km = (edges: Set<number>) => [...edges].reduce((a, e) => a + t.graph.edges[e].length, 0) / 1000;
+      return lines.map((l, i) => ({ l, i, buses: sim.agents.filter((a) => a.line === i).length }))
+        .filter(({ l }) => !f || `${l.ref} ${l.name}`.toLowerCase().includes(f.toLowerCase()))
+        .map(({ l, buses }) => `Linie ${l.ref || '?'} ${l.name} · ${km(l.edges).toFixed(1)} km · ${buses} Busse unterwegs`).join('\n');
+    },
+  });
   registerToggle('traffic.freeze', 'KI-Verkehr anhalten', () => sim.frozen, (v) => (sim.frozen = v));
   registerToggle('traffic.debug', 'Zustand über jedem Fahrzeug: grün fährt, blau folgt, gelb wartet, orange Spieler im Weg, rot Unfall', () => t.view.debug, (v) => (t.view.debug = v));
   registerToggle('traffic', 'KI-Verkehr anzeigen (aus: unsichtbar und ohne Kollision)', () => t.visible, (v) => (t.visible = v));
@@ -80,15 +95,18 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
   });
   registerCommand({
     name: 'traffic.models',
-    help: 'Fahrzeugmodelle: Blender-GLB (mehrere Varianten, 2 Detailstufen) oder prozedural',
-    args: '[glb|procedural]',
-    complete: () => ['glb', 'procedural'],
+    help: 'Fahrzeugmodelle: pack (Autos aus dem CC-BY-Paket, Bus/LKW/Transporter aus Blender), glb (nur Blender) oder prozedural; ohne Argument die Varianten',
+    args: '[pack|glb|procedural]',
+    complete: () => ['pack', 'glb', 'procedural'],
     run([m]) {
-      if (m === undefined) return `traffic.models = ${t.view.models}`;
+      if (m === undefined) {
+        const set = t.view.set;
+        return `traffic.models = ${t.view.models}\n${KINDS_ORDER.map((k) => `${k}: ${set[k].map((v) => v.name.slice(k.length + 1)).join(', ')}`).join('\n')}`;
+      }
       if (m === 'procedural') { t.view.setModels(proceduralVehicleSet(), 'procedural'); return 'prozedurale Fahrzeuge'; }
-      if (m !== 'glb') throw new Error('glb oder procedural');
-      loadVehicleParts().then((set) => t.view.setModels(set, 'glb'), (e) => console.warn('[traffic] GLB nicht geladen', e));
-      return 'lade GLB …';
+      if (m !== 'glb' && m !== 'pack') throw new Error('pack, glb oder procedural');
+      loadVehicleParts(m).then((set) => t.view.setModels(set, m), (e) => console.warn('[traffic] GLB nicht geladen', e));
+      return `lade ${m} …`;
     },
   });
   registerCommand({

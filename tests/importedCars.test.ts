@@ -13,7 +13,12 @@ import { withoutTextures } from './glbWithoutTextures.ts';
 // The CC-BY models brought in by tools/import-car.ts: same loader and layout as the Blender cars, plus the
 // source credit, the colour-changeable lacquer split from the body texture, and physics that fits them.
 
-const IMPORTED = ['coupe', 'sedan', 'goblin'] as const;
+const IMPORTED = ['coupe', 'sedan', 'goblin', 'offroad'] as const;
+/** Length range (m) and LOD 0 triangle budget: the off-roader comes from the lighter traffic pack. */
+const SIZE: Record<string, { length: [number, number]; tris: [number, number] }> = {
+  offroad: { length: [3.7, 4.3], tris: [3000, 20000] },
+};
+const DEFAULT_SIZE = { length: [4.2, 5.1], tris: [30000, 120000] };
 
 async function load(id: string) {
   const buf = readFileSync(new URL(`../public/models/cars/${id}.glb`, import.meta.url));
@@ -38,8 +43,9 @@ describe('imported car models', () => {
       expect(findCar(id)?.url).toMatch(new RegExp(`cars/${id}\\.glb$`));
       const geo = car.geometry!;
       expect(geo.source).toMatch(/CC BY 4\.0/);
-      expect(geo.length).toBeGreaterThan(4.2);
-      expect(geo.length).toBeLessThan(5.1);
+      const size = SIZE[id] ?? DEFAULT_SIZE;
+      expect(geo.length).toBeGreaterThan(size.length[0]);
+      expect(geo.length).toBeLessThan(size.length[1]);
       expect(geo.wheel.front).toBeGreaterThan(0.9);
       expect(geo.wheel.rear).toBeLessThan(-0.9);
       expect(geo.wheel.track).toBeGreaterThan(1.4);
@@ -64,13 +70,17 @@ describe('imported car models', () => {
       expect(Math.abs(box.max.z - box.min.z - geo.length)).toBeLessThan(0.05);
       const wb = new THREE.Box3().setFromObject(car.makeWheel(1).spin);
       expect(wb.max.y).toBeCloseTo(geo.wheel.radius, 1);
+      // Brake lights (where the model has them) at the back: the car points to +z.
+      const brake = new THREE.Box3();
+      lod.levels[0].object.traverse((o) => { if ((o as THREE.Mesh).material === car.materials.brake) brake.expandByObject(o); });
+      if (!brake.isEmpty()) expect(brake.max.z).toBeLessThan(0);
       expect(car.headlights[0].z).toBeGreaterThan(1.5);
       expect(car.exhausts[0].z).toBeLessThan(-1.5);
       // Detailed but within budget for the one player car; the far levels are much lighter.
       const tris = triangleCount(car.body);
-      expect(tris).toBeGreaterThan(30000);
-      expect(tris).toBeLessThan(120000);
-      lod.levels.forEach((l, i) => i > 0 && expect(triangleCount(l.object)).toBeLessThan(tris * 0.4));
+      expect(tris).toBeGreaterThan(size.tris[0]);
+      expect(tris).toBeLessThan(size.tris[1]);
+      lod.levels.forEach((l, i) => i > 0 && expect(triangleCount(l.object)).toBeLessThan(tris * (id === 'offroad' ? 0.6 : 0.4)));
     });
   }
 

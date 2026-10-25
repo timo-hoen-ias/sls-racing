@@ -6,7 +6,7 @@ type GroundClass = (typeof Ground)[keyof typeof Ground];
 export function groundClassOf(tags: Record<string, string>): { cls: GroundClass; prio: number } | undefined {
   const lu = tags.landuse, nat = tags.natural, lei = tags.leisure;
   if (nat === 'water' || tags.waterway === 'riverbank' || lu === 'reservoir' || lu === 'basin') return { cls: Ground.water, prio: 5 };
-  if (tags.amenity === 'parking') return { cls: Ground.urban, prio: 4 };
+  if (tags.amenity === 'parking' || tags.amenity === 'fuel') return { cls: Ground.urban, prio: 4 };
   if (lu === 'forest' || nat === 'wood' || nat === 'scrub') return { cls: Ground.forest, prio: 3 };
   if (['grass', 'meadow', 'recreation_ground', 'village_green', 'cemetery', 'allotments', 'orchard', 'vineyard'].includes(lu) ||
       ['park', 'garden', 'pitch', 'playground'].includes(lei) || nat === 'grassland') return { cls: Ground.grass, prio: 2 };

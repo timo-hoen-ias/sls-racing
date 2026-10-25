@@ -1,6 +1,10 @@
 // Leaderboards and friends' ghosts (O1): one best result per player and event, with the ghost of that run.
-// Only invited friends get here (Cloudflare Access in front, token checked in auth.ts); the e-mail address
-// identifies a player and never leaves the Worker, the others only see the chosen name.
+// Behind Cloudflare Access the e-mail address identifies a player (token checked in auth.ts). In public mode
+// (ONLINE_PUBLIC, timo 2026-10-25) it is the hashed random id of the browser instead, the name comes from the
+// game and goes through the name filter, and a few limits keep one person from flooding the tables. Either way
+// the id never leaves the Worker, the others only see the name.
+import { cleanName } from '../src/net/names.ts';
+
 
 /** The part of a D1 database the API uses (also met by the node:sqlite adapter in the tests). */
 export interface Db {
@@ -14,17 +18,25 @@ export interface Stmt {
 }
 
 const SCHEMA = [
-  'CREATE TABLE IF NOT EXISTS players (email TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE)',
+  'CREATE TABLE IF NOT EXISTS players (email TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, ip TEXT, at INTEGER)',
   'CREATE TABLE IF NOT EXISTS scores (event TEXT NOT NULL, email TEXT NOT NULL, value REAL NOT NULL, higher INTEGER NOT NULL, car TEXT, at INTEGER NOT NULL, ghost TEXT, PRIMARY KEY (event, email))',
 ];
 /** Largest ghost accepted (characters of JSON): about ten minutes of driving. */
 export const MAX_GHOST = 400_000;
 const TOP = 20;
+/** Public mode: new players per address and day, results per player and minute. */
+export const NEW_PLAYERS_PER_DAY = 6;
+export const POSTS_PER_MINUTE = 20;
+
+/** Public mode: who is calling (hashed address) and the name the game sends. */
+export interface PublicPlayer { ip: string; name?: string }
 
 let ready: Db | undefined;
 async function schema(db: Db) {
   if (ready === db) return;
   for (const s of SCHEMA) await db.prepare(s).run();
+  // Tables from before the public mode lack these columns (local wrangler dev databases).
+  for (const col of ['ip TEXT', 'at INTEGER']) await db.prepare(`ALTER TABLE players ADD COLUMN ${col}`).run().catch(() => undefined);
   ready = db;
 }
 
@@ -33,16 +45,42 @@ const fail = (status: number, error: string) => reply({ error }, status);
 const validName = (s: unknown): s is string => typeof s === 'string' && /^[\p{L}\p{N} ._-]{2,20}$/u.test(s.trim());
 const validEvent = (s: string) => /^[a-z0-9._-]{1,80}$/i.test(s);
 
-/** The player's name: chosen once, else the part of the address before the @ (made unique). */
-async function nameOf(db: Db, email: string): Promise<string> {
+class Refused extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const freeName = async (db: Db, name: string, email: string) => {
+  const row = await db.prepare('SELECT email FROM players WHERE name = ?').bind(name).first<{ email: string }>();
+  return !row || row.email === email;
+};
+
+/**
+ * The player's name: chosen once, else the part of the address before the @ (made unique). In public mode the
+ * name the game sends wins whenever it is free, so renaming in the online menu carries over to the boards.
+ */
+async function nameOf(db: Db, email: string, pub?: PublicPlayer): Promise<string> {
   const row = await db.prepare('SELECT name FROM players WHERE email = ?').bind(email).first<{ name: string }>();
-  if (row) return row.name;
-  const base = (email.split('@')[0].replace(/[^\p{L}\p{N}._-]/gu, '') || 'Fahrer').slice(0, 16);
+  const wanted = pub ? cleanName(pub.name) : undefined;
+  if (row) {
+    if (wanted && wanted !== row.name && await freeName(db, wanted, email)) {
+      await db.prepare('UPDATE players SET name = ? WHERE email = ?').bind(wanted, email).run();
+      return wanted;
+    }
+    return row.name;
+  }
+  if (pub) {
+    const fresh = await db.prepare('SELECT COUNT(*) AS n FROM players WHERE ip = ? AND at > ?').bind(pub.ip, Date.now() - 86_400_000).first<{ n: number }>();
+    if ((fresh?.n ?? 0) >= NEW_PLAYERS_PER_DAY) throw new Refused(429, 'zu viele neue Spieler von dieser Adresse, morgen wieder');
+  }
+  const base = (wanted ?? ((pub ? '' : email.split('@')[0].replace(/[^\p{L}\p{N}._-]/gu, '')) || 'Fahrer')).slice(0, pub ? 13 : 16);
   for (let i = 0; i < 50; i++) {
-    const name = i ? `${base}${i + 1}` : base;
-    const taken = await db.prepare('SELECT 1 AS x FROM players WHERE name = ?').bind(name).first();
-    if (!taken) {
-      await db.prepare('INSERT INTO players (email, name) VALUES (?, ?)').bind(email, name).run();
+    const name = i ? `${base}${pub ? ' ' : ''}${i + 1}` : base;
+    if (await freeName(db, name, email)) {
+      await db.prepare('INSERT INTO players (email, name, ip, at) VALUES (?, ?, ?, ?)').bind(email, name, pub?.ip ?? null, Date.now()).run();
       return name;
     }
   }
@@ -60,18 +98,27 @@ export async function playerName(db: Db, email: string) {
  * GET /api/me, PUT /api/me {name}, GET /api/board/<event>, POST /api/board/<event> {value, higher, car?, ghost?},
  * GET /api/ghost/<event>/<name>.
  */
-export async function handleApi(req: Request, db: Db, email: string): Promise<Response> {
+export async function handleApi(req: Request, db: Db, email: string, pub?: PublicPlayer): Promise<Response> {
+  try {
+    return await route(req, db, email, pub);
+  } catch (e) {
+    if (e instanceof Refused) return fail(e.status, e.message);
+    throw e;
+  }
+}
+
+async function route(req: Request, db: Db, email: string, pub?: PublicPlayer): Promise<Response> {
   await schema(db);
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, '').split('/').slice(2).map(decodeURIComponent);
-  const me = await nameOf(db, email);
+  const me = await nameOf(db, email, pub);
 
   if (path[0] === 'me' && path.length === 1) {
     if (req.method === 'GET') return reply({ name: me });
     if (req.method === 'PUT') {
       const body = (await req.json().catch(() => ({}))) as { name?: unknown };
-      if (!validName(body.name)) return fail(400, 'Name: 2 bis 20 Zeichen, Buchstaben, Ziffern, Leerzeichen . _ -');
-      const name = body.name.trim();
+      const name = pub ? cleanName(body.name) : validName(body.name) ? body.name.trim() : undefined;
+      if (!name) return fail(400, pub ? 'Name: 2 bis 16 Zeichen (Buchstaben, Ziffern, Leerzeichen . _ -), keine Beleidigungen' : 'Name: 2 bis 20 Zeichen, Buchstaben, Ziffern, Leerzeichen . _ -');
       const taken = await db.prepare('SELECT email FROM players WHERE name = ?').bind(name).first<{ email: string }>();
       if (taken && taken.email !== email) return fail(409, 'Name schon vergeben');
       await db.prepare('UPDATE players SET name = ? WHERE email = ?').bind(name, email).run();
@@ -91,6 +138,10 @@ export async function handleApi(req: Request, db: Db, email: string): Promise<Re
       return reply({ event, higher: !!any?.higher, entries: rows.map((r, i) => ({ rank: i + 1, name: r.name, value: r.value, car: r.car ?? undefined, at: r.at, ghost: !!r.ghost, me: !!r.me })) });
     }
     if (req.method === 'POST') {
+      if (pub) {
+        const recent = await db.prepare('SELECT COUNT(*) AS n FROM scores WHERE email = ? AND at > ?').bind(email, Date.now() - 60_000).first<{ n: number }>();
+        if ((recent?.n ?? 0) >= POSTS_PER_MINUTE) return fail(429, 'zu viele Ergebnisse in kurzer Zeit');
+      }
       const body = (await req.json().catch(() => ({}))) as { value?: unknown; higher?: unknown; car?: unknown; ghost?: unknown };
       if (typeof body.value !== 'number' || !Number.isFinite(body.value) || body.value < 0) return fail(400, 'value fehlt');
       const higher = body.higher ? 1 : 0;

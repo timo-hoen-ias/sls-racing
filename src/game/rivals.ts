@@ -25,10 +25,16 @@ export const RIVAL_LEVELS: Record<RivalLevel, { lat: number; cruise: number; bra
 
 /**
  * Autopilot gains: pure-pursuit arc and direct heading feedback, look-ahead (s of speed), and the brake that
- * starts b0 m/s over the goal and is full b1 m/s over it.
+ * starts b0 m/s over the goal and is full b1 m/s over it, eased by trail × the steering lock.
  */
-export const STEER_GAIN = { arc: 1.3, heading: 0.6, look: 0.28, b0: 0.5, b1: 2.5 };
+export const STEER_GAIN = { arc: 1.3, heading: 0.6, look: 0.28, b0: 0.5, b1: 2.5, trail: 0.7 };
 
+
+/** Highest cornering the drivers plan with (m/s², about 1.1 g: the arcade tyres hold ~1.4 g, minus braking and bumps). */
+const LAT_MAX = 11;
+
+/** Clearance from the carriageway edge (m) for the ideal line and while overtaking (ai.edge). */
+export const EDGE = { line: 1.4, pass: 0.5 };
 
 /** Chance of a mistake per bend by level, before the driver's focus and ai.mistakes. */
 const MISTAKE_CHANCE: Record<RivalLevel, number> = { leicht: 0.22, mittel: 0.1, schwer: 0.04 };
@@ -50,6 +56,8 @@ export class RaceLine {
   readonly length: number;
   /** Turn radius the drivers plan with (m): of the centre line, or of the ideal line after racing(). */
   readonly radius: Float32Array;
+  /** Turn radius of the centre line (m): what a driver off the ideal line (overtaking) plans with. */
+  readonly centreRadius: Float32Array;
   /** Unit normal to the right of the direction of travel at each point. */
   readonly nx: Float32Array;
   readonly nz: Float32Array;
@@ -57,7 +65,11 @@ export class RaceLine {
   readonly side: Float32Array;
   /** How far from the centre line a car may go (m) on either side; unlimited until racing() is called. */
   readonly room: Float32Array;
+  /** Like room, while overtaking (closer to the edge). */
+  readonly wide: Float32Array;
   readonly loop: boolean;
+  /** A loop whose last point is its first. */
+  readonly closed: boolean;
   readonly spacing: number;
 
   constructor(path: number[], loop = false, spacing = 4) {
@@ -79,6 +91,7 @@ export class RaceLine {
     for (let i = 1; i < n; i++) this.cum[i] = this.cum[i - 1] + Math.hypot(xs[i] - xs[i - 1], zs[i] - zs[i - 1]);
     this.length = this.cum[n - 1] ?? 0;
     this.loop = loop;
+    this.closed = loop && n > 2 && Math.hypot(xs[n - 1] - xs[0], zs[n - 1] - zs[0]) < spacing / 2;
     this.spacing = spacing;
     this.nx = new Float32Array(n);
     this.nz = new Float32Array(n);
@@ -88,17 +101,31 @@ export class RaceLine {
       this.nx[i] = -dz / l;
       this.nz[i] = dx / l;
     }
+    this.seal(this.nx, this.nz);
     this.side = new Float32Array(n);
     this.room = new Float32Array(n).fill(1e3);
+    this.wide = new Float32Array(n).fill(1e3);
     this.radius = new Float32Array(n);
     this.measure();
+    this.centreRadius = this.radius.slice();
   }
 
   get count() { return this.x.length; }
 
-  private wrap(i: number) {
+  /** Points on a loop before it repeats: a closed path ends on its first point, which is not counted twice. */
+  private get ring() {
     const n = this.x.length;
-    return this.loop ? ((i % n) + n) % n : Math.max(0, Math.min(n - 1, i));
+    return this.closed ? n - 1 : n;
+  }
+
+  private wrap(i: number) {
+    const n = this.x.length, m = this.ring;
+    return this.loop ? ((i % m) + m) % m : Math.max(0, Math.min(n - 1, i));
+  }
+
+  /** The repeated end point of a closed loop takes the values of the first. */
+  private seal(...arrays: Float32Array[]) {
+    if (this.closed) for (const a of arrays) a[a.length - 1] = a[0];
   }
 
   /** Point i (wrapping on loops, clamped otherwise). */
@@ -126,12 +153,13 @@ export class RaceLine {
   }
 
   /** Radius at each point along the planning line (centre plus side), from the points 8 m either side. */
-  private measure() {
+  private measure(out = this.radius, side = this.side) {
     const k = Math.max(1, Math.round(8 / this.spacing));
     for (let i = 0; i < this.x.length; i++) {
-      const a = this.offsetAt(i - k, this.side[this.wrap(i - k)]), b = this.offsetAt(i, this.side[i]), c = this.offsetAt(i + k, this.side[this.wrap(i + k)]);
-      this.radius[i] = radius3(a[0], a[1], b[0], b[1], c[0], c[1]);
+      const a = this.offsetAt(i - k, side[this.wrap(i - k)]), b = this.offsetAt(i, side[i]), c = this.offsetAt(i + k, side[this.wrap(i + k)]);
+      out[i] = radius3(a[0], a[1], b[0], b[1], c[0], c[1]);
     }
+    this.seal(out);
   }
 
   /**
@@ -140,19 +168,21 @@ export class RaceLine {
    * unknown, a narrow corridor is used); apex 0..1 is the share of the free width the line may use.
    */
   racing(widthAt?: (x: number, z: number) => number | undefined, apex = 1, carHalf = 1) {
-    const n = this.x.length;
+    const n = this.ring;
     if (n < 5) return this;
+    // How far the car's centre may go from the centre line before a wheel leaves the carriageway (unknown: a
+    // narrow street).
     const free = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const w = widthAt?.(this.x[i], this.z[i]);
-      free[i] = Math.max(0, Math.min(4.5, w === undefined ? 1.2 : w / 2 - carHalf - 0.4));
-    }
+    for (let i = 0; i < n; i++) free[i] = Math.max(0, (widthAt?.(this.x[i], this.z[i]) ?? 6.8) / 2 - carHalf);
     // The narrowest point nearby counts (junctions, the crossing street's width must not widen the corridor).
+    // The ideal line keeps clear of posts and kerbs at the edge; overtaking may use a little more.
     for (let i = 0; i < n; i++) {
       let m = free[i];
       for (let k = -3; k <= 3; k++) if (this.loop || (i + k >= 0 && i + k < n)) m = Math.min(m, free[this.wrap(i + k)]);
-      this.room[i] = m;
+      this.room[i] = Math.max(0, Math.min(4.5, m - EDGE.line));
+      this.wide[i] = Math.max(0, Math.min(5.5, m - EDGE.pass));
     }
+    this.seal(this.room, this.wide);
     const lim = Float32Array.from(this.room, (r) => r * Math.max(0, Math.min(1, apex)));
     const s = this.side;
     s.fill(0);
@@ -197,6 +227,7 @@ export class RaceLine {
         }
       }
     }
+    this.seal(s);
     // Ease onto the centre line at the ends of a sprint (the start grid and the finish gate).
     if (!this.loop) for (let i = 0; i < Math.min(8, n); i++) { const f = i / 8; s[i] *= f; s[n - 1 - i] *= f; }
     this.measure();
@@ -325,14 +356,17 @@ export class RivalDriver {
   plan(index: number, v: number) {
     const L = this.line;
     const lv = this.level;
-    const lat = lv.lat * this.pace * (this.err.t > 0 ? this.err.lat : 1);
+    // The rubber band and skill speed the driver up, but never past what the tyres hold in a bend.
+    const lat = Math.min(lv.lat * this.pace, LAT_MAX) * (this.err.t > 0 ? this.err.lat : 1);
+    // Off the ideal line the bends are as tight as the road's (the lower of the two).
+    const radii = this.override !== undefined ? L.centreRadius : L.radius;
     const brake = lv.brake * this.brakeMul;
     let goal = lv.cruise * this.pace;
     const ahead = Math.min(L.count, 150, Math.ceil((v * v / (2 * brake) + 40) / L.spacing));
     for (let k = 0; k < ahead; k++) {
       const i = index + k;
       if (!L.loop && i >= L.count) break;
-      const r = L.radius[((i % L.count) + L.count) % L.count];
+      const r = radii[((i % L.count) + L.count) % L.count];
       const vc = Math.sqrt(lat * r);
       const dist = Math.max(0, k * L.spacing - 3);
       goal = Math.min(goal, Math.sqrt(vc * vc + 2 * brake * dist));
@@ -349,10 +383,13 @@ export class RivalDriver {
     const j = (((this.index + look) % L.count) + L.count) % L.count;
     const jj = L.loop ? j : Math.min(L.count - 1, this.index + look);
     // Lateral goal: the ideal line plus the own offset, or the overtaking side; moved over smoothly.
-    const want = this.override !== undefined ? this.override - L.side[jj] : this.offset;
-    this.shift += Math.max(-4.5 * dt, Math.min(4.5 * dt, want - this.shift));
-    const room = L.room[jj];
-    const lat = Math.max(-room, Math.min(room, Math.max(this.lo, Math.min(this.hi, L.side[jj] + this.shift))));
+    // Lateral goal: the ideal line plus the own offset, or the overtaking side, kept off cars alongside; the
+    // move away from the ideal line is eased in, slower at speed (no swerve at 150 km/h).
+    const room = this.override !== undefined ? L.wide[jj] : L.room[jj];
+    const goalLat = Math.max(-room, Math.min(room, Math.max(this.lo, Math.min(this.hi, this.override ?? L.side[jj] + this.offset))));
+    const rate = Math.max(2, Math.min(4.5, 90 / Math.max(1, v))) * dt;
+    this.shift += Math.max(-rate, Math.min(rate, goalLat - L.side[jj] - this.shift));
+    const lat = Math.max(-room, Math.min(room, L.side[jj] + this.shift));
     this.aim = lat;
     const [tx, tz] = L.offsetAt(jj, lat);
     const wantH = Math.atan2(tx - s.x, -(tz - s.z));
@@ -364,6 +401,8 @@ export class RivalDriver {
     const inp = this.input;
     inp.throttle = s.speed < goal ? Math.min(1, (goal - s.speed) / 3 + 0.4) : 0;
     inp.brake = s.speed > goal + STEER_GAIN.b0 ? Math.min(1, (s.speed - goal) / STEER_GAIN.b1) : 0;
+    // Trail braking: the more lock is on, the less brake (the tyres cannot do both; full brake on full lock spins).
+    inp.brake *= Math.max(0.3, 1 - STEER_GAIN.trail * Math.abs(inp.steer));
     // Pure pursuit: the wheel angle that puts the car on an arc through the target point, as a share of the
     // speed-dependent lock (tyres slip a little, hence the extra gain), plus a little straight heading feedback.
     const wb = CAR.wheel.front - CAR.wheel.rear;
@@ -689,7 +728,7 @@ export class Rivals {
       if (o.who === r.passWho && gap > -7 && gap < range) target = o;
     }
     let room = Infinity;
-    for (let k = 0; k < 8; k++) room = Math.min(room, L.room[(((r.track.index + k) % L.count) + L.count) % L.count]);
+    for (let k = 0; k < 8; k++) room = Math.min(room, L.wide[(((r.track.index + k) % L.count) + L.count) % L.count]);
     d.cap = Infinity;
     // Done passing (or the car is gone): back onto the ideal line after a moment.
     if (r.passSide !== undefined && !target) {
@@ -699,7 +738,14 @@ export class Rivals {
     // A new car to pass: keen drivers go for it when only just as fast, careful ones need a clear advantage.
     const closing = ahead ? me.v - ahead.v : 0;
     r.passCool -= dt;
-    if (ahead && r.passSide === undefined && r.passCool <= 0 && this.overtake && (closing > 1.5 - aggr * 2 || (aheadGap < 7 && closing > -1))) {
+    // Passing starts on a straight: no bend tighter than 150 m in the next 1.5 s (the other car's line crosses
+    // the road there).
+    const bendIn = (secs: number) => {
+      for (let k = 0, n = Math.ceil((me.v * secs + 15) / L.spacing); k < n; k++) if (L.centreRadius[(((r.track.index + k) % L.count) + L.count) % L.count] < 150) return true;
+      return false;
+    };
+    const bendAhead = bendIn(1.5);
+    if (ahead && r.passSide === undefined && r.passCool <= 0 && this.overtake && !bendAhead && (closing > 1.5 - aggr * 2 || (aheadGap < 7 && closing > -1))) {
       const opts = [-1, 1].filter((sd) => Math.abs(ahead!.lat + sd * (side + 0.2)) <= room);
       if (opts.length) {
         r.passSide = opts.reduce((a, b) => (Math.abs(ahead!.lat + a * side - me.lat) <= Math.abs(ahead!.lat + b * side - me.lat) ? a : b));
@@ -711,18 +757,17 @@ export class Rivals {
     r.pass = undefined;
     if (r.passSide !== undefined && target) {
       const tg = target.raced - me.raced;
-      // Overlapping: stay on the side we are on now (the other car may have moved across), never go through it.
-      if (tg < 6) r.passSide = Math.sign(me.lat - target.lat) || r.passSide;
       const goal = Math.max(-room, Math.min(room, target.lat + r.passSide * (side + 0.2)));
-      if (Math.abs(goal - target.lat) < side - 0.5 && tg > len * 0.5) {
-        // The gap closed before we got past: give up and fall in behind.
+      // The other car moved across (or we are on its other side by now): never go through it.
+      const wrongSide = Math.sign(me.lat - target.lat) !== r.passSide && Math.abs(me.lat - target.lat) > 0.5 && tg < len + 1;
+      if ((Math.abs(goal - target.lat) < side - 0.5 || wrongSide || (tg > len && bendIn(0.8))) && tg > -len * 0.5) {
+        // The gap closed before we got past: give up, lift and fall in behind.
         r.passSide = undefined;
         r.passWho = undefined;
         r.passCool = 1.5;
-        if (tg < 6) d.cap = Math.max(0, target.v - 1.5);
+        if (tg < len + 6) d.cap = Math.max(0, target.v - 2);
       } else {
-        // Alongside and squeezed: hold the lane rather than cut back across the other car.
-        r.pass = tg > len * 0.5 ? goal : r.passSide > 0 ? Math.max(goal, Math.min(room, me.lat)) : Math.min(goal, Math.max(-room, me.lat));
+        r.pass = goal;
         r.passHold = 0.8;
         r.mode = 'überholt';
         // Not yet beside it: do not run into its back while moving over.
@@ -843,6 +888,8 @@ export class Rivals {
     registerCommand({ name: 'ai.info', help: 'KI-Gegner: Position, Tempo, was sie gerade tun (Linie, überholt, folgt, Fehler)', run: () => this.info() });
     registerCommand({ name: 'ai.drivers', help: 'Charaktere der KI-Fahrer', run: () => PERSONAS.map((p) => `${p.name}: ${p.trait} · Tempo ×${p.skill} · Aggression ${p.aggr} · Konzentration ${p.focus} · Reaktion ${p.react} s`).join('\n') });
     registerToggle('ai.line', 'Ideallinie der Gegner auf der Straße anzeigen', () => this.showLine, (v) => { this.showLine = v; this.drawLine(); });
+    registerValue('ai.edge', 'Abstand der Ideallinie zum Fahrbahnrand in m (Leitpfosten, Bordsteine; ab dem nächsten Rennen)', () => EDGE.line, (v) => (EDGE.line = v), [0, 3]);
+    registerValue('ai.edge.pass', 'Abstand zum Fahrbahnrand beim Überholen in m', () => EDGE.pass, (v) => (EDGE.pass = v), [0, 3]);
     registerValue('ai.apex', 'Anteil der Fahrbahnbreite für die Ideallinie 0..1 (0 = Straßenmitte, gilt ab dem nächsten Rennen)', () => this.apex, (v) => (this.apex = v), [0, 1]);
     registerToggle('ai.overtake', 'Gegner überholen auf einer freien Seite (aus: nur hinterherfahren)', () => this.overtake, (v) => (this.overtake = v));
     registerValue('ai.mistakes', 'Häufigkeit von Fahrfehlern in Kurven (0 = keine, 1 = normal)', () => this.mistakes, (v) => (this.mistakes = v), [0, 3]);

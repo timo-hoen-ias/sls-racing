@@ -8,16 +8,16 @@ beforeAll(async () => {
   await RAPIER.init();
 });
 
-/** A rounded rectangle 400 × 200 m with 50 m corners, clockwise seen from above (x east, z south). */
-function track(): number[] {
+/** A rounded rectangle (2·long + 100) × 200 m with 50 m corners, clockwise seen from above (x east, z south). */
+function track(long = 150): number[] {
   const out: number[] = [];
   const corner = (cx: number, cz: number, a0: number) => {
     for (let k = 0; k <= 8; k++) { const a = a0 + (k / 8) * (Math.PI / 2); out.push(cx + Math.cos(a) * 50, cz + Math.sin(a) * 50); }
   };
-  corner(150, 50, -Math.PI / 2);
-  corner(150, 150, 0);
-  corner(-150, 150, Math.PI / 2);
-  corner(-150, 50, Math.PI);
+  corner(long, 50, -Math.PI / 2);
+  corner(long, 150, 0);
+  corner(-long, 150, Math.PI / 2);
+  corner(-long, 50, Math.PI);
   out.push(out[0], out[1]);
   return out;
 }
@@ -42,7 +42,7 @@ describe('ideal line', () => {
     for (let i = 0; i < ideal.count; i++) expect(Math.abs(ideal.side[i])).toBeLessThanOrEqual(ideal.room[i] + 1e-4);
     // Clockwise: the inside of the bends is on the right (+), the line goes there at the apex.
     expect(ideal.side[bend]).toBeGreaterThan(1.5);
-    expect(ideal.room[bend]).toBeCloseTo(4.5, 3);
+    expect(ideal.room[bend]).toBeCloseTo(6 - 1 - 1.4, 3);
   });
 
   it('stays on the centre line with apex 0 and unknown widths keep a narrow corridor', () => {
@@ -68,7 +68,8 @@ describe('rival racecraft', () => {
     rv.rubber = 0;
     rv.mistakes = 0;
     rv.overtake = opts.overtake;
-    void rv.start(track(), 3, 2);
+    // Long straights: passing starts on a straight.
+    void rv.start(track(400), 3, 2);
     const [fast, slow] = rv.list;
     // The slow car starts 60 m ahead on the ideal line.
     slow.persona = { ...slow.persona, skill: 0.8, react: 0 };

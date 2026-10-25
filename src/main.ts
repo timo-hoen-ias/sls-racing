@@ -88,6 +88,8 @@ import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
 import { Game } from './game/game.ts';
+import { Rivals } from './game/rivals.ts';
+import { BarrierView } from './game/events/barriers.ts';
 import type { PropHit } from './world/props.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -443,7 +445,18 @@ async function boot() {
   registerGameCommands({ R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar, teleport }, debugState);
   registerAddressCommands({ world: index.world, graph, nav, pos: ip, teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // The game around the driving: title screen, events with medals, level, credits and the save (game.ts).
+  // Rival drivers in races: the same car and physics as the player, other colours.
+  const rivals = new Rivals({
+    R: RAPIER, world, scene: view.scene,
+    makeView: (color) => loadSportsCar(color, garage.current.url).then((m) => new CarView(color, m), () => undefined),
+    groundAt: (x, z) => groundAt(x, z) ?? graph.snap(x, z, 40)?.y,
+    loaded: (x, z) => streamer.isLoadedAround(x, z),
+    feel: () => car.feel,
+  });
+  const barriers = new BarrierView(RAPIER, world);
+  view.scene.add(barriers.root);
   const game = new Game({
+    rivals, barriers,
     graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
     toast: (t, sec) => navHud.toast(t, sec), rumble: (k, ms) => input.rumble(k, ms),
     teleport: (x, z, heading) => teleport(x, z, heading), ready: () => worldReady && !hold,
@@ -563,7 +576,8 @@ async function boot() {
       $('loading').hidden = worldReady;
     } else {
       const t = car.body.translation();
-      streamer.update(t.x, t.z);
+      const v = car.body.linvel();
+      streamer.update(t.x, t.z, false, v.x, v.z);
     }
     perf.end('stream');
 
@@ -589,9 +603,11 @@ async function boot() {
         car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       }
       car.update(drive, STEP);
+      game.stepRivals(STEP, curr.p);
       knockdown.step(STEP);
       world.step();
       capture(curr);
+      rivals.capture();
       const lv = car.body.linvel();
       const dvx = lv.x - prevVel.x, dvy = lv.y - prevVel.y, dvz = lv.z - prevVel.z;
       const dv = Math.hypot(dvx, dvy, dvz);
@@ -635,6 +651,7 @@ async function boot() {
       }
       carView.pose(car, replay.pos, replay.quat, rs.steer, replayLengths, replayRot, rs.brake > 0 && rs.speed > 1, rs.boost > 0.5, now / 1000);
     } else carView.sync(car, ip, iq, braking, now / 1000);
+    rivals.render(alpha, now / 1000, night);
     carLights.update(night, rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {

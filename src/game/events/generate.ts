@@ -125,7 +125,7 @@ function straightest(c: Chain, maxTurn: number): [number, number] {
 
 function pathOf(c: Chain, from: number, to: number, reverse: boolean) {
   const out: number[] = [];
-  const step = Math.max(10, (to - from) / 60);
+  const step = Math.max(5, (to - from) / 400);
   for (let d = from; d <= to + 0.01; d += step) {
     const [x, , z] = pointAt(c.p, c.cum, Math.min(d, to));
     out.push(x, z);
@@ -153,7 +153,7 @@ export interface GenerateOptions {
   ramps?: { x: number; y: number; z: number; heading: number; length: number; height: number; name: string }[];
 }
 
-const STREET = (name: string) => name || 'Landstraße';
+const STREET = (name: string) => name.replaceAll(';', ' / ') || 'Landstraße';
 
 export function generateEvents(graph: RoadGraph, opts: GenerateOptions = {}): GameEvent[] {
   const spacing = opts.spacing ?? 250;
@@ -238,7 +238,8 @@ export function generateEvents(graph: RoadGraph, opts: GenerateOptions = {}): Ga
   // Cone slalom on wide straights: pairs of cones alternating left and right every 25 m.
   for (const c of all) {
     if (count('slalom') >= max.slalom) break;
-    if (c.width < 7 || c.rank < 4) continue;
+    // Not on motorways and expressways: cones there would be a hazard, not a game.
+    if (c.width < 7 || c.rank < 4 || c.rank > 7) continue;
     const [a, b] = straightest(c, 0.12);
     if (b - a < 260) continue;
     const rev = !c.fwd;
@@ -276,7 +277,8 @@ export function generateEvents(graph: RoadGraph, opts: GenerateOptions = {}): Ga
     out.push(gate({ p: pts, cum }, len - 2, w));
     return out;
   };
-  const flat = (pts: Float32Array) => { const o: number[] = []; for (let i = 0; i < pts.length; i += 9) o.push(pts[i], pts[i + 2]); return o; };
+  // Every point: dropping some would cut the corners of curved roads.
+  const flat = (pts: Float32Array) => { const o: number[] = []; for (let i = 0; i < pts.length; i += 3) o.push(pts[i], pts[i + 2]); return o; };
   for (let tries = 0; tries < 200 && count('sprint') < max.sprint && big.length; tries++) {
     const c = big[Math.floor(rand() * big.length)];
     const [sx, , sz] = pointAt(c.p, c.cum, c.length / 2);
@@ -319,8 +321,12 @@ export function generateEvents(graph: RoadGraph, opts: GenerateOptions = {}): Ga
   return events;
 }
 
-/** Hand-made events replace generated ones with the same id, the rest are added. */
-export function mergeEvents(generated: GameEvent[], custom: GameEvent[] | undefined) {
+/** Hand-made events replace generated ones with the same id, the rest are added; drop leaves events out (failed the event test). */
+export function mergeEvents(generated: GameEvent[], custom: GameEvent[] | undefined, drop: string[] = []) {
+  if (drop.length) {
+    const out = new Set(drop);
+    generated = generated.filter((e) => !out.has(e.id));
+  }
   if (!custom?.length) return generated;
   const byId = new Map(generated.map((e) => [e.id, e]));
   for (const e of custom) byId.set(e.id, e);

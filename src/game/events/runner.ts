@@ -45,6 +45,9 @@ export class EventRunner {
   failReason = '';
   /** Results of the ghost (best run) at each gate, for the split display. */
   splits: number[] = [];
+  /** Place in a race with rivals (set by the game each frame), and the size of the field. */
+  place?: number;
+  field = 1;
   /** Where the car restarts after a reset in a race: the last gate passed. */
   lastGate?: Gate;
   onStart?: (e: GameEvent) => void;
@@ -96,6 +99,8 @@ export class EventRunner {
     this.result = undefined;
     this.failReason = '';
     this.prev = undefined;
+    this.place = undefined;
+    this.field = 1;
   }
 
   abort(why = 'Abgebrochen') {
@@ -174,7 +179,7 @@ export class EventRunner {
         this.onLap?.(this.lap);
         return;
       }
-      this.finish(this.value());
+      this.finish(this.value(), this.field > 1 ? this.place : undefined);
     }
   }
 

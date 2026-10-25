@@ -15,6 +15,7 @@ import { MotionBlurPass } from './motionBlur.ts';
 import { SSRPass } from './ssr.ts';
 import { BeamPass } from './beams.ts';
 import { gradePass } from './grade.ts';
+import { HdrGradePass } from './hdrGrade.ts';
 import { weatherUniforms } from '../../weather/weatherMaterials.ts';
 
 /** Objects on this layer (the player car) are kept sharp by the motion blur. */
@@ -86,14 +87,19 @@ export interface FxSettings {
   bloom: number;
   /** Game look (G4): colour grade and extra bloom, 0 = neutral. */
   look: number;
+  /** Contrast around mid grey before tone mapping (1 = unchanged). */
+  contrast: number;
+  /** Colour saturation before tone mapping (1 = unchanged). */
+  saturation: number;
 }
 
 export class PostFX {
-  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, ssr: 1, beams: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1, look: 1 };
+  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, ssr: 1, beams: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1, look: 1, contrast: 1.1, saturation: 1 };
   readonly ao?: GTAOPass;
   readonly smaaPass?: SMAAPass;
   readonly clouds: CloudPass;
   readonly fog: AtmospherePass;
+  readonly hdrGrade = new HdrGradePass();
   readonly ssr: SSRPass;
   /** Headlight cones and lamp halos in mist and rain. */
   readonly beams: BeamPass;
@@ -162,6 +168,7 @@ export class PostFX {
     // Subtle bloom; threshold and strength follow the time of day in render().
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.08, 0.25, 16);
     c.addPass(this.bloom);
+    c.addPass(this.hdrGrade);
     c.addPass(new OutputPass());
     this.grade = gradePass();
     this.grade.enabled = !off.has('grade');
@@ -232,6 +239,8 @@ export class PostFX {
     this.bloom.strength = THREE.MathUtils.lerp(0.35, 0.08, d.daylight) * st.bloom * (1 + 0.6 * st.look);
     this.grade.uniforms.uLook.value = st.look;
     this.bloom.radius = THREE.MathUtils.lerp(0.5, 0.25, d.daylight);
+    this.hdrGrade.contrast = st.contrast;
+    this.hdrGrade.saturation = st.saturation;
     // Nitro kicks in like in Need for Speed: longer shutter, heavy streaks towards the edges.
     const kick = boost * st.nitroBlur;
     this.blur.shutter = (1 / 60) * st.blur * (1 + 1.8 * kick);

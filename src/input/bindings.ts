@@ -45,7 +45,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   lookBack: { keys: ['KeyB'], pad: [4] },
   shiftUp: { keys: ['KeyE'], pad: [] },
   shiftDown: { keys: ['KeyQ'], pad: [] },
-  gearbox: { keys: ['KeyG'], pad: [11] },
+  gearbox: { keys: [], pad: [] },
   reset: { keys: ['KeyR'], pad: [3] },
   rewind: { keys: ['Backspace'], pad: [14] },
   camera: { keys: ['KeyC'], pad: [8] },
@@ -141,7 +141,7 @@ export function helpLine(b: Bindings): string {
   const k = (a: Action) => b[a].keys.map(keyLabel).join('/') || '–';
   return [
     `${k('throttle')}/${k('brake')}: Gas/Bremse`, `${k('left')}/${k('right')}: Lenken`, `${k('nitro')}: Nitro`, `${k('handbrake')}: Handbremse`,
-    `${k('shiftUp')}/${k('shiftDown')}: Schalten`, `${k('gearbox')}: Automatik/Manuell`, `${k('lookBack')}: Rückblick`, `${k('reset')}: Zurücksetzen`,
+    `${k('shiftUp')}/${k('shiftDown')}: Schalten`, `${k('lookBack')}: Rückblick`, `${k('reset')}: Zurücksetzen`,
     `${k('camera')}: Kamera`, `${k('map')}: Karte`, `${k('time')}: Tageszeit`, `${k('mute')}: Ton`, `${k('menu')}: Optionen`, `${k('events')}: Events`, `${k('interact')}: Event starten`, 'F6: Replay', 'F7: Telemetrie', '^ / F1: Debug-Konsole',
   ].join(' · ');
 }

@@ -1,4 +1,4 @@
-import { describeSetting, findCommand, registerChoice, registerToggle, registerValue } from '../debug/registry.ts';
+import { describeSetting, findCommand, parseNum, registerChoice, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import type { Input } from '../input/input.ts';
 import { QUALITY_KEY, type Quality } from '../quality.ts';
 import type { ChaseCamera, CamMode } from '../render/chaseCamera.ts';
@@ -70,6 +70,24 @@ export function registerGameSettings(c: GameSettingsContext) {
   describeSetting('cam.fov', { kind: 'value', get: () => cam.fovOffset, set: (v) => { cam.fovOffset = Number(v); }, range: [-20, 30], step: 1 });
   registerValue('cam.speedfov', 'Wie stark Tempo und Nitro das Sichtfeld weiten 0..2', () => cam.speedFov, (v) => { cam.speedFov = v; }, [0, 2]);
   registerValue('cam.shake', 'Kamerawackeln bei hohem Tempo und Nitro 0..2', () => cam.shake, (v) => { cam.shake = v; }, [0, 2]);
+  // Free look with the right stick (snaps back behind the car on release).
+  const fl = cam.freeLook;
+  registerToggle('cam.freelook', 'Umsehen mit dem rechten Stick (loslassen = zurück hinters Auto)', () => fl.on, (v) => { fl.on = v; });
+  registerValue('cam.lookspeed', 'Umsehen: wie schnell die Kamera dem rechten Stick folgt (1/s)', () => fl.speed, (v) => { fl.speed = v; }, [2, 30]);
+  registerValue('cam.snapback', 'Umsehen: wie schnell die Kamera nach dem Loslassen zurückschnappt (1/s)', () => fl.snapBack, (v) => { fl.snapBack = v; }, [2, 30]);
+  registerCommand({
+    name: 'cam.look',
+    help: 'Umsehen ohne Stick testen: fester Blickwinkel (0 = vorne, 90 = rechts, 180 = hinten, -90 = links) oder aus (zurückschnappen); ohne Wert: Stick und aktueller Winkel',
+    args: '[aus|<grad>]',
+    complete: () => ['aus', '0', '90', '180', '-90'],
+    run: ([v]) => {
+      if (v === 'aus' || v === 'off') cam.lookOverride = null;
+      else if (v !== undefined) cam.lookOverride = (-parseNum(v, 'grad', -360, 360) * Math.PI) / 180;
+      const deg = (a: number) => Math.round((-a * 180) / Math.PI);
+      const stick = `Stick ${input.look.x.toFixed(2)} / ${input.look.y.toFixed(2)}`;
+      return `${cam.lookOverride === null ? 'Stick' : `fest ${deg(cam.lookOverride)}°`} · Blick ${deg(cam.lookAngle)}° · ${stick}`;
+    },
+  });
 
   // Driving
   describe('gear.mode', { kind: 'choice', options: ['auto', 'manual'], labels: { auto: 'Automatik', manual: 'Manuell' }, get: () => (c.car.drivetrain.manual ? 'manual' : 'auto'), set: (v) => c.setManual(v === 'manual') });
@@ -90,7 +108,7 @@ export function registerGameSettings(c: GameSettingsContext) {
   registerValue('input.deadzone', 'Totzone des linken Sticks 0..0.5', () => tn.deadzone, (v) => { tn.deadzone = v; }, [0, 0.5]);
   registerValue('input.curve', 'Lenkkurve am Stick: 1 = linear, höher = feiner um die Mitte', () => tn.curve, (v) => { tn.curve = v; }, [1, 3]);
   registerValue('input.triggerdz', 'Totzone der Trigger (Gas/Bremse) 0..0.5', () => tn.triggerDeadzone, (v) => { tn.triggerDeadzone = v; }, [0, 0.5]);
-  registerToggle('input.stickshift', 'Schalten mit dem rechten Stick (hoch/runter)', () => tn.stickShift, (v) => { tn.stickShift = v; });
+  registerValue('input.lookdz', 'Totzone des rechten Sticks (Umsehen) 0..0.5', () => tn.lookDeadzone, (v) => { tn.lookDeadzone = v; }, [0, 0.5]);
 
   // World
   const d = view.daylight;

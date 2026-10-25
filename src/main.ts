@@ -220,14 +220,14 @@ async function boot() {
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
-  // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  // Pack cars and Blender vehicles replace the procedural ones once loaded (traffic.models switches).
   // Generated trees: foliage textures, species and impostors (treeRender.ts); the Blender GLB still has the hedge.
   vegetation.init(view.renderer).catch((e) => console.warn('[veg] Bäume nicht geladen', e));
   loadVegetation().then((set) => {
     const hedge = set.species.hecke;
     if (hedge) props.setModel(Prop.hedge, hedge.lod0);
   }, (e) => console.warn('[veg] GLB nicht geladen', e));
-  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
+  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'pack'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   water.hideInMirror.push(props.root, traffic.view.root, vegetation.root, guideSigns.root);
   // Street furniture, signs, and traffic light heads from Blender (props.models).
   loadProps().then((set) => {

@@ -33,7 +33,7 @@
     "models:props": "blender --background --factory-startup --python tools/blender/make_props.py && node tools/compress-model.ts public/models/props.raw.glb public/models/props.glb",
     "models:bridges": "blender --background --factory-startup --python tools/blender/make_bridges.py && blender --background --factory-startup --python tools/blender/make_bridge_heroes.py && for f in public/models/landmarks/bruecke-*.raw.glb; do node tools/compress-model.ts \"$f\" \"${f%.raw.glb}.glb\"; done",
     "models:cars": "blender --background --factory-startup --python tools/blender/make_hothatch.py && blender --background --factory-startup --python tools/blender/make_gt.py && blender --background --factory-startup --python tools/blender/make_muscle.py && blender --background --factory-startup --python tools/blender/make_rally.py && blender --background --factory-startup --python tools/blender/make_hyper.py && for c in hothatch gt muscle rally hyper; do node tools/compress-model.ts public/models/cars/$c.raw.glb public/models/cars/$c.glb; done",
-    "models:import": "for c in coupe sedan goblin; do node tools/import-car.ts $c; done",
+    "models:import": "for c in coupe sedan goblin; do node tools/import-car.ts $c; done && node tools/import-traffic.ts",
     "models:shops": "blender --background --factory-startup --python tools/blender/make_shops.py && node tools/compress-model.ts public/models/shops.raw.glb public/models/shops.glb",
     "models:houses": "blender --background --factory-startup --python tools/blender/make_houses.py && node tools/compress-model.ts public/models/houses.raw.glb public/models/houses.glb"
   },

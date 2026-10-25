@@ -70,7 +70,7 @@ Von Sketchfab, alle unter **Creative Commons Namensnennung 4.0** (https://creati
 | Limousine | [Generic Sedan Car](https://sketchfab.com/3d-models/generic-sedan-car-58c33766470d46e7b2aed542650494e5) | Márcio Meireles (mmcworks) |
 | V12 Goblin | [Fictional supercar - V12 Goblin](https://sketchfab.com/3d-models/fictional-supercar-v12-goblin-0a20e49ad5774d778567cb5c3f345786) | Olli Teittinen (ollitei) |
 
-In `assets-src/cars/passenger-pack/` liegt außerdem [Generic passenger car pack](https://sketchfab.com/3d-models/generic-passenger-car-pack-20f9af9b8a404d5cb022ac6fe87f21f5) von Comrade1280 (CC BY 4.0) für späteren Verkehr; im Spiel ist es noch nicht.
+Die PKW des Verkehrs und der Parkplätze (Kleinwagen, Coupé, Kompakt, Geländewagen, Limousine, Sportwagen, SUV, Kombi, Minivan, Pickup) stammen aus [Generic passenger car pack](https://sketchfab.com/3d-models/generic-passenger-car-pack-20f9af9b8a404d5cb022ac6fe87f21f5) von Comrade1280 (CC BY 4.0), Rohdaten in `assets-src/cars/passenger-pack/`. `tools/import-traffic.ts` backt die Texturen in Vertexfarben und trennt Lack, Lichter und Bremslichter (`public/models/traffic-cars.glb`).
 
 ## Code
 Wolken/God Rays, Motion Blur und Lens Flare (src/render/post/) sind aus dem eigenen Projekt going-vertical übernommen und angepasst.

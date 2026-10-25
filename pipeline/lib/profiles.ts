@@ -49,6 +49,8 @@ const GRADE_SPAN = 4, GRADE_REACH = 16;
 const TILT_SPAN = 8;
 /** Direction of a junction arm is taken over this length (m); a plateau reaches at most this far along an arm. */
 const ARM_SPAN = 10, MAX_ARM_REACH = 30;
+/** Arms leaving a junction within 60° of each other form a fork. */
+const FORK_COS = 0.5;
 
 const median = (vs: number[]) => {
   const s = vs.slice().sort((a, b) => a - b);
@@ -253,6 +255,8 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
   // width), so on a hillside both the street and the side road keep their grade through the junction; where
   // all roads run one way it takes the main road's grade. All surfaces still meet at the node.
   const fits = new Map<number, { see: number; snn: number; sen: number; ses: number; sns: number; best: number; g: [number, number] }>();
+  // Grade of each road at each junction along its heading, for forks (below).
+  const grades = new Map<number, { w: Way; u: [number, number]; s: number; wt: number }[]>();
   for (const w of roads) {
     const { nodeAt } = raw.get(w)!;
     const len = dists.get(w)!.at(-1)!;
@@ -267,6 +271,8 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
       const f = fits.get(id)!;
       f.see += wt * ue * ue; f.snn += wt * un * un; f.sen += wt * ue * un; f.ses += wt * ue * s; f.sns += wt * un * s;
       if (wt > f.best) { f.best = wt; f.g = [s * ue, s * un]; }
+      if (!grades.has(id)) grades.set(id, []);
+      grades.get(id)!.push({ w, u: [ue, un], s, wt });
     });
   }
   const tilt = new Map<number, [number, number]>();
@@ -326,8 +332,20 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
       const [ue, un] = heading(w, i);
       const base = widest.get(id)! + 0.5;
       const back = armDir(w, i, -1), fwd = armDir(w, i, 1);
+      // Forks: roads leaving within FORK_ANGLE of each other overlap side by side, and their surfaces are
+      // flat across, so a plane tilted across them would leave one edge standing above the other. They share
+      // one grade along their common direction instead (the weighted mean of theirs).
+      let slope = ge * ue + gn * un;
+      const mine = [back, fwd].filter((u): u is [number, number] => !!u);
+      const partners = (arms.get(id) ?? []).filter((a) => a.w !== w && mine.some((u) => u[0] * a.u[0] + u[1] * a.u[1] > FORK_COS));
+      if (partners.length) {
+        let sw = 0, ss = 0;
+        for (const gr of grades.get(id) ?? [])
+          if (gr.w === w || partners.some((a) => a.w === gr.w)) { const c = gr.u[0] * ue + gr.u[1] * un; sw += gr.wt * Math.abs(c); ss += gr.wt * gr.s * c; }
+        if (sw > 0) slope = ss / sw;
+      }
       return [{
-        at: nodeAt[i], y: nodeH.get(id)!, slope: ge * ue + gn * un,
+        at: nodeAt[i], y: nodeH.get(id)!, slope,
         rBack: Math.max(base, back ? overlapReach(id, w, back, hw) : 0),
         rFwd: Math.max(base, fwd ? overlapReach(id, w, fwd, hw) : 0),
       }];

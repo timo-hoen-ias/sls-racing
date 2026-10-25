@@ -7,7 +7,7 @@ import type { Way } from './osm.ts';
 import { isDrivable, roadProfile, roadWidth } from './roads.ts';
 
 /** Height difference from which two touching roads are separate levels, not a junction (m). */
-const LEVEL = 0.6;
+const LEVEL = 0.3;
 /** The same for roads that share no node: they never meet, so a smaller step is already a ledge. */
 const LEVEL_APART = 0.25;
 /** Beyond this the other surface is out of the car's way (a deck overhead, a road far below). */

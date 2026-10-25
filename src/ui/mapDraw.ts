@@ -89,10 +89,12 @@ export interface MapMarker {
   big?: boolean;
   /** Filter group on the big map (U2). */
   group?: MarkerGroup;
+  /** Other players online (O2): a round dot with their name. */
+  label?: string;
 }
 
-export type MarkerGroup = 'race' | 'skill' | 'place' | 'view';
-export const MARKER_GROUPS: Record<MarkerGroup, string> = { race: 'Rennen', skill: 'Skills', place: 'Orte', view: 'Aussichtspunkte' };
+export type MarkerGroup = 'race' | 'skill' | 'place' | 'view' | 'player';
+export const MARKER_GROUPS: Record<MarkerGroup, string> = { race: 'Rennen', skill: 'Skills', place: 'Orte', view: 'Aussichtspunkte', player: 'Mitspieler' };
 
 const MEDAL_RING = ['', '#c98a4b', '#c9d1d9', '#ffd60a', '#e8f6ff'];
 
@@ -104,12 +106,22 @@ export function drawMarkers(ctx: CanvasRenderingContext2D, markers: MapMarker[],
     ctx.scale(1 / pxPerM, 1 / pxPerM);
     const r = m.big ? 7 : 5;
     ctx.beginPath();
-    ctx.moveTo(0, -r); ctx.lineTo(r, 0); ctx.lineTo(0, r); ctx.lineTo(-r, 0); ctx.closePath();
+    if (m.group === 'player') ctx.arc(0, 0, 5.5, 0, Math.PI * 2);
+    else { ctx.moveTo(0, -r); ctx.lineTo(r, 0); ctx.lineTo(0, r); ctx.lineTo(-r, 0); ctx.closePath(); }
     ctx.fillStyle = m.color;
     ctx.fill();
     ctx.lineWidth = m.medal ? 2.5 : 1.5;
-    ctx.strokeStyle = m.medal ? MEDAL_RING[m.medal] : '#0b0e13';
+    ctx.strokeStyle = m.medal ? MEDAL_RING[m.medal] : m.group === 'player' ? '#fff' : '#0b0e13';
     ctx.stroke();
+    if (m.label) {
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#0b0e13cc';
+      ctx.strokeText(m.label, 0, -9);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(m.label, 0, -9);
+    }
     ctx.restore();
   }
 }

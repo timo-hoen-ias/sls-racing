@@ -49,6 +49,12 @@ async function nameOf(db: Db, email: string): Promise<string> {
   throw new Error('kein freier Name');
 }
 
+/** The player's name for online play (O2): the same as on the leaderboards. */
+export async function playerName(db: Db, email: string) {
+  await schema(db);
+  return nameOf(db, email);
+}
+
 /**
  * Routes under /api for a signed-in player:
  * GET /api/me, PUT /api/me {name}, GET /api/board/<event>, POST /api/board/<event> {value, higher, car?, ghost?},

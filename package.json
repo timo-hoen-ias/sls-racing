@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "online:dev": "wrangler dev -c worker/wrangler.dev.jsonc --port 8788",
+    "online:vite": "ONLINE_DEV=1 vite",
     "test": "vitest run",
     "world:fetch": "node pipeline/fetch.ts saarlouis",
     "world:lidar": "node pipeline/lidar.ts saarlouis",

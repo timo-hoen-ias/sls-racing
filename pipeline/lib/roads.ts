@@ -9,6 +9,9 @@ import type { Way } from './osm.ts';
 import { KERB } from './kerbs.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
 import { Line, type RampPlan } from './ramps.ts';
+import { builtTunnel, isTunnel } from './tunnelMark.ts';
+
+export { builtTunnel, isTunnel };
 
 interface RoadClass {
   /** Draw order at overlaps: higher sits a little higher. */
@@ -79,9 +82,9 @@ export function roadWidth(tags: Record<string, string>): number | undefined {
   return ROAD_CLASSES[tags.highway] ? roadSection(tags)!.width : undefined;
 }
 
-/** Built as a carriageway (with collision), including pedestrian zones and roads closed to cars. */
+/** Built as a carriageway (with collision), including pedestrian zones, roads closed to cars and built tunnels. */
 export function isDrivable(tags: Record<string, string>) {
-  return !!ROAD_CLASSES[tags.highway] && tags.tunnel !== 'yes' && tags.area !== 'yes';
+  return !!ROAD_CLASSES[tags.highway] && (!isTunnel(tags) || builtTunnel(tags)) && tags.area !== 'yes';
 }
 
 /** A carriageway open to cars: routing, traffic and the drive test use only these. */
@@ -312,6 +315,8 @@ export function buildRoads(
     const ring = rings.get(way)!;
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
+    // Tunnels: the tube and the cut in the terrain come from the tile field (tunnels.ts, tunnelGeom.ts).
+    const tunnel = builtTunnel(way.tags);
     const sides = sidewalkSides(way);
     const sidewalk = sides.left || sides.right;
     // Bridges dressed by a landmark model bring their own railings.
@@ -422,13 +427,13 @@ export function buildRoads(
       // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the edges
       // down to the terrain mesh, which is fitted below it (carve.ts). Decks and lifted roads only push the
       // terrain down.
-      const lifted = bridge || above > ROAD_LIFT + 0.1;
+      const lifted = bridge || tunnel || above > ROAD_LIFT + 0.1;
       if (carve || lifted) {
         // Centred on the carriageway where it lies off the OSM line (placement, auxiliary lane).
         const co = (p: typeof a) => (Rn.get(p)! - Ln) / 2;
         const ch = Math.min(L.get(a)! + co(a), R.get(a)! - co(a), L.get(b)! + co(b), R.get(b)! - co(b));
-        if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted);
-        else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted);
+        // Never in a tunnel: the ground above stays where it is.
+        if (!tunnel) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted);
         const c = (p: typeof a, d: number) => p.y - d;
         // Another road just below beside this one (a junction arm, a road alongside at another height): the
         // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.
@@ -454,7 +459,7 @@ export function buildRoads(
       // Outer edges of the deck (carriageway extents, placed off the OSM line where ramps.ts says so).
       const beyond = walkway ? capFrom + BRIDGE_CAP.width : 0.5;
       const ol = (_p: typeof a) => Ln + beyond, or = (p: typeof a) => -Rn.get(p)! - beyond;
-      if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
+      if (!tunnel && Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
         strip(tile.sidewalks, ol, or, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1], () => [0, 0]);
         wall(tile.sidewalks, off(a, ol(a)), off(b, ol(b)), a.y - 1, a.y, b.y - 1, b.y, true);
         wall(tile.sidewalks, off(a, or(a)), off(b, or(b)), a.y - 1, a.y, b.y - 1, b.y, false);
@@ -565,7 +570,7 @@ export function buildRoads(
       }
 
     // Street lamps, alternating sides.
-    if (cls.street && cls.rank >= 3 && !bridge && way.urban !== false) {
+    if (cls.street && cls.rank >= 3 && !bridge && !tunnel && way.urban !== false) {
       let next = LAMP_SPACING / 2;
       let side = 1;
       for (const r of ring) {

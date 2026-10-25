@@ -9,7 +9,7 @@ import type { Junction } from './graph.ts';
 import { rand } from './ground.ts';
 import { type OsmData, type Polygon, pointInPolygon, pointInRing } from './osm.ts';
 import { KERB, bollardedEntry } from '../../src/world/roadSpec.ts';
-import { ROAD_LIFT, densify, isBridge, isDrivable, isMotorRoad, roadSurfaceHeights, roadWidth, type Railing } from './roads.ts';
+import { ROAD_LIFT, builtTunnel, densify, isBridge, isDrivable, isMotorRoad, roadSurfaceHeights, roadWidth, type Railing } from './roads.ts';
 
 interface Seg {
   ae: number; an: number; be: number; bn: number;
@@ -369,7 +369,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   // City limit signs where roads cross the boundary.
   for (const ring of o.cityLimits === false ? [] : o.boundary ?? []) {
     for (const w of osm.ways) {
-      if (!isDrivable(w.tags) || !/^(primary|secondary|tertiary|unclassified|trunk)$/.test(w.tags.highway)) continue;
+      if (!isDrivable(w.tags) || builtTunnel(w.tags) || !/^(primary|secondary|tertiary|unclassified|trunk)$/.test(w.tags.highway)) continue;
       for (let i = 1; i < w.pts.length; i++) {
         const a = w.pts[i - 1], b = w.pts[i];
         if (pointInRing(a[0], a[1], ring) === pointInRing(b[0], b[1], ring)) continue;
@@ -407,7 +407,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
 
   // Parked cars along residential streets inside the town, half on the kerb as is common here.
   for (const w of osm.ways) {
-    if (!isDrivable(w.tags) || !/^(residential|living_street|unclassified)$/.test(w.tags.highway)) continue;
+    if (!isDrivable(w.tags) || builtTunnel(w.tags) || !/^(residential|living_street|unclassified)$/.test(w.tags.highway)) continue;
     if (o.boundary && !o.boundary.some((r) => pointInRing(w.pts[0][0], w.pts[0][1], r))) continue;
     const width = roadWidth(w.tags)!;
     const off = width / 2 + 0.35;

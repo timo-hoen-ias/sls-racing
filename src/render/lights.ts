@@ -65,11 +65,14 @@ export class LampLights {
     }
   }
 
-  /** forEachLamp lists lamp heads; (x, z) is a point just ahead of the car. */
-  update(night: number, x: number, z: number, forEachLamp: (fn: (x: number, y: number, z: number) => void) => void, dt: number) {
+  /**
+   * forEachLamp lists lamp heads; (x, z) is a point just ahead of the car. `lit` is how strongly the pool shines
+   * (the night, or a tunnel's lights by day); the street lamp heads always follow the night.
+   */
+  update(night: number, x: number, z: number, forEachLamp: (fn: (x: number, y: number, z: number) => void) => void, dt: number, lit = night) {
     this.headMat.emissiveIntensity = THREE.MathUtils.lerp(0.4, 30, night);
     if (!this.pool.length) return;
-    if (night < 0.05) {
+    if (lit < 0.05) {
       for (const l of this.pool) l.intensity = 0;
       return;
     }
@@ -91,7 +94,7 @@ export class LampLights {
       if (!p) { l.intensity = 0; continue; }
       l.position.set(p.x, p.y - 0.3, p.z);
       const d = Math.hypot(p.x - x, p.z - z);
-      l.intensity = 160 * night * (1 - THREE.MathUtils.smoothstep(d, this.cutoff * 0.7, this.cutoff));
+      l.intensity = 160 * lit * (1 - THREE.MathUtils.smoothstep(d, this.cutoff * 0.7, this.cutoff));
     }
   }
 }

@@ -2,11 +2,12 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { TERRAIN_N, type TileContent, type WorldInfo, tileOriginLocal } from './format.ts';
 import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
-import { terrainHeights } from './tileBuild.ts';
+import { gridIndex, ownsPoint, terrainHeights } from './tileBuild.ts';
+import { cutTerrain, readTunnels, tubeColliders } from './tunnelGeom.ts';
 import { addRailColliders } from './guardRail.ts';
 import { addHouseColliders } from './houseColliders.ts';
 
-export type ColliderKind = 'terrain' | 'building' | 'bridge' | 'road' | 'tree' | 'lamp' | 'rail';
+export type ColliderKind = 'terrain' | 'building' | 'bridge' | 'road' | 'tree' | 'lamp' | 'rail' | 'tunnel';
 
 /** Largest trimesh piece; bigger building meshes are split so no single collider build takes long. */
 export const MAX_TRIS_PER_COLLIDER = 3000;
@@ -40,7 +41,8 @@ export function tileColliderSteps(
   };
   const [ox, oz] = tileOriginLocal(w, t.ix, t.iy);
   const size = w.tileSize;
-  steps.push(() => {
+  const tunnels = readTunnels(t.f32('tunnels'));
+  if (!tunnels.length) steps.push(() => {
     // Rapier wants (rows = z) × (cols = x) heights in column-major order; our grid is row-major.
     const y = terrainHeights(t);
     const N = TERRAIN_N;
@@ -48,6 +50,22 @@ export function tileColliderSteps(
     for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) hf[r + c * N] = y[r * N + c];
     add(R.ColliderDesc.heightfield(N - 1, N - 1, hf, { x: size, y: 1, z: size }).setTranslation(ox + size / 2, 0, oz + size / 2).setFriction(0.9), 'terrain');
   });
+  else {
+    // A tile with a tunnel: the terrain as a trimesh with the tube's cut (the heightfield has no holes), the
+    // skirts beside the tube, and the tube's walls, ceiling and walkways as convex blocks (tunnelGeom.ts).
+    const y = terrainHeights(t);
+    const N = TERRAIN_N, S = size / (N - 1);
+    const pos = new Float32Array(N * N * 3);
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) pos.set([ox + c * S, y[r * N + c], oz + r * S], (r * N + c) * 3);
+    const cut = cutTerrain({ pos, idx: gridIndex(N) }, tunnels);
+    for (const [v, i] of splitMesh(cut.mesh.pos, cut.mesh.idx, MAX_TRIS_PER_COLLIDER)) steps.push(() => add(R.ColliderDesc.trimesh(v, i).setFriction(0.9), 'terrain'));
+    if (cut.skirts.length) {
+      const sp = Float32Array.from(cut.skirts);
+      steps.push(() => add(R.ColliderDesc.trimesh(sp, Uint32Array.from({ length: sp.length / 3 }, (_, n) => n)).setFriction(0.6), 'tunnel'));
+    }
+    const blocks = tubeColliders(tunnels, ownsPoint(t, w));
+    steps.push(() => { for (const b of blocks) { const d = R.ColliderDesc.convexHull(b); if (d) add(d.setFriction(0.6), 'tunnel'); } });
+  }
 
   for (const [field, kind, friction] of [['buildings', 'building', 0.6], ['collide', 'bridge', 0.9]] as const) {
     const pos = t.f32(`${field}.pos`);

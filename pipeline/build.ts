@@ -31,7 +31,9 @@ import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionCon
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
-import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
+import { CarriagewayIndex, buildRoads, builtTunnel, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
+import { tunnelTiles } from './lib/tunnels.ts';
+import { TUNNEL } from '../src/world/tunnelGeom.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
 import { activeRoadProfile, KERB, noCars } from '../src/world/roadSpec.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
@@ -118,6 +120,9 @@ function main() {
   const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings }, ramps);
   drawFillets(fillets, info, tiles, carve);
+  // Tunnels: centrelines for the tube and the cut in the terrain, which the game builds (tunnelGeom.ts).
+  const tunnels = tunnelTiles(osm.ways, info, height);
+  if (tunnels.list.length) console.log(`Tunnels: ${tunnels.list.map((t) => `${t.name || t.highway} ${t.length} m (${t.height.toFixed(1)} m clear)`).join(', ')}`);
   // Footpaths, cycle paths and steps on the terrain mesh as carved for the roads, stopping at carriageways and sidewalks.
   const pathStats = (() => {
     // Scoped so the index is freed before the tiles are written.
@@ -183,8 +188,15 @@ function main() {
     roofInfo.get(k)!.push(...utmToLocal(info, e, n).map((v) => Math.round(v * 10) / 10), ...c);
     return c;
   };
-  // Buildings a road runs through (canopies, garages, passages the survey models solid) would block it.
-  const lines = new RoadLines(osm.ways);
+  // Buildings a road runs through (canopies, garages, passages the survey models solid) would block it. Over a
+  // tunnel only where its tube reaches above the ground.
+  const tunnelRings = new Map(osm.ways.filter((w) => builtTunnel(w.tags)).map((w) => [w, roadProfile(w, height, info, 2)]));
+  const lines = new RoadLines(osm.ways, (w, e, n) => {
+    const ring = tunnelRings.get(w);
+    if (!ring) return true;
+    const p = ring.reduce((a, q) => ((q.e - e) ** 2 + (q.n - n) ** 2 < (a.e - e) ** 2 + (a.n - n) ** 2 ? q : a));
+    return p.y + (w.tunnel?.height ?? TUNNEL.height) + TUNNEL.slab > height(e, n) - 0.3;
+  });
   let blocking = 0;
   const blocks = (rings: [number, number][][]) => {
     const hit = rings.some((r) => lines.through(r) !== undefined);
@@ -517,6 +529,8 @@ function main() {
     if (bushes?.length) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
     const rails = railTiles.get(k);
     if (rails) tile.rails = encode(new Float32Array(rails));
+    const tun = tunnels.tiles.get(k);
+    if (tun) tile.tunnels = encode(new Float32Array(tun));
     const tileFuel = fuel.tiles.get(k);
     if (tileFuel) tile.fuel = encode(new Float32Array(tileFuel));
     const tileHouses = houseRecs.tiles.get(k);
@@ -592,6 +606,7 @@ function main() {
   console.log(`Districts: ${districts.map((d) => d.name).join(', ') || '–'}`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
+  writeFileSync(`${paths.out}tunnels.json`, JSON.stringify({ v: 1, tunnels: tunnels.list }));
   writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info, medians.points)));
   // Flattened plazas (plazas.ts) for the plaza command: [name, x, z, plane height, area m², RMS cm, tilt %].
   writeFileSync(`${paths.out}plazas.json`, JSON.stringify({ v: 1, plazas: height.plazas.map((p) => {

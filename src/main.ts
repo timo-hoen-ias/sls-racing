@@ -56,6 +56,7 @@ import { WorldAudio } from './audio/worldAudio.ts';
 import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
+import { TunnelLayer } from './world/tunnels.ts';
 import { StallLayer } from './world/stalls.ts';
 import { registerRoadsideCommands } from './world/roadsideCommands.ts';
 import { Vegetation } from './world/vegetation.ts';
@@ -154,6 +155,9 @@ async function boot() {
   // Guard rails: drawn per tile; their colliders come with the tile physics.
   const rails = new RailLayer();
   rails.register();
+  // Tunnels: tube, portals and lights per tile; tunnels.json lists them for tunnel.list / tunnel.tp.
+  const tunnels = await TunnelLayer.fetch(TILES_URL, index.world);
+  tunnels.register();
   // Painted stall lines on car parks.
   const stalls = new StallLayer();
   stalls.register();
@@ -193,6 +197,7 @@ async function boot() {
   view.scene.add(lampLights.root);
   view.post?.beams.sources.push(...carLights.heads, ...lampLights.pool);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
+  const tunnelLamps = tunnels.forEachLamp.bind(tunnels);
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
@@ -282,9 +287,12 @@ async function boot() {
   let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean; wait?: number } | null = { ...spawn, frames: 0 };
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
-    groundRay.origin = { x, y: 2000, z };
-    const hit = world.castRay(groundRay, 4000, true, undefined, undefined, undefined, car.body, (c) => !traffic.isSolid(c.parent()));
-    return hit ? 2000 - hit.timeOfImpact : undefined;
+    // In a tunnel the road, not the ground above it.
+    const floor = tunnels.floorAt(x, z);
+    const top = floor !== undefined ? floor + 2 : 2000;
+    groundRay.origin = { x, y: top, z };
+    const hit = world.castRay(groundRay, top + 2000, true, undefined, undefined, undefined, car.body, (c) => !traffic.isSolid(c.parent()));
+    return hit ? top - hit.timeOfImpact : undefined;
   };
 
   const prev = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
@@ -599,6 +607,7 @@ async function boot() {
   bigMap.areas = () => game.areas();
   bigMap.stats = () => game.mapStats();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
+  tunnels.registerCommands(() => ({ x: ip.x, y: ip.y, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
@@ -807,7 +816,9 @@ async function boot() {
       const n = police.heat ? police.nearest({ x: ip.x, z: ip.z, vx: 0, vz: 0, speed: 0, heading: car.heading() }) : undefined;
       sfx.siren(n && !paused ? Math.max(0, 1 - n.d / 250) : 0, n?.side ?? 0, dt);
     }
-    carLights.update(night, rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
+    // In a tunnel the low beams come on and the lamp pool follows the tunnel lights.
+    tunnels.update(ip.x, ip.y, ip.z, dt);
+    carLights.update(Math.max(night, tunnels.inside), rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {
       const strength = Math.min(1, (hit - 3.5) / 12);
@@ -914,7 +925,8 @@ async function boot() {
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);
-    lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
+    if (tunnels.inside > 0.05) lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, tunnelLamps, dt, Math.max(night, tunnels.inside));
+    else lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
     boostFx += ((car.boosting ? 1 : 0) - boostFx) * (1 - Math.exp(-dt * 5));
     perf.begin('render');
     perf.gpuBegin();

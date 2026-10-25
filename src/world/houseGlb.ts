@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { PropLods } from './propGlb.ts';
 
 // The freely designed houses and garden parts built in Blender (tools/blender/make_houses.py): per house model
-// walls and roofs (<id>_lod0/1, vertex colours, uv.x surface code, uv.y tint flag) and window glass (<id>_glas0/1);
+// walls and roofs (<id>_lod0/1, vertex colours, uv.x surface code, uv.y tint code) and window glass (<id>_glas0/1);
 // garden parts garten-<name>_lod0/1.
 
 export const HOUSES_URL = `${import.meta.env.BASE_URL}models/houses.glb`;

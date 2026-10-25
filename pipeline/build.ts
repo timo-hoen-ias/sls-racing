@@ -32,6 +32,7 @@ import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
 import { drawCalming, drawRoundaboutIslands, planTurningCircles } from './lib/roadDetails.ts';
 import { Details } from './lib/details.ts';
+import { fillSlots } from './lib/slots.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
@@ -130,6 +131,9 @@ function main() {
   const details = new Details(info, tiles);
   const islands = drawRoundaboutIslands(osm.ways, info, tiles, details, height);
   console.log(`Roundabout islands: ${islands.islands} raised, ${islands.spots.length - islands.islands} left open`);
+  // Narrow slots left between carriageways get patched, so no wheel drops between two roads.
+  const slots = fillSlots(tiles, info);
+  console.log(`Road slots: ${slots} cells of 0.5 m patched between carriageways`);
   // Footpaths, cycle paths and steps on the terrain mesh as carved for the roads, stopping at carriageways and sidewalks.
   const pathStats = (() => {
     // Scoped so the index is freed before the tiles are written.
@@ -564,7 +568,7 @@ function main() {
     tiles: index,
     graph: 'graph.json',
     roadProfile: activeRoadProfile(),
-    ...(corners || smoothed || curves.ways ? { roadShape: { corners, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
+    ...(corners || smoothed || curves.ways || slots ? { roadShape: { corners, slots, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',

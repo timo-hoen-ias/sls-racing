@@ -161,7 +161,15 @@ export function probeCells(
     const out: SurfaceCell[] = [];
     for (const yd of mergeLevels(ys)) {
       ray.origin = { x, y: yd + L.above, z };
-      const hw = world.castRay(ray, L.above + L.below, true, undefined, undefined, undefined, undefined, keep);
+      let hw = world.castRay(ray, L.above + L.below, true, undefined, undefined, undefined, undefined, keep);
+      // The offset point can fall just outside a road whose edge crosses the cell close to its centre (the drawn
+      // cell is decided at the centre): the wheel would rest on the road there, so the centre is probed too.
+      if (!hw || hw.timeOfImpact > L.above + L.dip) {
+        ray.origin = { x: cx, y: yd + L.above, z: cz };
+        const h2 = world.castRay(ray, L.above + L.below, true, undefined, undefined, undefined, undefined, keep);
+        if (h2 && (!hw || h2.timeOfImpact < hw.timeOfImpact)) hw = h2;
+        ray.origin = { x, y: yd + L.above, z };
+      }
       const hc = world.castRay(ray, L.above + L.below, true, undefined, CAR_GROUPS, undefined, undefined, keep);
       out.push({
         yd,

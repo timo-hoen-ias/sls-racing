@@ -24,6 +24,9 @@ const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
 const MAX = +arg('max', 'Infinity');
 const MAX_CRITICAL = +arg('max-critical', 'Infinity');
+/** Critical places allowed on main roads (motorway, trunk, primary, secondary, tertiary and their links). */
+const MAX_CRITICAL_MAIN = +arg('max-critical-main', 'Infinity');
+const MAIN = /^(motorway|trunk|primary|secondary|tertiary)(_link)?$/;
 const CELL = +arg('cell', '0.5');
 /** Debugging: only the tile around local x,z, with the cells around it printed. */
 const AT = arg('at', '') ? arg('at', '').split(',').map(Number) : undefined;
@@ -157,8 +160,15 @@ async function main() {
   });
   const critical = kept.filter((s) => isCritical(s.kind, s.size));
   console.log(`  critical (holes, snags, steps/bumps/dips from 0.25 m): ${critical.length} (${SURFACE_KINDS.map((k) => `${critical.filter((s) => s.kind === k).length} ${k}`).join(', ')})`);
+  const main = kept.map((s, i) => [s, way[i]] as const).filter(([s, w]) => isCritical(s.kind, s.size) && w && MAIN.test(w.tags.highway));
+  console.log(`  critical on main roads: ${main.length}`);
+  for (const [s, w] of main.slice(0, Number(arg('list', '25')))) {
+    const [e, n] = [s.x + W.originE, W.originN - s.z];
+    console.log(`    ${s.kind} ${s.size.toFixed(2)} m (${s.what}) at UTM ${e.toFixed(1)} ${n.toFixed(1)} · way ${w!.id} ${w!.tags.highway}${w!.tags.bridge ? ' bridge' : ''} "${w!.tags.name ?? w!.tags.ref ?? ''}"`);
+  }
   let fail = false;
   if (critical.length > MAX_CRITICAL) { console.log(`FAIL: ${critical.length} critical places (allowed ${MAX_CRITICAL})`); fail = true; }
+  if (main.length > MAX_CRITICAL_MAIN) { console.log(`FAIL: ${main.length} critical places on main roads (allowed ${MAX_CRITICAL_MAIN})`); fail = true; }
   if (kept.length > MAX) { console.log(`FAIL: ${kept.length} places where the road is not one seamless surface (allowed ${MAX})`); fail = true; }
   if (fail) process.exit(1);
 }

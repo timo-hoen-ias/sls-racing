@@ -17,7 +17,7 @@
     "world:mapillary": "node pipeline/mapillary.ts landkreis-saarlouis",
     "world:addresses": "node pipeline/addresses.ts landkreis-saarlouis",
     "world:landcover": "node pipeline/landcover.ts landkreis-saarlouis",
-    "world:build": "node --max-old-space-size=12288 pipeline/build.ts landkreis-saarlouis",
+    "world:build": "node --max-old-space-size=12288 --max-semi-space-size=64 pipeline/build.ts landkreis-saarlouis",
     "world:fixture": "node pipeline/build.ts fixture",
     "world:drivetest": "node pipeline/drivetest.ts landkreis-saarlouis",
     "world:eventtest": "node pipeline/eventtest.ts landkreis-saarlouis",

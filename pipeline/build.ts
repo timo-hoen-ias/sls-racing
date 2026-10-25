@@ -259,7 +259,10 @@ function main() {
   console.log(`Guide signs: ${Object.entries(guide.counts).map(([k, c]) => `${k} ${c}`).join(', ')} (${farPlaces.length} places beyond the region) · skipped: ${Object.entries(guide.skipped).map(([k, c]) => `${k} ${c}`).join(', ')}`);
   // Mapped place-name signs replace the generic ones where roads cross the postal boundary.
   const cityLimits = guide.counts.ort === 0;
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings, hedges: landcover?.hedges, walls: landcover?.walls });
+  // Survey hedges and ALKIS walls reach beyond the OSM extract (the ALKIS walls cover the whole district):
+  // only the ones on tiles with OSM content, where the terrain is fetched.
+  const inData = (l: [number, number][]) => l.every(([e, n]) => used.has(`${Math.floor(e / T0)}_${Math.floor(n / T0)}`));
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings, hedges: landcover?.hedges.filter(inData), walls: landcover?.walls.filter(inData) });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
   if (landcover) console.log(`Hedges: ${landcover.hedges.length} measured from the laser heights, ${props.measuredHedges} pieces placed, ${hedgeBushes} bushes on them dropped; ${props.alkisWalls} wall pieces from ALKIS`);
   const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });

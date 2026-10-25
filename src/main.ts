@@ -87,6 +87,9 @@ import { WallGlide } from './game/forgive.ts';
 import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
+import { Game } from './game/game.ts';
+import { Rivals } from './game/rivals.ts';
+import { BarrierView } from './game/events/barriers.ts';
 import type { PropHit } from './world/props.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -234,8 +237,10 @@ async function boot() {
   const sfx = new GameSfx();
   sfx.registerCommands();
   const startBtn = $('start') as HTMLButtonElement;
-  startBtn.addEventListener('click', async () => {
-    startBtn.hidden = true;
+  let started = false;
+  const startAudio = async () => {
+    if (started) return;
+    started = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sfx.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
@@ -245,7 +250,7 @@ async function boot() {
     await sound.resume().catch(() => {});
     await weather.startSound();
     if (isTouchDevice()) document.documentElement.requestFullscreen?.().then(() => (screen.orientation as any)?.lock?.('landscape')).catch(() => {});
-  });
+  };
 
   // Last place the car stood on all four wheels, for resets.
   let safe = { x: spawn.x, y: spawn.y, z: spawn.z, heading: spawn.heading };
@@ -373,6 +378,7 @@ async function boot() {
   style.onEvent = (e) => {
     car.nitroGain += e.nitro;
     score.add(e);
+    game.style(e);
     styleFeed.push(e);
     sfx.play(e.kind === 'nearMiss' ? 'whoosh' : e.kind === 'smash' || e.kind === 'takedown' ? 'smash' : e.kind === 'air' ? 'jump' : 'point', 0.8, e.side ?? 0);
   };
@@ -438,6 +444,27 @@ async function boot() {
   };
   registerGameCommands({ R: RAPIER, world, view, quality, index, graph, nav, car, pos: ip, resetCar, teleport }, debugState);
   registerAddressCommands({ world: index.world, graph, nav, pos: ip, teleport: (x, z, heading) => teleport(x, z, heading, true) });
+  // The game around the driving: title screen, events with medals, level, credits and the save (game.ts).
+  // Rival drivers in races: the same car and physics as the player, other colours.
+  const rivals = new Rivals({
+    R: RAPIER, world, scene: view.scene,
+    makeView: (color) => loadSportsCar(color, garage.current.url).then((m) => new CarView(color, m), () => undefined),
+    groundAt: (x, z) => groundAt(x, z) ?? graph.snap(x, z, 40)?.y,
+    loaded: (x, z) => streamer.isLoadedAround(x, z),
+    feel: () => car.feel,
+  });
+  const barriers = new BarrierView(RAPIER, world);
+  view.scene.add(barriers.root);
+  const game = new Game({
+    rivals, barriers,
+    graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
+    toast: (t, sec) => navHud.toast(t, sec), rumble: (k, ms) => input.rumble(k, ms),
+    teleport: (x, z, heading) => teleport(x, z, heading), ready: () => worldReady && !hold,
+    onPlay: () => void startAudio(), openOptions: () => menu.toggle(true),
+  });
+  game.registerCommands(() => ip);
+  void game.load();
+  minimap.markers = bigMap.markers = () => game.markers();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
@@ -492,9 +519,17 @@ async function boot() {
     input.update(dt);
     for (const e of input.takeEvents()) {
       // The open menu reads the gamepad itself and eats the keyboard.
-      if (menu.open) continue;
+      if (menu.open || game.overlay) { if (e === 'interact' && game.hud.cardOpen) game.interact(); continue; }
       if (e === 'menu' && !debug.open) menu.toggle(true);
-      if (e === 'reset') { resetCar(); rescue.clear(car); }
+      if (e === 'reset') {
+        // In a race the car goes back to the last checkpoint.
+        const g = game.resetSpot();
+        if (g) teleport(g.x, g.z, g.heading);
+        else resetCar();
+        rescue.clear(car);
+      }
+      if (e === 'interact') game.interact();
+      if (e === 'events') game.openList();
       if (e === 'rewind') rewind();
       if (e === 'camera') cam.next();
       if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }
@@ -542,14 +577,17 @@ async function boot() {
       $('loading').hidden = worldReady;
     } else {
       const t = car.body.translation();
-      streamer.update(t.x, t.z);
+      const v = car.body.linvel();
+      streamer.update(t.x, t.z, false, v.x, v.z);
     }
     perf.end('stream');
 
     vehicleDebug.update();
     weather.update(paused ? 0 : dt * debugState.timeScale, now / 1000, car, view.camera, view.renderer.domElement.height);
     roadSurface.update(car, weather.wheelAqua);
-    const drive = startBtn.hidden && worldReady && !bigMap.open && !debug.open && !replay.active && !paused ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: false, lookBack: false };
+    const free = game.inGame && !game.overlay && worldReady && !bigMap.open && !debug.open && !replay.active && !paused;
+    // During the countdown the car stands on the handbrake.
+    const drive = free && !game.locked ? input.state : { throttle: 0, brake: 0, steer: 0, nitro: false, handbrake: true, lookBack: false };
     if (debugState.frozen) frozenAt ??= { p: car.body.translation(), q: car.body.rotation() };
     else frozenAt = null;
     // The physics holds still during a replay; the car carries on where it was afterwards.
@@ -566,9 +604,11 @@ async function boot() {
         car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       }
       car.update(drive, STEP);
+      game.stepRivals(STEP, curr.p);
       knockdown.step(STEP);
       world.step();
       capture(curr);
+      rivals.capture();
       const lv = car.body.linvel();
       const dvx = lv.x - prevVel.x, dvy = lv.y - prevVel.y, dvz = lv.z - prevVel.z;
       const dv = Math.hypot(dvx, dvy, dvz);
@@ -612,6 +652,7 @@ async function boot() {
       }
       carView.pose(car, replay.pos, replay.quat, rs.steer, replayLengths, replayRot, rs.brake > 0 && rs.speed > 1, rs.boost > 0.5, now / 1000);
     } else carView.sync(car, ip, iq, braking, now / 1000);
+    rivals.render(alpha, now / 1000, night);
     carLights.update(night, rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {
@@ -661,6 +702,8 @@ async function boot() {
       style.update({ dt: dt * debugState.timeScale, x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, heading: car.heading(), airborne: car.airborne, airTime: car.airTime, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x }, traffic.sim.agents);
       score.update(dt * debugState.timeScale);
     }
+    game.blocked = menu.open || debug.open;
+    game.update({ x: ip.x, z: ip.z, speed: Math.hypot(lvel.x, lvel.z), dt: paused ? 0 : dt });
     styleFeed.setCombo(score.bank, score.multiplier, score.timer / score.window);
     speedLines.update(dt, Math.abs(rs ? rs.speed : car.speed) * 3.6, boostFx);
     if (car.bursting > 0 && !wasBursting) { sfx.play('burst'); input.rumble(0.8, 220); }

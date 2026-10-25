@@ -2,7 +2,7 @@
 
 export type Action =
   | 'throttle' | 'brake' | 'left' | 'right' | 'nitro' | 'handbrake' | 'lookBack'
-  | 'shiftUp' | 'shiftDown' | 'gearbox' | 'reset' | 'rewind' | 'camera' | 'map' | 'time' | 'mute' | 'menu';
+  | 'shiftUp' | 'shiftDown' | 'gearbox' | 'reset' | 'rewind' | 'camera' | 'map' | 'time' | 'mute' | 'menu' | 'interact' | 'events';
 
 export interface Binding {
   /** KeyboardEvent.code values, at most two. */
@@ -31,6 +31,8 @@ export const ACTIONS: { id: Action; label: string }[] = [
   { id: 'time', label: 'Tageszeit weiter' },
   { id: 'mute', label: 'Ton an/aus' },
   { id: 'menu', label: 'Optionen-Menü' },
+  { id: 'interact', label: 'Event starten / Weiter' },
+  { id: 'events', label: 'Eventliste' },
 ];
 
 export const DEFAULT_BINDINGS: Bindings = {
@@ -51,6 +53,8 @@ export const DEFAULT_BINDINGS: Bindings = {
   time: { keys: ['KeyT'], pad: [12] },
   mute: { keys: ['KeyM'], pad: [] },
   menu: { keys: ['Escape', 'KeyP'], pad: [9] },
+  interact: { keys: ['KeyF'], pad: [15] },
+  events: { keys: ['KeyJ'], pad: [10] },
 };
 
 /** Keys the game keeps for itself: debug console, replay, telemetry. */
@@ -138,6 +142,6 @@ export function helpLine(b: Bindings): string {
   return [
     `${k('throttle')}/${k('brake')}: Gas/Bremse`, `${k('left')}/${k('right')}: Lenken`, `${k('nitro')}: Nitro`, `${k('handbrake')}: Handbremse`,
     `${k('shiftUp')}/${k('shiftDown')}: Schalten`, `${k('gearbox')}: Automatik/Manuell`, `${k('lookBack')}: Rückblick`, `${k('reset')}: Zurücksetzen`,
-    `${k('camera')}: Kamera`, `${k('map')}: Karte`, `${k('time')}: Tageszeit`, `${k('mute')}: Ton`, `${k('menu')}: Optionen`, 'F6: Replay', 'F7: Telemetrie', '^ / F1: Debug-Konsole',
+    `${k('camera')}: Kamera`, `${k('map')}: Karte`, `${k('time')}: Tageszeit`, `${k('mute')}: Ton`, `${k('menu')}: Optionen`, `${k('events')}: Events`, `${k('interact')}: Event starten`, 'F6: Replay', 'F7: Telemetrie', '^ / F1: Debug-Konsole',
   ].join(' · ');
 }

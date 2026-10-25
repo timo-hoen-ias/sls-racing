@@ -69,7 +69,8 @@ const RANK_WIDTH = [3, 4, 5, 6, 5.5, 7, 7.5, 8.5, 10, 11];
 export class RoadGraph {
   readonly edges: Edge[] = [];
   readonly nodes: Float32Array;
-  private adj: [edge: number, other: number][][];
+  /** Per node: [edge id, node at the other end]. */
+  readonly adj: [edge: number, other: number][][];
   private grid = new Map<number, number[]>(); // cell → [edge, segment, edge, segment, …]
   /** Junctions with traffic lights: [node, group]. */
   readonly signals: [number, number][];

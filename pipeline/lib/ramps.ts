@@ -318,10 +318,12 @@ function densifySeg(a: [number, number], b: [number, number]): [number, number][
 }
 
 /** Junctions for the game's hw.* debug commands (public/tiles/ramps.json), in local coordinates. */
-export function rampList(plan: RampPlan, world: WorldInfo) {
+export function rampList(plan: RampPlan, world: WorldInfo, medians: [number, number, number][] = []) {
   const r1 = (v: number) => Math.round(v * 10) / 10;
   return {
     v: 1,
+    // Carriageways moved apart (carriageways.ts): [x, z, move in m] every 50 m.
+    medians: medians.map(([e, n, m]) => { const [x, z] = utmToLocal(world, e, n); return [r1(x), r1(z), m]; }),
     // [kind 0 exit / 1 entry, x, z, auxiliary lane 0/1, teleport x, z, heading (rad), motorway ref, destination]
     ramps: plan.ramps.map((r) => {
       const [x, z] = utmToLocal(world, r.e, r.n);

@@ -9,7 +9,10 @@ describe('road cross-sections (1:1 against German guidelines)', () => {
     expect(s.dividers).toHaveLength(1);
     // Traffic keeps right: the right lane lies between the divider and the shoulder.
     expect(s.rightLane).toBeGreaterThan(s.dividers[0]);
-    expect(s.rightLane + s.lane / 2).toBeLessThan(s.width / 2 - 2.5);
+    expect(s.rightLane + s.lane / 2).toBeLessThan(s.width / 2 + s.shift - 2.5);
+    // OSM puts the line in the middle of the lanes: the divider is on it, the hard shoulder lies further right.
+    expect(s.dividers[0]).toBeCloseTo(0);
+    expect(s.shift).toBeCloseTo((s.outer - s.inner) / 2);
   });
   it('motorway ramp is about 6 m, three-lane motorway about 15 m', () => {
     expect(roadSection({ highway: 'motorway_link', oneway: 'yes', lanes: '1' })!.width).toBeCloseTo(6);

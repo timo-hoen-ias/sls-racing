@@ -129,6 +129,13 @@ export class WorldStreamer implements KnockableSource {
   /** Parallel downloads. */
   maxInflight = 6;
   /**
+   * Look-ahead for high speed (G2): tiles load around the point the car will reach in this many seconds
+   * as well as around the car, nearest to that point first. 0 switches it off.
+   */
+  lookahead = 3;
+  /** The look-ahead point of the last update (debug). */
+  lead = { x: 0, z: 0 };
+  /**
    * Timings for the performance overlay. fetchMs: download + decode + vertex build; decodeMs: the decode + vertex
    * build part when it ran on the main thread (stream.worker off); visualMs / physicsMs: main-thread jobs;
    * frameMs: all streaming jobs per frame.
@@ -313,19 +320,29 @@ export class WorldStreamer implements KnockableSource {
    * Call every frame with the focus position (the car). urgent (car held for a teleport) allows a large budget,
    * since nothing moves while the world appears.
    */
-  update(x: number, z: number, urgent = false) {
+  update(x: number, z: number, urgent = false, vx = 0, vz = 0) {
     const w = this.index.world;
     const [cx, cy] = tileOfLocal(w, x, z);
     const radius = this.quality.radius;
+    // Where the car will be shortly, at most half the radius ahead.
+    const lead = Math.min(this.lookahead, (radius * 0.5) / Math.max(1, Math.hypot(vx, vz)));
+    const lx = x + vx * lead, lz = z + vz * lead;
+    this.lead = { x: lx, z: lz };
+    const [lcx, lcy] = tileOfLocal(w, lx, lz);
     const r = Math.ceil(radius / w.tileSize);
     const wanted: { key: string; d: number }[] = [];
-    for (let dx = -r; dx <= r; dx++)
-      for (let dy = -r; dy <= r; dy++) {
-        const key = tileKey(cx + dx, cy + dy);
-        if (!this.available.has(key) || this.loaded.has(key) || this.loading.has(key) || this.readyKeys.has(key)) continue;
-        const d = this.dist(cx + dx, cy + dy, x, z);
-        if (d <= radius + w.tileSize * 0.7) wanted.push({ key, d });
-      }
+    const seen = new Set<string>();
+    for (const [ox, oy] of lx === x && lz === z ? [[cx, cy]] : [[cx, cy], [lcx, lcy]])
+      for (let dx = -r; dx <= r; dx++)
+        for (let dy = -r; dy <= r; dy++) {
+          const key = tileKey(ox + dx, oy + dy);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          if (!this.available.has(key) || this.loaded.has(key) || this.loading.has(key) || this.readyKeys.has(key)) continue;
+          const dc = this.dist(ox + dx, oy + dy, x, z), dl = this.dist(ox + dx, oy + dy, lx, lz);
+          // In range of the car or of the look-ahead point; nearest to the look-ahead first, the car's own tiles before all.
+          if (Math.min(dc, dl) <= radius + w.tileSize * 0.7) wanted.push({ key, d: dc < w.tileSize ? dc - 1e4 : Math.min(dl, dc * 1.5) });
+        }
     wanted.sort((a, b) => a.d - b.d);
     this.queue = wanted.map((t) => t.key);
     while (this.loading.size < this.maxInflight && this.queue.length) this.fetchTile(this.queue.shift()!);
@@ -341,7 +358,7 @@ export class WorldStreamer implements KnockableSource {
       if (must) { this.addPhysics(must.t); continue; }
       if (this.ready.length) {
         let bi = 0, bd = Infinity;
-        this.ready.forEach((t, i) => { const d = this.dist(t.content.ix, t.content.iy, x, z); if (d < bd) { bd = d; bi = i; } });
+        this.ready.forEach((t, i) => { const d = Math.min(this.dist(t.content.ix, t.content.iy, lx, lz), this.dist(t.content.ix, t.content.iy, x, z) * 1.5); if (d < bd) { bd = d; bi = i; } });
         const [t] = this.ready.splice(bi, 1);
         this.readyKeys.delete(t.content.key);
         this.addVisual(t);
@@ -349,13 +366,16 @@ export class WorldStreamer implements KnockableSource {
       }
       const phys = this.nearestWithoutPhysics(x, z);
       if (phys && phys.d < this.physRadius) { this.addPhysics(phys.t); continue; }
+      // Colliders ahead at speed, so the road is solid before the car gets there.
+      const ahead = lx === x && lz === z ? undefined : this.nearestWithoutPhysics(lx, lz);
+      if (ahead && ahead.d < this.physRadius * 0.6) { this.addPhysics(ahead.t); continue; }
       break;
     } while (performance.now() < deadline);
     const ms = performance.now() - t0;
     this.stats.frameMs.push(ms);
 
     for (const t of this.loaded.values()) {
-      const d = this.dist(t.ix, t.iy, x, z);
+      const d = Math.min(this.dist(t.ix, t.iy, x, z), this.dist(t.ix, t.iy, lx, lz));
       if (d > radius + 300) this.removeTile(t);
       else if (t.body && d > this.physRadius + 150 && !around(t)) this.removePhysics(t);
     }

@@ -101,6 +101,7 @@ import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';
 import { distanceToPath } from './game/events/runner.ts';
 import { BarrierView } from './game/events/barriers.ts';
+import { Online } from './net/online.ts';
 import { JumpRampView, placeJumpRamps, registerJumpCommands } from './world/jumpRamps.ts';
 import type { PropHit } from './world/props.ts';
 
@@ -516,8 +517,11 @@ async function boot() {
   view.scene.add(jumpRamps.root);
   for (const r of jumpRamps.ramps) traffic.sim.closed.add(r.edge);
   registerJumpCommands(jumpRamps, () => ip, (x, z, h) => teleport(x, z, h));
+  // Leaderboards with friends (O1): only when the Worker API answers (behind Cloudflare Access).
+  const online = new Online();
+  void online.connect().then((ok) => console.info(ok ? `[online] verbunden als ${online.name}` : `[online] offline: ${online.reason}`));
   const game = new Game({
-    rivals, barriers, police, ramps: jumpRamps.ramps,
+    rivals, barriers, police, online, ramps: jumpRamps.ramps,
     destination: async (near, min, max) => {
       addressBook ??= loadAddresses(`${import.meta.env.BASE_URL}data/addresses.json`);
       const book = await addressBook;
@@ -561,6 +565,7 @@ async function boot() {
   if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
   else garage.retune();
   game.registerCommands(() => ip);
+  online.registerCommands(() => game.currentEventId(), (t) => debug.print(t, 'info'), (id, v) => game.formatResult(id, v));
   void game.load();
   minimap.markers = bigMap.markers = () => game.markers();
   bigMap.areas = () => game.areas();

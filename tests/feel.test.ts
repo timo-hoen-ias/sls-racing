@@ -43,6 +43,25 @@ describe('game feel', () => {
     expect(fun.car.speed).toBeGreaterThan(real.car.speed * 1.05);
   });
 
+  it('fun brakes hard: 100 km/h to a stop in clearly less than the tyres alone, staying straight', () => {
+    const stop = (feel: 'fun' | 'real') => {
+      const { car, drive } = setup(feel);
+      drive({}, 1);
+      while (car.speed < 100 / 3.6) drive({ throttle: 1 }, 1 / 120);
+      const p0 = car.body.translation();
+      let t = 0;
+      while (car.speed > 0.5 && t < 10) { drive({ brake: 1 }, 1 / 120); t += 1 / 120; }
+      const p1 = car.body.translation();
+      return { d: Math.abs(p1.z - p0.z), side: Math.abs(p1.x - p0.x), t };
+    };
+    const fun = stop('fun');
+    const real = stop('real');
+    expect(fun.d).toBeLessThan(20);
+    expect(fun.d).toBeLessThan(real.d * 0.7);
+    expect(fun.t).toBeLessThan(1.6);
+    expect(fun.side).toBeLessThan(0.5);
+  });
+
   it('a short nitro tap fires a burst forward', () => {
     const { car, drive } = setup('fun');
     drive({}, 1);

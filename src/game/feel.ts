@@ -48,13 +48,13 @@ interface Profile {
 
 export const FEEL: Record<FeelProfile, Profile> = {
   fun: {
-    car: { torque: 1.2, downforce: 1.7, drag: 0.85, airLevel: 0.7, landing: 0.8 },
+    car: { torque: 1.2, downforce: 1.7, drag: 0.85, airLevel: 0.7, landing: 0.8, brake: 1.1 },
     burst: true, drift: true, refill: 0.03, knockLoss: 0.04, glide: true, kerb: 0.35, punt: true, traffic: 0.5, peds: true,
     park: 0.5, parkWidth: 6, lines: true, damagePower: false,
     cam: { lag: 1, swing: 1, height: 1.8, dist: 5.8, speedFov: 0.06, boostFov: 9, maxKmh: 280 },
   },
   real: {
-    car: { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0 },
+    car: { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0 },
     burst: false, drift: false, refill: 0.05, knockLoss: 0.1, glide: false, kerb: 1, punt: false, traffic: 1, peds: false,
     park: 1, parkWidth: 0, lines: false, damagePower: true,
     cam: { lag: 0, swing: 0, height: 2.1, dist: 6, speedFov: 0.045, boostFov: 6, maxKmh: 220 },
@@ -103,7 +103,7 @@ export class GameFeel {
     const fe = c.car.feel;
     return [
       `Spielgefühl: ${this.profile === 'fun' ? 'Fun-Racer' : 'Realistisch'}`,
-      `Motor ×${fe.torque} · Abtrieb ×${fe.downforce} · Luftwiderstand ×${fe.drag} · Ausrichten in der Luft ${fe.airLevel} · weiche Landung ${fe.landing}`,
+      `Motor ×${fe.torque} · Abtrieb ×${fe.downforce} · Luftwiderstand ×${fe.drag} · Ausrichten in der Luft ${fe.airLevel} · weiche Landung ${fe.landing} · Arcade-Bremse +${fe.brake} g`,
       `Nitro-Stoß ${c.car.burst.enabled ? 'an' : 'aus'} · Nachfüllen ${CAR.nitro.refill}/s · Gleiten an Wänden ${c.glide.enabled ? 'an' : 'aus'} · Bordsteinstoß ×${c.surface.kerbBump}`,
       `Verkehr rammen ${c.traffic.punt ? 'an' : 'aus'} (Masse ×${c.traffic.massScale}) · sichere Fußgänger ${c.peds.safe ? 'an' : 'aus'} · Parker ${Math.round(c.props.parkDensity * 100)} % ab ${c.props.parkMinWidth} m`,
       `Kamera: Nachziehen ${c.cam.feel.lag} · Kurvenblick ${c.cam.feel.swing} · Höhe ${c.cam.feel.height} m · Tempo-Linien ${c.speedLines.enabled ? 'an' : 'aus'} · Schaden kostet Leistung ${c.damage.performance ? 'ja' : 'nein'}`,
@@ -119,6 +119,7 @@ export class GameFeel {
     registerValue('feel.downforce', 'Faktor auf den Abtrieb (Grip bei hohem Tempo)', () => fe.downforce, (v) => { fe.downforce = v; }, [0, 5]);
     registerValue('feel.drag', 'Faktor auf den Luftwiderstand (kleiner = höhere Endgeschwindigkeit)', () => fe.drag, (v) => { fe.drag = v; }, [0.2, 2]);
     registerValue('feel.airlevel', 'Auto richtet sich in der Luft selbst aus 0..1', () => fe.airLevel, (v) => { fe.airLevel = v; }, [0, 1]);
+    registerValue('feel.brake', 'Arcade-Bremse: Extra-Verzögerung in g über den Reifengrip hinaus (0 = nur Reifen, ~1,25 g)', () => fe.brake, (v) => { fe.brake = v; }, [0, 3]);
     registerValue('feel.landing', 'Weiche Landung nach Sprüngen 0..1 (weniger Nachfedern und Kippen)', () => fe.landing, (v) => { fe.landing = v; }, [0, 1]);
     const bu = c.car.burst;
     registerToggle('feel.burst', 'Nitro kurz antippen gibt einen Stoß nach vorn', () => bu.enabled, (v) => { bu.enabled = v; });

@@ -102,9 +102,10 @@ export class CarPhysics {
   steerPull = 0;
   /**
    * Arcade feel on top of the tuning (feel.* commands, src/game/feel.ts): engine torque and downforce factors,
-   * air drag factor (higher top speed below 1), self-levelling in the air and a soft landing (0..1).
+   * air drag factor (higher top speed below 1), self-levelling in the air and a soft landing (0..1),
+   * and arcade brakes: extra deceleration in g on top of what the tyres can hold, at full pedal.
    */
-  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0 };
+  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0 };
   /** A short tap on nitro fires a burst instead of the steady boost (feel.burst). */
   burst = { enabled: true, tap: 0.22, kick: 5, cost: 0.14 };
   /** Nitro gained from style moves since the last frame (near misses, jumps …), added by the game. */
@@ -385,6 +386,20 @@ export class CarPhysics {
     if (this.boosting && !this.airborne) {
       const push = CAR.nitro.push * dt;
       body.applyImpulse({ x: fwd.x * push, y: fwd.y * push, z: fwd.z * push }, true);
+    }
+    // Arcade brakes: extra deceleration past the tyre grip, against the velocity along the road, so the car
+    // stops hard without locking or lurching sideways. Fades out just above standstill (no jump into reverse).
+    const brakePedal = input.brake > 0 && v > 1 ? input.brake : input.throttle > 0 && v < -1 ? input.throttle : 0;
+    if (brakePedal > 0 && this.feel.brake > 0 && contacts > 0) {
+      const lv = body.linvel();
+      const un = lv.x * up.x + lv.y * up.y + lv.z * up.z;
+      const px = lv.x - up.x * un, py = lv.y - up.y * un, pz = lv.z - up.z * un;
+      const sp = Math.hypot(px, py, pz);
+      if (sp > 0.5) {
+        const decel = this.feel.brake * 9.81 * brakePedal * sf.brake * (contacts / 4) * clamp((sp - 0.5) / 2.5, 0, 1);
+        const j = (Math.min(decel * dt, sp - 0.5) * mass) / sp;
+        body.applyImpulse({ x: -px * j, y: -py * j, z: -pz * j }, true);
+      }
     }
     // Air drag and rolling resistance oppose the velocity.
     const lv = body.linvel();

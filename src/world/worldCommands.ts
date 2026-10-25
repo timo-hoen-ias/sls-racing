@@ -84,6 +84,10 @@ export function registerWorldCommands(g: WorldCommandContext) {
   };
 
   registerCommand({
+    name: 'road.profile', help: 'Straßenprofil der Kacheln: game (breitere Fahrbahnen, Fun-Racer) oder real. Neu bauen mit SLS_ROAD_PROFILE=real npm run world:build',
+    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrstreifen 13–20 % breiter, Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.bends} Knicke zu Bögen` : ''}`,
+  });
+  registerCommand({
     name: 'world.gaps',
     help: 'Lücken und Stufen auf Straßen (aus dem Pipeline-Check): show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe), list die nächsten, next/prev teleportiert hin',
     args: '[show|hide|list|next|prev|<nr>]',

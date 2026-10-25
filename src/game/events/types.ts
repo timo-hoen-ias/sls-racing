@@ -46,7 +46,8 @@ export interface GameEvent {
   /** Time limit in seconds (zones, missions). */
   limit?: number;
   /** Slalom: cone pairs as gates; jump: the ramp. */
-  extra?: { cones?: Gate[]; ramp?: { x: number; y: number; z: number; heading: number; length: number; height: number } };
+  /** runup: where fast travel puts the car for skills that need speed first (speed traps). */
+  extra?: { runup?: Gate; cones?: Gate[]; ramp?: { x: number; y: number; z: number; heading: number; length: number; height: number } };
 }
 
 /** Result of a run: value in the event's unit, medal reached (0 = none). */

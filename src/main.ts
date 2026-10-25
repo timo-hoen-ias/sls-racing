@@ -90,7 +90,10 @@ import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
 import { Game } from './game/game.ts';
+import { findCar } from './vehicle/cars.ts';
+import { applyParts, carStats, type PartLevels } from './game/workshop.ts';
 import { Rivals } from './game/rivals.ts';
+import { Police } from './game/police.ts';
 import { BarrierView } from './game/events/barriers.ts';
 import type { PropHit } from './world/props.ts';
 
@@ -405,7 +408,12 @@ async function boot() {
   vegetation.registerCommands();
   stalls.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
-  const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
+  // Fitted parts (game/workshop.ts) are written over each car's tuning; the game is built further down.
+  let partsOf: (id: string) => PartLevels = () => ({});
+  const garage = new Garage({
+    car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm),
+    afterApply: (spec) => applyParts(partsOf(spec.id)),
+  });
   registerGarageCommands(garage);
   registerCommand({
     name: 'car.scale',
@@ -461,15 +469,36 @@ async function boot() {
     loaded: (x, z) => streamer.isLoadedAround(x, z),
     feel: () => car.feel,
   });
+  // Police patrols and chases in free roam (V4): the same car with a light bar.
+  const police = new Police({
+    R: RAPIER, world, scene: view.scene, graph,
+    makeView: (color) => loadSportsCar(color, garage.current.url).then((m) => new CarView(color, m), () => undefined),
+    groundAt: (x, z) => groundAt(x, z) ?? graph.snap(x, z, 40)?.y,
+    loaded: (x, z) => streamer.isLoadedAround(x, z),
+    feel: () => car.feel,
+  });
+  police.registerCommands();
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
   const game = new Game({
-    rivals, barriers,
+    rivals, barriers, police,
     graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
     toast: (t, sec) => navHud.toast(t, sec), rumble: (k, ms) => input.rumble(k, ms),
     teleport: (x, z, heading) => teleport(x, z, heading), ready: () => worldReady && !hold,
     onPlay: () => void startAudio(), openOptions: () => menu.toggle(true),
+    cars: {
+      current: () => garage.current.id,
+      select: (id) => garage.select(id),
+      retune: () => garage.retune(),
+      stats: (id) => garage.measure(findCar(id)!, carStats),
+    },
+    home: { x: spawn.x, z: spawn.z },
+    groundAt: (x, z) => graph.snap(x, z, 80)?.y,
   });
+  partsOf = (id) => game.workshop?.parts(id) ?? {};
+  // The car from the save, with its parts.
+  if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
+  else garage.retune();
   game.registerCommands(() => ip);
   void game.load();
   minimap.markers = bigMap.markers = () => game.markers();
@@ -613,10 +642,15 @@ async function boot() {
       }
       car.update(drive, STEP);
       game.stepRivals(STEP, curr.p);
+      if (worldReady && !hold) {
+        const v = car.body.linvel();
+        game.stepPolice(STEP, { x: curr.p.x, z: curr.p.z, vx: v.x, vz: v.z, speed: Math.hypot(v.x, v.z), heading: car.heading() }, car);
+      }
       knockdown.step(STEP);
       world.step();
       capture(curr);
       rivals.capture();
+      police.capture();
       const lv = car.body.linvel();
       const dvx = lv.x - prevVel.x, dvy = lv.y - prevVel.y, dvz = lv.z - prevVel.z;
       const dv = Math.hypot(dvx, dvy, dvz);
@@ -662,6 +696,11 @@ async function boot() {
       carView.pose(car, replay.pos, replay.quat, rs.steer, replayLengths, replayRot, rs.brake > 0 && rs.speed > 1, rs.boost > 0.5, now / 1000);
     } else carView.sync(car, ip, iq, braking, now / 1000);
     rivals.render(alpha, now / 1000, night);
+    police.render(alpha, now / 1000, night);
+    {
+      const n = police.heat ? police.nearest({ x: ip.x, z: ip.z, vx: 0, vz: 0, speed: 0, heading: car.heading() }) : undefined;
+      sfx.siren(n && !paused ? Math.max(0, 1 - n.d / 250) : 0, n?.side ?? 0, dt);
+    }
     carLights.update(night, rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {

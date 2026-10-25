@@ -187,6 +187,24 @@ export function registerGameCommands(g: GameContext, state: DebugState) {
     },
   });
   registerCommand({ name: 'nav.clear', help: 'Navi-Ziel löschen', run: () => { g.nav.clear(); return 'Ziel gelöscht'; } });
+  registerToggle('nav.verbote', 'Navi beachtet Abbiegeverbote aus OSM (aus: biegt überall ab)', () => graph.respectBans, (v) => {
+    graph.respectBans = v;
+    if (g.nav.destination) g.nav.setDestination(g.nav.destination.x, g.nav.destination.z, g.pos.x, g.pos.z);
+  });
+  registerCommand({
+    name: 'nav.verbote.near', help: 'Abbiegeverbote in der Nähe: Kreuzung, von welcher Straße in welche', args: '[radius m]',
+    run([r = '150']) {
+      const radius = parseNum(r, 'Radius', 10, 5000);
+      const N = graph.nodes;
+      const out: string[] = [];
+      for (const key of graph.bans) {
+        const [f, v, t] = key.split(',').map(Number);
+        const d = Math.hypot(N[v * 3] - g.pos.x, N[v * 3 + 2] - g.pos.z);
+        if (d <= radius) out.push(`${d.toFixed(0).padStart(4)} m · Knoten ${v} (${N[v * 3].toFixed(0)} / ${N[v * 3 + 2].toFixed(0)}): ${graph.edges[f].name || 'namenlos'} → ${graph.edges[t].name || 'namenlos'}${f === t ? ' (Wenden)' : ''}`);
+      }
+      return `${graph.bans.size} verbotene Abbiegungen insgesamt, ${out.length} im Umkreis von ${radius} m${graph.respectBans ? '' : ' (Navi ignoriert sie gerade)'}\n` + out.sort().join('\n');
+    },
+  });
   registerCommand({ name: 'streets', help: 'Straßennamen auflisten (optional gefiltert)', args: '[filter]', run: ([f]) => streetNames().filter((n) => !f || n.toLowerCase().includes(f.toLowerCase())).join('\n') || '(keine)' });
 
   // Stats

@@ -99,7 +99,8 @@ function main() {
   // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
   const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
   console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
-  const { graph, junctions } = buildGraph(osm.ways, info, height);
+  const { graph, junctions, banned } = buildGraph(osm.ways, info, height, osm);
+  console.log(`Turn restrictions: ${osm.restrictions?.length ?? 0} mapped → ${banned} banned turns · bus lines: ${graph.b?.length ?? 0} (${osm.busRoutes?.length ?? 0} routes)`);
   // Rounded junction corners (game road profile): kerbs, lamps and props keep clear of them like of a junction.
   const fillets = planFillets(osm.ways, height);
   for (const f of fillets) {

@@ -59,6 +59,8 @@ export interface TileData {
   ground: string;
   roads?: PackedMesh;
   markings?: PackedMesh;
+  /** Painted stall lines on car parks (src/world/stalls.ts). */
+  stalls?: PackedMesh;
   buildings?: PackedMesh;
   /** Extra collision only (bridges): Float32 xyz + Uint32 idx. */
   collide?: PackedMesh;

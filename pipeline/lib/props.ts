@@ -237,11 +237,23 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     }
   }
 
-  // Parked cars: car parks.
+  // Parked cars: car parks. Paved ones get white lines between the stalls (centre e, n and direction de, dn).
+  const stallLines: number[] = [];
+  const painted = new Set<string>();
   for (const p of osm.polygons) {
     if (p.tags.amenity !== 'parking' || /^(underground|multi-storey|rooftop)$/.test(p.tags.parking ?? '')) continue;
-    parkingLot(p, (e, n, heading, variant) => {
-      if (o.onLanes(e, n) || rand(e, n, 9) > 0.62) return;
+    const paint = !/^(street_side|lane|on_kerb|half_on_kerb)$/.test(p.tags.parking ?? '') && (p.tags.surface === undefined || /^(asphalt|concrete|paved)$/.test(p.tags.surface));
+    parkingLot(p, (e, n, heading, variant, ux, uy) => {
+      if (o.onLanes(e, n)) return;
+      if (paint)
+        for (const s of [-1, 1]) {
+          const le = e + ux * STALL.width / 2 * s, ln = n + uy * STALL.width / 2 * s;
+          const k = `${Math.round(le * 4)}_${Math.round(ln * 4)}`;
+          if (painted.has(k) || o.onLanes(le - uy * 2.4, ln + ux * 2.4) || o.onLanes(le + uy * 2.4, ln - ux * 2.4)) continue;
+          painted.add(k);
+          stallLines.push(r2(le), r2(ln), r3(-uy), r3(ux));
+        }
+      if (rand(e, n, 9) > 0.62) return;
       add(Prop.parkedCar, e, n, heading, variant);
     });
   }
@@ -269,7 +281,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }, 3);
     }
   }
-  return { tiles: out, counts, detected, measuredHedges, alkisWalls };
+  return { tiles: out, counts, detected, measuredHedges, alkisWalls, stallLines };
 }
 
 /** Variant number for a parked car: colour index × 2 + 1 for a van. */
@@ -295,8 +307,12 @@ function pieces(pts: [number, number][], step: number, fn: (e: number, n: number
   }
 }
 
-/** Stall grid aligned with the car park's longest edge: rows of 2.6 m wide stalls, 5 m deep, with 6 m aisles. */
-function parkingLot(p: Polygon, fn: (e: number, n: number, heading: number, variant: number) => void) {
+/** Stall size on a car park (m). */
+export const STALL = { width: 2.6, depth: 5 };
+
+/** Stall grid aligned with the car park's longest edge: rows of 2.6 m wide stalls, 5 m deep, with 6 m aisles.
+ * Calls back with the stall centre, the parked car's heading and variant, and the edge direction ux, uy. */
+function parkingLot(p: Polygon, fn: (e: number, n: number, heading: number, variant: number, ux: number, uy: number) => void) {
   const ring = p.outer;
   let area = 0;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) area += (ring[j][0] - ring[i][0]) * (ring[j][1] + ring[i][1]);
@@ -325,7 +341,7 @@ function parkingLot(p: Polygon, fn: (e: number, n: number, heading: number, vari
       // Ensure the whole stall is inside.
       if (!pointInPolygon(e + vx * 2.4, n + vy * 2.4, p) || !pointInPolygon(e - vx * 2.4, n - vy * 2.4, p)) continue;
       const face = row === 0 ? 1 : -1;
-      fn(e, n, Math.atan2(vx * face, -vy * face), carVariant(e, n));
+      fn(e, n, Math.atan2(vx * face, -vy * face), carVariant(e, n), ux, uy);
     }
   }
 }

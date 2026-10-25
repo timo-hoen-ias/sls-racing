@@ -497,7 +497,9 @@ async function boot() {
     groundAt: (x, z) => groundAt(x, z) ?? graph.snap(x, z, 40)?.y,
     loaded: (x, z) => streamer.isLoadedAround(x, z),
     feel: () => car.feel,
+    roadWidth: (x, z) => graph.snap(x, z, 12, (e) => !e.noCars)?.edge.width,
   });
+  rivals.registerCommands();
   // Police patrols and chases in free roam (V4): the same car with a light bar.
   const police = new Police({
     R: RAPIER, world, scene: view.scene, graph,

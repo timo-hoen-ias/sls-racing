@@ -109,7 +109,9 @@ Was auf dem Boden liegt, kommt aus dem Luftbild TrueDOP20 (20 cm, Farbe und nahe
 
 Jeder 4-m-Geländepunkt bekommt daraus Texturanteile (Rasen, Wiese, lückiges Gras, Waldboden, Ackerboden, Asphalt, Kies, Uferschlamm), die Richtung der Ackerreihen und die echte Luftbildfarbe. Der Shader tönt die Farbe jeder Textur relativ dazu, wie sie im Luftbild typisch aussieht: ein reifes Feld wird gelblich, ein abgetretener Rasen fahler, ein Tennenplatz rot. Ackerreihen laufen entlang der Längsseite des Flurstücks, mit Fahrgassen alle 21 m.
 
-Befehle: `ground.aerial 0..2` (0 = nur Klassenfarben), `ground.rows 0..1`, `ground.view normal|cover|aerial`, `ground.at` (Bodenbedeckung unter dem Auto).
+Dächer: Jedes Gebäude bekommt die mittlere Dachfarbe seines ALKIS-Umrisses im Luftbild (die dunkelsten und hellsten 20 % weggelassen), vom Dunst befreit (`roofColour` in `pipeline/lib/landcover.ts`). Graue Dächer werden Schiefer, farbige Ziegel, Flachdächer Kies mit der gemessenen Farbe; Gebäude ohne Messung behalten die Zufallsfarben.
+
+Befehle: `ground.aerial 0..2` (0 = nur Klassenfarben), `ground.rows 0..1`, `ground.view normal|cover|aerial`, `ground.at` (Bodenbedeckung unter dem Auto), `roof.at` (gemessene Dachfarben in der Nähe).
 
 ## 3D-Modelle (Blender)
 

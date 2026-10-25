@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Cover, Use, alkisUse, classify, rasterize, tileCover } from '../pipeline/lib/landcover.ts';
+import { Cover, Use, alkisUse, classify, rasterize, roofColour, tileCover } from '../pipeline/lib/landcover.ts';
 import { lzwDecode } from '../pipeline/lib/tiff.ts';
 import { COVER_LOOK, GROUND_LOOK, SPLAT, lookWeights } from '../src/world/coverKinds.ts';
 import { Ground, TERRAIN_N } from '../src/world/format.ts';
@@ -106,5 +106,15 @@ describe('land cover rasters', () => {
     const outside = tileCover({ ...lc, classAt: () => Cover.none }, 0, 0, g);
     expect(outside).toBeUndefined();
     expect(lookWeights(GROUND_LOOK[Ground.farmland]).rows).toBe(1);
+  });
+});
+
+describe('roof colours', () => {
+  it('takes the haze off: anthracite reads dark, clay stays red', () => {
+    const dark = roofColour([103, 104, 108]);
+    expect(Math.max(...dark)).toBeLessThan(80);
+    const [r, g, b] = roofColour([170, 120, 110]);
+    expect(r).toBeGreaterThan(g * 1.5);
+    expect(b).toBeLessThan(g);
   });
 });

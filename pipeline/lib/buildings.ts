@@ -13,6 +13,8 @@ const WALLS: [number, number, number][] = [
   [205, 186, 160], [226, 214, 190], [196, 160, 128], [176, 112, 84], [190, 190, 186],
 ];
 const ROOFS: [number, number, number][] = [[112, 62, 52], [96, 72, 64], [70, 70, 74], [128, 76, 58], [88, 88, 92]];
+/** Flat roofs without a measured colour: gravel grey (the facade shader lays gravel detail on it). */
+const FLAT_ROOF: [number, number, number] = [118, 116, 110];
 
 const TYPE_HEIGHT: Record<string, number> = {
   house: 7.5, detached: 7.5, semidetached_house: 7.5, terrace: 9, residential: 9, apartments: 13,
@@ -49,6 +51,8 @@ export function buildBuildings(
     skip?: (outer: [number, number][]) => boolean;
     /** Called per building with its open outer ring and whether the façade has shop windows (shop fronts). */
     onBuilding?: (b: ShopBuilding) => void;
+    /** Measured roof colour (sRGB) of the building whose footprint centre is at (e, n), if any. */
+    roofColour?: (e: number, n: number) => [number, number, number] | undefined;
   } = {},
 ) {
   let count = 0;
@@ -78,7 +82,7 @@ export function buildBuildings(
     opts.onBuilding?.({ id: p.id, outer, shopWindows: facade.shop, centre: Math.hypot(ce0 - world.originE, cn0 - world.originN) });
     const walls = FACADE_WALLS[facade.type] ?? WALLS;
     const wall = walls[hsh % walls.length];
-    const roof = ROOFS[(hsh >>> 8) % ROOFS.length];
+    const roof = opts.roofColour?.(ce0, cn0) ?? (gable ? ROOFS[(hsh >>> 8) % ROOFS.length] : FLAT_ROOF);
     const shade = (c: [number, number, number], f: number) => c.map((v) => Math.min(255, Math.round(v * f))) as [number, number, number];
 
     let ce = 0, cn = 0;
@@ -217,7 +221,10 @@ function gableShape(rings: [number, number][][], tags: Record<string, string>, w
  */
 export function buildLod2(
   buildings: Iterable<Lod2Building>, world: WorldInfo, height: (e: number, n: number) => number, tiles: TileMap,
-  opts: { mainRoad?: (e: number, n: number) => boolean; skip?: (b: Lod2Building) => boolean; onBuilding?: (b: ShopBuilding) => void } = {},
+  opts: {
+    mainRoad?: (e: number, n: number) => boolean; skip?: (b: Lod2Building) => boolean; onBuilding?: (b: ShopBuilding) => void;
+    roofColour?: (e: number, n: number) => [number, number, number] | undefined;
+  } = {},
 ): { count: number; info: Map<string, number[]> } {
   let count = 0;
   const info = new Map<string, number[]>();
@@ -240,7 +247,7 @@ export function buildLod2(
     opts.onBuilding?.({ id: hsh, outer, shopWindows: facade.shop, centre: Math.hypot(ce - world.originE, cn - world.originN) });
     const walls = FACADE_WALLS[facade.type] ?? WALLS;
     const wall = walls[hsh % walls.length];
-    const roof = ROOFS[(hsh >>> 8) % ROOFS.length];
+    const roof = opts.roofColour?.(ce, cn) ?? (b.roofType === 1000 ? FLAT_ROOF : ROOFS[(hsh >>> 8) % ROOFS.length]);
     const tile = tiles.at(ce, cn);
     const buf = tile.buildings;
     const ground = height(ce, cn);

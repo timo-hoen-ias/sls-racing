@@ -1,0 +1,7 @@
+Title:   Generic Sedan Car
+Author:  Márcio Meireles (https://sketchfab.com/marciomeireles)
+License: CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+Source:  https://sketchfab.com/3d-models/generic-sedan-car-58c33766470d46e7b2aed542650494e5
+
+This work is based on "Generic Sedan Car" by Márcio Meireles, licensed under CC-BY-4.0.
+Attribution is required when used (e.g. in game credits).

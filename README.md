@@ -35,11 +35,14 @@ Ohne lokalen Netzzugang baut der GitHub-Workflow **World build** die Kacheln und
 | Handbremse (Drift) | Leertaste | B oder X | ⟲ |
 | Zurücksetzen | R | Y | |
 | Kamera | C | View | |
+| Umsehen (360°, loslassen = zurück hinters Auto) | | rechter Stick | |
 | Karte / Ziel setzen | Tab oder K | Steuerkreuz runter | Minimap antippen |
 | Tageszeit weiterschalten | T | Steuerkreuz hoch | |
 | Ton an/aus | M | | |
 | Optionen-Menü (pausiert) | Esc oder P | Menu (Start) | |
 | Debug-Konsole | ^ oder F1 | | |
+
+Automatik / Manuell wird im Optionen-Menü unter „Fahren“ umgeschaltet (Debug: `gear.mode auto|manual`); Taste G und R3 sind dafür nicht mehr belegt, die Aktion lässt sich aber neu belegen. Umsehen lässt sich unter „Kamera“ abschalten und einstellen (Debug: `cam.freelook`, `cam.lookspeed`, `cam.snapback`, `cam.look [aus|<grad>]`, Totzone `input.lookdz`).
 
 Alle Tasten und Gamepad-Knöpfe lassen sich im Optionen-Menü unter „Steuerung“ neu belegen (zwei Tasten und zwei Knöpfe pro Aktion).
 
@@ -47,7 +50,7 @@ Alle Tasten und Gamepad-Knöpfe lassen sich im Optionen-Menü unter „Steuerung
 
 Esc oder Start öffnet das Menü und pausiert das Spiel. Bereiche: Grafik, Fahren, Steuerung, Kamera, Audio, Welt, Anzeige, Erweitert, System. Bedienung mit ↑/↓ und ←/→ (oder Steuerkreuz/linker Stick), Enter/A schaltet um oder belegt neu, Entf/X setzt auf Standard, Tab/Q/E bzw. LB/RB wechselt den Bereich, Esc/B schließt. Alles wird in `localStorage` gespeichert (`sls.settings`, `sls.bindings`, `sls.quality`).
 
-Jede Zeile ist ein Debug-Befehl mit Getter (`registerToggle`, `registerValue`, `registerChoice` oder `describeSetting` in `src/debug/registry.ts`). Neue Einstellungen anderer Module tauchen dadurch automatisch unter „Erweitert“ auf; einen festen Platz bekommen sie in `src/settings/layout.ts`. Befehle: `settings [bereich]`, `settings.list [filter]`, `settings.get|set <name> [wert]`, `settings.reset [name|präfix.|bereich|all]`, `settings.dump`, `settings.load <json>`, `bind.list`, `bind.set <aktion> key|pad <code|nr> [platz]`, `bind.clear`, `bind.reset`. Neue Werte: `cam.fov`, `cam.speedfov`, `cam.shake`, `input.steer|keysteer|deadzone|curve|triggerdz|stickshift`, `audio.master|engine|traffic|ambience|weather`, `hud.minimap|tacho|units|scale|help|credits`, `fx.cloudcover`, `quality.preset`.
+Jede Zeile ist ein Debug-Befehl mit Getter (`registerToggle`, `registerValue`, `registerChoice` oder `describeSetting` in `src/debug/registry.ts`). Neue Einstellungen anderer Module tauchen dadurch automatisch unter „Erweitert“ auf; einen festen Platz bekommen sie in `src/settings/layout.ts`. Befehle: `settings [bereich]`, `settings.list [filter]`, `settings.get|set <name> [wert]`, `settings.reset [name|präfix.|bereich|all]`, `settings.dump`, `settings.load <json>`, `bind.list`, `bind.set <aktion> key|pad <code|nr> [platz]`, `bind.clear`, `bind.reset`. Neue Werte: `cam.fov`, `cam.speedfov`, `cam.shake`, `input.steer|keysteer|deadzone|curve|triggerdz|lookdz`, `audio.master|engine|traffic|ambience|weather`, `hud.minimap|tacho|units|scale|help|credits`, `fx.cloudcover`, `quality.preset`.
 
 In der großen Karte setzt ein Klick oder Tipp auf eine Straße das Ziel. Das Navi berechnet die Route, zeigt sie auf Minimap und Straße an und plant neu, wenn du abweichst.
 

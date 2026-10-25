@@ -31,8 +31,8 @@ export interface InputTuning {
   curve: number;
   /** Trigger deadzone 0..0.5. */
   triggerDeadzone: number;
-  /** Right stick up/down shifts gears. */
-  stickShift: boolean;
+  /** Right stick deadzone 0..0.5 (free look). */
+  lookDeadzone: number;
 }
 
 export class Input {
@@ -42,14 +42,15 @@ export class Input {
   private pending: InputEvent[] = [];
   private padButtons: boolean[] = [];
   private keySteer = 0;
-  private stickShift = 0;
   usingTouch = false;
   /** Set by the game while the full map is shown. */
   mapOpen = false;
   lastDevice: 'keyboard' | 'gamepad' | 'touch' = 'keyboard';
+  /** Right stick for free look around the car (x = right, y = down, each -1..1, deadzone applied). */
+  readonly look = { x: 0, y: 0 };
   /** Current key and button bindings (options menu → Steuerung). */
   bindings: Bindings = loadBindings();
-  tuning: InputTuning = { steer: 1, keySteer: 1, deadzone: 0.12, curve: 1.4, triggerDeadzone: 0.05, stickShift: true };
+  tuning: InputTuning = { steer: 1, keySteer: 1, deadzone: 0.12, curve: 1.4, triggerDeadzone: 0.05, lookDeadzone: 0.2 };
 
   constructor() {
     addEventListener('keydown', (e) => {
@@ -117,6 +118,7 @@ export class Input {
     let nitro = k('nitro');
     let handbrake = k('handbrake');
     let lookBack = k('lookBack');
+    let lookX = 0, lookY = 0;
 
     for (const pad of navigator.getGamepads?.() ?? []) {
       if (!pad || !pad.connected) continue;
@@ -136,18 +138,20 @@ export class Input {
       nitro ||= held('nitro');
       handbrake ||= held('handbrake');
       lookBack ||= held('lookBack');
-      // Edge-triggered buttons (defaults: Y reset, View camera, Menu options, D-pad down map, D-pad up time, R3 gearbox).
+      // Edge-triggered buttons (defaults: Y reset, View camera, Menu options, D-pad down map, D-pad up time).
       for (const ev of EVENTS) {
         for (const i of bd[ev].pad) if (pressed(i) && !this.padButtons[i]) this.pending.push(ev === 'menu' && this.mapOpen ? 'map' : ev);
       }
       pad.buttons.forEach((b, i) => (this.padButtons[i] = b.pressed));
-      // Right stick up/down shifts (edge-triggered with hysteresis).
-      const ry = tn.stickShift ? pad.axes[3] ?? 0 : 0;
-      if (this.stickShift === 0 && Math.abs(ry) > 0.65) {
-        this.stickShift = ry < 0 ? 1 : -1;
-        this.pending.push(ry < 0 ? 'shiftUp' : 'shiftDown');
+      // Right stick: free look (radial deadzone so the direction does not jitter near the centre).
+      const rx = pad.axes[2] ?? 0, ry = pad.axes[3] ?? 0;
+      const rm = Math.hypot(rx, ry);
+      if (rm > tn.lookDeadzone && rm > Math.hypot(lookX, lookY)) {
+        const f = Math.min(1, (rm - tn.lookDeadzone) / (1 - tn.lookDeadzone)) / rm;
+        lookX = rx * f;
+        lookY = ry * f;
         this.lastDevice = 'gamepad';
-      } else if (Math.abs(ry) < 0.3) this.stickShift = 0;
+      }
     }
 
     if (this.usingTouch) {
@@ -158,6 +162,8 @@ export class Input {
       handbrake ||= this.touch.hand;
     }
 
+    this.look.x = lookX;
+    this.look.y = lookY;
     Object.assign(this.state, { throttle, brake, steer: clamp(steer * tn.steer, -1, 1), nitro, handbrake, lookBack });
   }
 

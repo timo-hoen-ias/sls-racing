@@ -671,6 +671,8 @@ async function boot() {
     cam.motion.az = motion.az;
     cam.motion.steer = rs ? rs.steer : car.steer;
     cam.motion.yaw = car.body.angvel().y;
+    cam.stick.x = paused ? 0 : input.look.x;
+    cam.stick.y = paused ? 0 : input.look.y;
     if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     // Style moves and their combo, while really driving.
     if (worldReady && !rs && !paused && !debugState.frozen) {

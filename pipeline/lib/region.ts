@@ -9,6 +9,8 @@ export interface RegionConfig {
   name: string;
   boundary: { type: 'postal_code'; value: string } | { type: 'bbox'; south: number; west: number; north: number; east: number } | { type: 'fixture' };
   marginMeters: number;
+  /** Road profile (roadSpec.ts): "game" builds wider roads with rounded corners; default "real". */
+  roadProfile?: RoadProfile;
   /** PBF extracts that contain the region, tried in order. Without them fetch.ts falls back to Overpass. */
   osm?: { extracts: string[] };
   terrain: { source: 'terrarium'; zoom: number } | { source: 'flat' };
@@ -64,15 +66,16 @@ export function unproject(zone: number) {
 }
 
 /**
- * Road profile for a pipeline run (roadSpec.ts). The build picks it (SLS_ROAD_PROFILE, else game for real
- * regions and real for the synthetic fixture) and writes it into index.json; drive test and gap check pass
- * the built index, so they measure the same roads.
+ * Road profile for a pipeline run (roadSpec.ts). The build picks it (SLS_ROAD_PROFILE, else real until the
+ * road smoothing pass levels the small steps where widened roads meet; regions may opt in with
+ * roadProfile: "game") and writes it into index.json; drive test and gap check pass the built index, so they
+ * measure the same roads.
  */
 export function useRoadProfile(o: { regions?: RegionConfig[]; index?: { roadProfile?: RoadProfile } }): RoadProfile {
   const env = process.env.SLS_ROAD_PROFILE;
   const p: RoadProfile = env === 'real' || env === 'game' ? env
     : o.index ? o.index.roadProfile ?? 'real'
-    : o.regions?.every((r) => r.boundary.type === 'fixture') ? 'real' : 'game';
+    : o.regions?.some((r) => r.roadProfile === 'game') ? 'game' : 'real';
   setRoadProfile(p);
   return p;
 }

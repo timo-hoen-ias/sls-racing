@@ -5,6 +5,7 @@ import type { Navigation } from '../nav/navigation.ts';
 import type { MapMarker } from '../ui/mapDraw.ts';
 import { EventHud } from '../ui/eventHud.ts';
 import { EventList, ProgressBadge, TitleMenu } from '../ui/gameMenus.ts';
+import { type CarRow, type GarageData, GarageMenu } from '../ui/garageMenu.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
 import { type BarrierView, findBarriers } from './events/barriers.ts';
 import { generateEvents, mergeEvents } from './events/generate.ts';
@@ -15,6 +16,9 @@ import { Progress } from './progress.ts';
 import { MEDAL_NAMES, SaveGame } from './save.ts';
 import { LineTracker, RIVAL_LEVELS, type RivalLevel, type Rivals } from './rivals.ts';
 import type { StyleEvent } from './style.ts';
+import { PlaceView } from './placeView.ts';
+import { CAR_SHOP, findPlaces, PART_NAMES, type Place, ratingOf, recommendedLs, SLOT_LABELS, SLOTS, Workshop } from './workshop.ts';
+import { CARS } from '../vehicle/cars.ts';
 
 // The game around the driving (G1): spielstand, level and credits, the events in town with their gates and
 // HUD, the title screen and the event list. main.ts feeds it the car each frame and asks it whether the
@@ -42,6 +46,21 @@ export interface GameDeps {
   rivals?: Rivals;
   /** Fences across side streets during races (S6). */
   barriers?: BarrierView;
+  /** The player car's garage (vehicle/garage.ts): parts, dealer and home garage need it (P3, P4). */
+  cars?: CarControl;
+  /** Where the home garage goes (beside the start). */
+  home?: { x: number; z: number };
+  /** Ground height for markers. */
+  groundAt?(x: number, z: number): number | undefined;
+}
+
+/** What the game needs from vehicle/garage.ts. */
+export interface CarControl {
+  current(): string;
+  select(id: string): Promise<unknown>;
+  retune(): void;
+  /** Key figures of a car with its parts, 0..1 bars. */
+  stats(id: string): CarRow['stats'];
 }
 
 export interface CarNow {
@@ -83,6 +102,13 @@ export class Game {
   private retrack = false;
   /** Rivals per race; undefined: as the event says. */
   rivalCount?: number;
+  /** Parts, dealer and home garage (P3, P4); without a car control (tests) there are none. */
+  readonly workshop?: Workshop;
+  readonly garageMenu?: GarageMenu;
+  places: Place[] = [];
+  private placeView = new PlaceView();
+  private promptPlace?: Place;
+  private menuMode: GarageData['mode'] = 'home';
 
   constructor(d: GameDeps) {
     this.d = d;
@@ -92,7 +118,7 @@ export class Game {
     this.title = new TitleMenu(d.hud, d.start, {
       play: () => this.play(),
       events: () => this.openList(),
-      garage: () => (d.openGarage ? (this.play(), d.openGarage()) : d.toast('Garage: kommt mit dem Tuning', 1.5)),
+      garage: () => { this.play(); this.openGarage('home'); },
       options: () => d.openOptions(),
     });
     this.list = new EventList(d.hud, {
@@ -100,6 +126,29 @@ export class Game {
       go: (e) => { this.list.hide(); this.goTo(e); },
       close: () => this.list.hide(),
     });
+    const cars = d.cars;
+    if (cars) {
+      const shop = this.workshop = new Workshop({ save: this.save, progress: this.progress, current: () => cars.current(), select: (id) => cars.select(id), retune: () => cars.retune(), toast: d.toast });
+      const after = () => this.garageMenu?.render();
+      const act = (fn: () => unknown) => {
+        try {
+          const r = fn();
+          if (typeof r === 'string') d.toast(r, 1.8);
+          if (r instanceof Promise) void r.then(after, (e) => d.toast(String((e as Error).message), 2));
+        } catch (e) { d.toast(String((e as Error).message), 2); }
+        after();
+      };
+      this.garageMenu = new GarageMenu(d.hud, {
+        use: (id) => act(() => shop.use(id)),
+        buy: (id) => act(() => { const m = shop.buy(id); if (shop.owned(id)) void shop.use(id).then(after); return m; }),
+        fit: (slot, level) => act(() => shop.fit(slot as (typeof SLOTS)[number], level)),
+        fitBest: () => act(() => `${shop.fitBest()} Teile eingebaut`),
+        close: () => this.garageMenu?.hide(),
+      });
+      d.scene.add(this.placeView.root);
+      this.places = findPlaces(d.graph, d.home ?? { x: 0, z: 0 });
+      this.placeView.set(this.places, (x, z) => d.groundAt?.(x, z) ?? d.graph.snap(x, z, 80)?.y);
+    }
     this.hud.onRetry = () => { this.hud.hideCard(); this.runner.close(); this.endRivals(); if (this.lastRace) this.goTo(this.lastRace); };
     this.hud.onClose = () => { this.hud.hideCard(); this.runner.close(); this.endRivals(); };
     this.runner.best = (id) => this.save.data.events[id]?.best;
@@ -125,7 +174,7 @@ export class Game {
 
   get inGame() { return !this.title.open; }
   /** Overlays that take the input (title, list, result card). */
-  get overlay() { return this.title.open || this.list.open || this.hud.cardOpen; }
+  get overlay() { return this.title.open || this.list.open || this.hud.cardOpen || !!this.garageMenu?.open; }
   /** Controls locked: countdown, or waiting to put the car on a race start. */
   get locked() { return this.runner.state === 'countdown' || !!this.pending; }
   get racing() { return this.runner.racing; }
@@ -140,7 +189,47 @@ export class Game {
   openList() {
     if (this.runner.busy) { this.d.toast('Erst das laufende Event beenden', 2); return; }
     const p = this.prev ?? { x: 0, z: 0 };
-    this.list.show(this.events, this.save.data, p.x, p.z, this.progress.level);
+    this.list.show(this.events, this.save.data, p.x, p.z, this.progress.level, this.workshop?.rating());
+  }
+
+  /** Home garage (parts, own cars) or dealer (buy cars). */
+  openGarage(mode: GarageData['mode']) {
+    const shop = this.workshop, menu = this.garageMenu, cars = this.d.cars;
+    if (!shop || !menu || !cars) return;
+    if (this.runner.busy) { this.d.toast('Erst das laufende Event beenden', 2); return; }
+    this.menuMode = mode;
+    const statCache = new Map<string, CarRow['stats']>();
+    menu.show(() => {
+      const cur = cars.current();
+      const parts = shop.parts();
+      const inv = shop.inventory();
+      return {
+        mode: this.menuMode,
+        ls: shop.rating(),
+        credits: this.progress.credits,
+        cars: CARS.map((c) => {
+          const sale = CAR_SHOP[c.id] ?? { price: 0, level: 1, ls: 120 };
+          // Figures of the car in use change with its parts; the others are measured once per opening.
+          const key = `${c.id}:${c.id === cur ? JSON.stringify(parts) : ''}`;
+          if (!statCache.has(key)) statCache.set(key, cars.stats(c.id));
+          return { id: c.id, label: c.label, info: c.info, owned: shop.owned(c.id), current: c.id === cur, ls: ratingOf(c.id, shop.parts(c.id)),
+            price: sale.price, level: sale.level, locked: this.progress.level < sale.level, stats: statCache.get(key)! };
+        }),
+        slots: SLOTS.map((s) => ({ slot: s, label: SLOT_LABELS[s], level: parts[s] ?? 0, name: PART_NAMES[parts[s] ?? 0],
+          spares: inv.filter(([slot]) => slot === s).map(([, l, n]) => ({ level: l, name: PART_NAMES[l], count: n })) })),
+      };
+    });
+  }
+
+  /** Fast travel to the home garage or the dealer. */
+  goToPlace(id: Place['id']) {
+    const p = this.places.find((x) => x.id === id);
+    if (!p) throw new Error('Ort nicht gefunden');
+    if (this.title.open) this.play();
+    if (this.runner.busy) this.runner.abort('Abgebrochen');
+    this.d.teleport(p.x - Math.sin(p.heading) * 10, p.z + Math.cos(p.heading) * 10, p.heading);
+    this.prev = undefined;
+    return p.name;
   }
 
   /** Fast travel to an event's start; races then start with a countdown. */
@@ -168,6 +257,8 @@ export class Game {
   /** Called on 'interact' (F / pad →). */
   interact() {
     if (this.hud.cardOpen) { this.hud.onClose?.(); return; }
+    if (this.garageMenu?.open) return;
+    if (this.promptPlace && !this.runner.busy) { this.openGarage(this.promptPlace.id); return; }
     const e = this.promptEvent;
     if (!e || this.runner.busy) return;
     if (e.level > this.progress.level) { this.d.toast(`ab Stufe ${e.level}`, 1.5); return; }
@@ -178,7 +269,8 @@ export class Game {
     const { dt } = car;
     const d = this.d;
     this.save.update(dt);
-    if (!this.blocked) { this.title.poll(dt); this.list.poll(dt); this.hud.poll(dt); }
+    if (!this.blocked) { this.title.poll(dt); this.list.poll(dt); this.hud.poll(dt); this.garageMenu?.poll(dt); }
+    this.placeView.update(dt);
     if ((this.badgeTimer -= dt) <= 0) this.refreshBadge();
     this.badge.visible = this.inGame;
     const ready = d.ready();
@@ -202,7 +294,11 @@ export class Game {
     this.gates.showMarkers(this.events, car.x, car.z, this.runner.busy || !this.enabled);
     this.gates.update(dt);
     this.hud.update(this.runner, dt);
-    this.hud.showPrompt(this.runner.busy || this.overlay ? undefined : this.promptEvent, 'F', !!this.promptEvent && this.promptEvent.level > this.progress.level);
+    this.promptPlace = this.runner.busy || this.overlay || !this.inGame ? undefined : this.places.find((p) => Math.hypot(p.x - car.x, p.z - car.z) < 12);
+    const pe = this.runner.busy || this.overlay || this.promptPlace ? undefined : this.promptEvent;
+    const ls = this.workshop?.rating();
+    this.hud.showPrompt(pe, 'F', !!pe && pe.level > this.progress.level, pe && ls !== undefined && ls < recommendedLs(pe) ? `empf. LS ${recommendedLs(pe)}, deins ${ls}` : undefined);
+    this.hud.showPlace(this.promptPlace ? `${this.promptPlace.name} · F zum Betreten` : undefined);
     this.updateNav(car);
   }
 
@@ -306,6 +402,8 @@ export class Game {
       };
       if (res.medal) this.save.stat(`medal${res.medal}`);
       this.progress.reward(res.xp, res.credits, e.name);
+      const part = this.workshop?.reward(e, res.medal);
+      if (part) { toast(`Neues Teil: ${part}`, 2.5); sfx.play('discover', 0.7); }
       const after = this.progress.level;
       sfx.play(res.medal >= 3 ? 'medal' : res.medal ? 'finish' : 'fail');
       sfx.play('cash', 0.5);
@@ -324,12 +422,21 @@ export class Game {
 
   /** Map icons: every event start, coloured by kind, ringed by the best medal. */
   markers(): MapMarker[] {
-    return this.events.map((e) => ({ x: e.start.x, z: e.start.z, color: hex(TYPE_COLORS[e.type]), medal: this.save.data.events[e.id]?.medal, big: RACE_TYPES.has(e.type) }));
+    return [
+      ...this.events.map((e) => ({ x: e.start.x, z: e.start.z, color: hex(TYPE_COLORS[e.type]), medal: this.save.data.events[e.id]?.medal, big: RACE_TYPES.has(e.type) })),
+      ...this.places.map((p) => ({ x: p.x, z: p.z, color: p.color, big: true })),
+    ];
   }
 
   registerCommands(pos: () => { x: number; z: number }) {
     this.save.registerCommands();
     this.progress.registerCommands();
+    this.workshop?.registerCommands((id) => this.goToPlace(id));
+    registerCommand({ name: 'garage', help: 'Heimatgarage (Autos, Teile) oder Händler öffnen, ohne hinzufahren', args: '[home|dealer]', complete: () => ['home', 'dealer'], run: ([m]) => {
+      this.openGarage(m === 'dealer' ? 'dealer' : 'home');
+      return this.garageMenu ? 'geöffnet' : 'keine Garage';
+    } });
+    registerCommand({ name: 'places', help: 'Händler und Heimatgarage: Lage', run: () => this.places.map((p) => `${p.name}: ${p.x.toFixed(0)}, ${p.z.toFixed(0)}`).join('\n') || 'keine Orte' });
     const find = (q: string) => {
       const n = Number(q);
       const e = Number.isInteger(n) ? this.byDistance(pos())[n] : this.events.find((x) => x.id === q) ?? this.events.find((x) => x.name.toLowerCase().includes(q.toLowerCase()));

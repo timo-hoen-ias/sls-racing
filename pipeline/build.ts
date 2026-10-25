@@ -30,6 +30,8 @@ import { applyOsmFixes } from './lib/osmFixes.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
+import { drawCalming, drawRoundaboutIslands, planTurningCircles } from './lib/roadDetails.ts';
+import { Details } from './lib/details.ts';
 import { fillSlots } from './lib/slots.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
@@ -106,11 +108,15 @@ function main() {
   console.log(`Turn restrictions: ${osm.restrictions?.length ?? 0} mapped → ${banned} banned turns · bus lines: ${graph.b?.length ?? 0} (${osm.busRoutes?.length ?? 0} routes)`);
   // Rounded junction corners (game road profile): kerbs, lamps and props keep clear of them like of a junction.
   const fillets = planFillets(osm.ways, height);
+  const corners = fillets.length;
+  // Turning circles at dead ends (roadDetails.ts) are fillets too.
+  const turning = planTurningCircles(osm, height);
+  fillets.push(...turning.fillets);
   for (const f of fillets) {
     const [x, z] = utmToLocal(info, f.node[0], f.node[1]);
     junctions.push({ x, z, width: 2 * Math.max(0, f.reach - 2.8) });
   }
-  console.log(`Junction corners: ${fillets.length} rounded`);
+  console.log(`Junction corners: ${corners} rounded · turning circles: ${turning.fillets.length} (${turning.skipped} left out: buildings or slope)`);
   const carve = new RoadCarve(TERRAIN_STEP);
   // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
   const real = regions.some((r) => r.boundary.type !== 'fixture');
@@ -119,6 +125,12 @@ function main() {
   const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings }, ramps);
   drawFillets(fillets, info, tiles, carve);
+  const calming = drawCalming(osm, info, tiles, height);
+  console.log(`Traffic calming: ${calming.bumps} bumps, ${calming.tables} tables, ${calming.rings} mini roundabouts`);
+  // Visual OSM details (details.ts): roundabout islands now, rail, power and leisure later.
+  const details = new Details(info, tiles);
+  const islands = drawRoundaboutIslands(osm.ways, info, tiles, details, height);
+  console.log(`Roundabout islands: ${islands.islands} raised, ${islands.spots.length - islands.islands} left open`);
   // Narrow slots left between carriageways get patched, so no wheel drops between two roads.
   const slots = fillSlots(tiles, info);
   console.log(`Road slots: ${slots} cells of 0.5 m patched between carriageways`);
@@ -197,6 +209,7 @@ function main() {
   };
   // Freely designed houses, villas and administrative buildings in place of fitting surveyed ones (houses.ts).
   const houseRoad = new RoadMask(osm.ways, 2.0);
+  houseRoad.addFillets(fillets);
   const osmKept = osm.polygons.filter((p) => p.tags.building && p.tags.building !== 'no' && p.outer.length > 3 && !footprints.covers(p.outer.slice(0, -1)) && !landmarkFoot.contains(...centre(p.outer.slice(0, -1))));
   const lod2Kept = lod2Rings.filter((b) => {
     const r = b.ring;
@@ -555,7 +568,7 @@ function main() {
     tiles: index,
     graph: 'graph.json',
     roadProfile: activeRoadProfile(),
-    ...(fillets.length || smoothed || curves.ways || slots ? { roadShape: { corners: fillets.length, slots, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
+    ...(corners || smoothed || curves.ways || slots ? { roadShape: { corners, slots, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',
@@ -601,6 +614,11 @@ function main() {
   writeFileSync(`${paths.out}plazas.json`, JSON.stringify({ v: 1, plazas: height.plazas.map((p) => {
     const [x, z] = utmToLocal(info, p.e0, p.n0);
     return [p.name, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(p.y0 * 100) / 100, Math.round(p.area), Math.round(p.rms * 100), Math.round(Math.hypot(p.ge, p.gn) * 1000) / 10];
+  }) }));
+  // OSM details placed by the pipeline, for the osm.details command: [kind, x, z, note].
+  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots].map((s) => {
+    const [x, z] = utmToLocal(info, s.e, s.n);
+    return [s.kind, Math.round(x * 10) / 10, Math.round(z * 10) / 10, s.note];
   }) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);

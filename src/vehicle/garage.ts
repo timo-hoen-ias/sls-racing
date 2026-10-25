@@ -27,7 +27,8 @@ export class Garage {
   readonly available = new Set<string>([DEFAULT_CAR]);
   private c: GarageContext;
   private pending = 0;
-  private geometry?: CarGeometry;
+  /** Dimensions (and source credit) of the loaded model. */
+  geometry?: CarGeometry;
 
   constructor(c: GarageContext) {
     this.c = c;
@@ -117,6 +118,19 @@ export function registerGarageCommands(g: Garage) {
     run: () => {
       void g.probe();
       return CARS.map((c) => `${c.id === g.current.id ? '▶' : ' '} ${c.id.padEnd(10)} ${c.label} · ${c.info}${g.available.has(c.id) ? '' : ' (Modell nicht gefunden)'}`).join('\n');
+    },
+  });
+  registerCommand({
+    name: 'car.source',
+    help: 'Herkunft und Lizenz des Automodells (importierte CC-BY-Modelle) und seine Maße',
+    run: () => {
+      const geo = g.geometry;
+      if (!geo) return `${g.current.label}: eigenes Modell, keine Maße im GLB`;
+      const w = geo.wheel;
+      return [
+        `${g.current.label}: ${geo.source ?? 'eigenes Modell (tools/blender)'}`,
+        `${geo.length} × ${geo.width} m, Radstand ${(w.front - w.rear).toFixed(2)} m, Rad ⌀ ${(w.radius * 2).toFixed(2)} m`,
+      ].join('\n');
     },
   });
   registerCommand({

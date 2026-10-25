@@ -30,6 +30,9 @@ export const CAR_SHOP: Record<string, { price: number; level: number; ls: number
   rally: { price: 26000, level: 4, ls: 125 },
   muscle: { price: 34000, level: 5, ls: 135 },
   hyper: { price: 120000, level: 12, ls: 185 },
+  sedan: { price: 38000, level: 4, ls: 135 },
+  coupe: { price: 55000, level: 7, ls: 155 },
+  goblin: { price: 95000, level: 10, ls: 175 },
 };
 
 /** Performance level of a car with its parts. */

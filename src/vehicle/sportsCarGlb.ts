@@ -53,17 +53,20 @@ export function sportsCarFromScene(scene: THREE.Object3D, color = '#c0141c'): Sp
     return m;
   };
 
+  // Imported models (tools/import-car.ts) keep their own textured materials: every opaque one casts.
+  const imported = typeof car.userData.source === 'string';
   car.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
-    const name = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material).name;
+    const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+    const name = mat.name;
     mesh.material = Array.isArray(mesh.material) ? mesh.material.map(fix) : fix(mesh.material);
     // glTF splits multi-material meshes into a group of primitives: extras sit on the group.
     const parent = mesh.parent;
     if (parent && !(parent as THREE.Mesh).isMesh && parent.userData.dent) mesh.userData.dent = true;
     // Only the parts that shape the silhouette cast shadows; trim, lights, rims and brakes would cost a
     // shadow-map draw each for nothing visible.
-    mesh.castShadow = SHADOW_CASTERS.has(name);
+    mesh.castShadow = SHADOW_CASTERS.has(name) || (imported && !mat.transparent);
   });
 
   const body = new THREE.Group();
@@ -72,7 +75,11 @@ export function sportsCarFromScene(scene: THREE.Object3D, color = '#c0141c'): Sp
   lod.name = 'bodyLod';
   CAR_LOD_DISTANCES.forEach((d, i) => lod.addLevel(need(`lod${i}`), d));
   body.add(lod);
-  for (const name of ['splitter', 'wing', 'mirrorL', 'mirrorR', 'plate']) body.add(need(name));
+  // Separate parts of the Blender cars; imported models have them in the body.
+  for (const name of ['splitter', 'wing', 'mirrorL', 'mirrorR', 'plate']) {
+    const part = imported ? car.getObjectByName(name) : need(name);
+    if (part) body.add(part);
+  }
 
   car.updateMatrixWorld(true);
   const at = (name: string) => need(name).getWorldPosition(new THREE.Vector3());
@@ -111,6 +118,7 @@ export function carGeometry(extras: Record<string, unknown>): CarGeometry | unde
   if (!w || ![w.front, w.rear, w.track, w.radius, w.width, extras.length, extras.width].every(ok)) return undefined;
   return {
     name: typeof extras.name === 'string' ? extras.name : undefined,
+    source: typeof extras.source === 'string' ? extras.source : undefined,
     wheel: { front: w.front as number, rear: w.rear as number, track: w.track as number, radius: w.radius as number, width: w.width as number },
     length: extras.length as number,
     width: extras.width as number,

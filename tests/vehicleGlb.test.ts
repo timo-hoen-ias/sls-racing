@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
-import { KINDS, type VehicleKind } from '../src/traffic/trafficSim.ts';
+// The models are at real size; the game draws them at VEHICLE.scale.
+import { REAL_KINDS as KINDS, type VehicleKind } from '../src/traffic/trafficSim.ts';
 import { proceduralVehicleSet, vehicleSetFromScene } from '../src/traffic/vehicleGlb.ts';
 
 async function load() {

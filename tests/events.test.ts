@@ -160,6 +160,13 @@ describe('event generator', () => {
     const types = new Set(a.map((e) => e.type));
     expect(types.has('speedtrap')).toBe(true);
     expect(types.has('drift')).toBe(true);
+    // Speed traps start far enough back on their straight to reach the gold speed.
+    for (const e of a.filter((x) => x.type === 'speedtrap')) {
+      const r = e.extra!.runup!;
+      const behind = (e.start.x - r.x) * e.start.dx + (e.start.z - r.z) * e.start.dz;
+      expect(behind).toBeGreaterThan(200);
+      expect(r.dx * e.start.dx + r.dz * e.start.dz).toBeGreaterThan(0.9);
+    }
     for (const e of a) expect(e.medals.every((m, i) => i === 0 || (e.higher ? m > e.medals[i - 1] : m < e.medals[i - 1]))).toBe(true);
     // Starts keep their distance.
     for (const x of a) for (const y of a) if (x !== y) expect(Math.hypot(x.start.x - y.start.x, x.start.z - y.start.z)).toBeGreaterThan(249);

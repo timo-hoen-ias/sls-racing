@@ -53,10 +53,17 @@ export class EventHud {
   }
 
   /** Near a race start: what it is and how to start it. */
-  showPrompt(e: GameEvent | undefined, key: string, locked = false) {
+  showPrompt(e: GameEvent | undefined, key: string, locked = false, note?: string) {
     this.prompt.hidden = !e;
     if (!e) return;
-    this.prompt.textContent = locked ? `${EVENT_LABELS[e.type]}: ${e.name} · ab Stufe ${e.level}` : `${EVENT_LABELS[e.type]}: ${e.name} · ${key} zum Starten`;
+    this.prompt.textContent = locked ? `${EVENT_LABELS[e.type]}: ${e.name} · ab Stufe ${e.level}` : `${EVENT_LABELS[e.type]}: ${e.name} · ${key} zum Starten${note ? ` · ${note}` : ''}`;
+  }
+
+  /** Prompt at the dealer or the home garage (call after showPrompt, which it overrides). */
+  showPlace(text: string | undefined) {
+    if (!text) return;
+    this.prompt.hidden = false;
+    this.prompt.textContent = text;
   }
 
   update(r: EventRunner, dt: number) {

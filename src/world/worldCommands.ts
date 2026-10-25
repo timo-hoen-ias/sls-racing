@@ -1,6 +1,7 @@
 // world.* and terrain.* debug commands: road gaps found by the pipeline's gap check (world.gaps) and its
 // full-coverage surface check (world.surface), the same scan live around the car (road.scan), terrain under
-// the car, bumps on the road ahead (road.bumps) and the plazas the pipeline flattened (plaza).
+// the car, bumps on the road ahead (road.bumps), the plazas the pipeline flattened (plaza) and where the tiles
+// come from (world.build).
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addTeleportPlace } from '../debug/gameCommands.ts';
@@ -60,6 +61,27 @@ export function registerWorldCommands(g: WorldCommandContext) {
   registerIssueList(g, {
     name: 'world.surface', file: 'surface.json', script: 'world:surface',
     help: 'Flächenprüfung der Pipeline: jede 0,5-m-Zelle jeder Fahrbahn als Rad und Unterboden geprüft. show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe, magenta Aufsetzer, türkis Kachelnaht), list die nächsten, next/prev/<nr> teleportiert hin, <art> filtert (z. B. "world.surface step")',
+  });
+
+  registerCommand({
+    name: 'road.profile', help: 'Straßenprofil der Kacheln: game (breitere Fahrbahnen, Fun-Racer) oder real. Neu bauen mit SLS_ROAD_PROFILE=real npm run world:build',
+    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrstreifen 13–20 % breiter, Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.bends} Knicke zu Bögen` : ''}`,
+  });
+  // Where the deployed tiles come from (pipeline/deploy-tiles.ts, world build on GitHub).
+  registerCommand({
+    name: 'world.build',
+    help: 'Herkunft der Welt-Kacheln: Welt-Schlüssel, vom GitHub-Weltbau geladen oder im Deploy gebaut, Commit und Zeitpunkt',
+    run() {
+      const get = (f: string) => fetch(`${g.baseUrl}/${f}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      Promise.all([get('deploy.json'), get('build.json')]).then(([d, b]) => {
+        if (!d && !b) return g.print('Keine Bauinfo (lokal gebaute Kacheln?)');
+        const lines: string[] = [];
+        if (d) lines.push(`Deploy: ${d.source === 'download' ? 'fertige Kacheln geladen' : 'Welt im Deploy gebaut'}${d.source === 'download' && d.events === 'build' ? ', Eventtest neu gefahren' : ''} · Schlüssel ${d.key} · ${d.at}`);
+        if (b) lines.push(`Weltbau: ${b.event} ${String(b.commit).slice(0, 7)} · ${b.at} · ${b.run}`);
+        g.print(lines.join('\n'));
+      });
+      return 'Lade Bauinfo …';
+    },
   });
 
   // The same scan as the pipeline's surface check, live on the loaded tiles around the car.

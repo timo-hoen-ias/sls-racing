@@ -3,10 +3,10 @@ import type { CarPhysics } from './carPhysics.ts';
 import { Cockpit } from './cockpit.ts';
 import type { CarModelKind } from './sportsCarGlb.ts';
 import { buildSportsCar, type SportsCarModel } from './sportsCarModel.ts';
-import { CAR } from './tuning.ts';
+import { CAR, VEHICLE } from './tuning.ts';
 import { WheelInstances } from './wheelInstances.ts';
 
-/** Height of the physics body origin above the ground with the car at rest (m). */
+/** Height of the physics body origin above the ground with the car at rest (m), at real size (times VEHICLE.scale). */
 export const RIDE_HEIGHT = 0.284;
 
 /** Puts the sports car (Blender GLB or the procedural fallback) on the physics body: wheels, steering, lights, nitro flames. */
@@ -21,6 +21,9 @@ export class CarView {
   private headLights: THREE.MeshStandardMaterial;
   private night = 0;
   private paint: THREE.MeshPhysicalMaterial;
+  /** Size of body, wheels and effects against the model (VEHICLE.scale when built or swapped). */
+  scale = VEHICLE.scale;
+  private shadow: THREE.Mesh;
   /** Which body is shown (car.model). */
   kind: CarModelKind = 'procedural';
   /** Interior, shown only in the cockpit view. */
@@ -33,8 +36,10 @@ export class CarView {
     this.root.name = 'playercar';
     if (model) this.kind = 'glb';
     model ??= buildSportsCar(color);
+    const s = this.scale;
     // The model is built from the ground up; shift it to the physics body origin.
-    model.body.position.y = -RIDE_HEIGHT;
+    model.body.scale.setScalar(s);
+    model.body.position.y = -RIDE_HEIGHT * s;
     this.root.add(model.body);
     this.model = model.body;
     this.cockpit.group.visible = false;
@@ -42,7 +47,7 @@ export class CarView {
     this.brakeLights = model.materials.brake;
     this.headLights = model.materials.head;
     this.paint = model.materials.paint;
-    const toBody = (v: THREE.Vector3) => v.clone().setY(v.y - RIDE_HEIGHT);
+    const toBody = (v: THREE.Vector3) => v.clone().setY(v.y - RIDE_HEIGHT).multiplyScalar(s);
     this.exhausts = model.exhausts.map(toBody);
     this.headlights = model.headlights.map(toBody);
     this.addWheels(model);
@@ -60,15 +65,17 @@ export class CarView {
       new THREE.PlaneGeometry(2.5, 5.2).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(blob), transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8 }),
     );
-    shadow.position.y = -RIDE_HEIGHT + 0.01;
+    shadow.position.y = -RIDE_HEIGHT * s + 0.01;
+    shadow.scale.setScalar(s);
     shadow.renderOrder = 1;
     this.root.add(shadow);
+    this.shadow = shadow;
 
     // Nitro flames out of the tailpipes.
     const flameMat = new THREE.MeshBasicMaterial({ color: '#4fb8ff', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-    const flameGeo = new THREE.ConeGeometry(0.05, 0.8, 10, 1, true);
+    const flameGeo = new THREE.ConeGeometry(0.05 * s, 0.8 * s, 10, 1, true);
     flameGeo.rotateX(-Math.PI / 2);
-    flameGeo.translate(0, 0, -0.4);
+    flameGeo.translate(0, 0, -0.4 * s);
     for (const e of this.exhausts) {
       const f = new THREE.Mesh(flameGeo, flameMat);
       f.position.copy(e);
@@ -101,7 +108,12 @@ export class CarView {
     this.model.removeFromParent();
     for (const w of this.wheels) w.pivot.removeFromParent();
     this.wheels = [];
-    model.body.position.y = -RIDE_HEIGHT;
+    // A swap also takes over a changed VEHICLE.scale (car.scale); the flames keep their size.
+    const s = (this.scale = VEHICLE.scale);
+    model.body.scale.setScalar(s);
+    model.body.position.y = -RIDE_HEIGHT * s;
+    this.shadow.scale.setScalar(s);
+    this.shadow.position.y = -RIDE_HEIGHT * s + 0.01;
     model.body.add(this.cockpit.group);
     this.root.add(model.body);
     this.model = model.body;
@@ -111,8 +123,9 @@ export class CarView {
     this.brakeLights = model.materials.brake;
     this.headLights = model.materials.head;
     // Effects hold these vectors: update them in place.
-    model.exhausts.forEach((v, i) => this.exhausts[i]?.copy(v).setY(v.y - RIDE_HEIGHT));
-    model.headlights.forEach((v, i) => this.headlights[i]?.copy(v).setY(v.y - RIDE_HEIGHT));
+    model.exhausts.forEach((v, i) => this.exhausts[i]?.copy(v).setY(v.y - RIDE_HEIGHT).multiplyScalar(s));
+    model.headlights.forEach((v, i) => this.headlights[i]?.copy(v).setY(v.y - RIDE_HEIGHT).multiplyScalar(s));
+    this.flames.forEach((f, i) => this.exhausts[i] && f.position.copy(this.exhausts[i]));
     this.addWheels(model);
     // Same render layers as the rest of the car (post-processing marks the car).
     const mask = this.root.layers.mask;
@@ -175,6 +188,7 @@ export class CarView {
       const c = vc.wheelChassisConnectionPointCs(i)!;
       const w = this.wheels[i];
       w.pivot.position.set(c.x, c.y - lengths[i], c.z);
+      w.pivot.scale.setScalar(this.scale);
       w.pivot.rotation.y = i < 2 ? -steer : 0;
       w.spin.rotation.x = rot[i];
     }

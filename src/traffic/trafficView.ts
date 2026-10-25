@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { VEHICLE } from '../vehicle/tuning.ts';
 import { type Agent, type AgentState, type VehicleKind } from './trafficSim.ts';
 import { proceduralVehicleSet, VEHICLE_LOD_DISTANCE, type VehicleSet } from './vehicleGlb.ts';
 import type { VehicleParts } from './vehicleModels.ts';
@@ -90,7 +91,7 @@ export class TrafficView {
       counts.set(set, i + 1);
       if (a.quat) this.q.set(a.quat.x, a.quat.y, a.quat.z, a.quat.w);
       else this.q.setFromEuler(this.e.set(-a.pitch, a.yaw, 0));
-      this.m.compose(this.p.set(a.x, a.y, a.z), this.q, this.one);
+      this.m.compose(this.p.set(a.x, a.y, a.z), this.q, this.one.setScalar(VEHICLE.scale));
       set.paint.setMatrixAt(i, this.m);
       set.paint.setColorAt(i, this.c.setHex(a.color));
       set.detail.setMatrixAt(i, this.m);

@@ -1,5 +1,6 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { VEHICLE } from '../vehicle/tuning.ts';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { parseBool, parseNum, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
 import { CAR_PALETTE } from '../traffic/trafficSim.ts';
@@ -194,6 +195,11 @@ export class PropLayer {
     return this.glbNames.has(name) ? name : undefined;
   }
 
+  /** Draws everything again on the next update (after car.scale). */
+  refresh() {
+    this.dirty = true;
+  }
+
   /** Parked cars use the traffic models (variants, and the simpler LOD beyond VEHICLE_LOD_DISTANCE). */
   setVehicles(set: VehicleSet) {
     this.dropModels(/^(car|van)/);
@@ -294,7 +300,8 @@ export class PropLayer {
         const o = i * PROP_STRIDE;
         const kind = t.data[o] as PropKind;
         this.q.setFromAxisAngle(this.up, t.data[o + 4]);
-        this.s.set(1, 1, LINEAR.has(kind) ? linearLength(t.data[o + 5]) : 1);
+        if (kind === Prop.parkedCar) this.s.setScalar(VEHICLE.scale);
+        else this.s.set(1, 1, LINEAR.has(kind) ? linearLength(t.data[o + 5]) : 1);
         this.m.compose(this.p.set(t.data[o + 1], t.data[o + 2], t.data[o + 3]), this.q, this.s);
         for (const im of meshes) im.setMatrixAt(n, this.m);
         if (typeof model === 'string' && /^(car|van)/.test(model)) meshes[0].setColorAt(n, this.c.setHex(CAR_PALETTE[Math.floor(t.data[o + 5] / 2) % CAR_PALETTE.length]));
@@ -363,6 +370,7 @@ export class PropLayer {
       const m = new THREE.Mesh(im.geometry, n === 0 ? paint : im.material);
       m.position.set(hit.x, hit.y, hit.z);
       m.rotation.y = hit.heading;
+      m.scale.setScalar(VEHICLE.scale);
       m.castShadow = true;
       m.userData.sharedGeometry = true;
       return m;

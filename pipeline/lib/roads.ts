@@ -3,7 +3,7 @@ import { utmToLocal } from '../../src/world/format.ts';
 import { edgeLineWidth, encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
 import type { RoadCarve } from './carve.ts';
 import type { HalfWidths } from './overlap.ts';
-import { noCars, roadSection, type RoadSection } from '../../src/world/roadSpec.ts';
+import { MIN_SIDEWALK, noCars, roadSection, type RoadSection } from '../../src/world/roadSpec.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import { KERB } from './kerbs.ts';
@@ -88,6 +88,16 @@ export function isDrivable(tags: Record<string, string>) {
 export const isMotorRoad = (tags: Record<string, string>) => isDrivable(tags) && !noCars(tags);
 
 export const isBridge = (tags: Record<string, string>) => !!tags.bridge && tags.bridge !== 'no';
+
+/**
+ * Sidewalk width beside a way: the full KERB.width, narrower where the game profile widened the carriageway
+ * into the street space between the houses (never below MIN_SIDEWALK).
+ */
+export function sidewalkWidth(way: Way): number {
+  const street = parseFloat(way.tags['sls:street']);
+  if (!(street > 0)) return SIDEWALK.width;
+  return Math.max(MIN_SIDEWALK, Math.min(SIDEWALK.width, (street - roadWidth(way.tags)!) / 2));
+}
 
 /** Pavement sides as kerbs.ts planned them (left = positive offsets), else the old default for streets. */
 export function sidewalkSides(way: Way): { left: boolean; right: boolean } {
@@ -342,7 +352,7 @@ export function buildRoads(
 
     // Pavement segments per side (segment i runs from sample i - 1 to i), decided first so the kerb can be
     // lowered where a stretch ends (junctions, driveways) and at mapped crossings.
-    const hw0 = width / 2, sw0 = SIDEWALK.width;
+    const hw0 = width / 2, sw0 = sidewalkWidth(way);
     const paved = new Map<number, boolean[]>();
     for (const side of [1, -1] as const) {
       const on: boolean[] = new Array(ring.length).fill(false);
@@ -467,7 +477,7 @@ export function buildRoads(
 
       // Bridge caps run through the nodes where the road continues; a road branching off stops them below.
       if (walkway || sidewalk) {
-        const sw = walkway ? BRIDGE_CAP.width : SIDEWALK.width;
+        const sw = walkway ? BRIDGE_CAP.width : sw0;
         const from = walkway ? capFrom : 0;
         const ground = (p: typeof a, o: number) => {
           // On a bridge the skirt ends at the underside of the deck slab.
@@ -544,7 +554,7 @@ export function buildRoads(
         side = -side;
         if ((side > 0 ? L : R).get(r)! < width / 2 - 0.05) continue;
         const pav = sidewalk && (side > 0 ? sides.left : sides.right);
-        const o = side * (width / 2 + (pav ? SIDEWALK.width - 0.5 : 0.8));
+        const o = side * (width / 2 + (pav ? sw0 - 0.5 : 0.8));
         const [x, z] = utmToLocal(world, r.e - r.dy * o, r.n + r.dx * o);
         if (jIndex.near(x, z, 4)) continue;
         // Heading of the lamp arm: towards the road centre.

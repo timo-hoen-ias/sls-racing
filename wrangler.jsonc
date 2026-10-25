@@ -3,10 +3,12 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sls-racing",
   "compatibility_date": "2026-10-01",
-  // The deploy builds the real Saarlouis tiles (Geofabrik OSM + terrain, ~2 min) and vite copies
-  // public/tiles into dist, so they are served as static assets next to the game (about 2500 files;
-  // unchanged files are not uploaded again). Move them to R2 once the world outgrows asset limits.
-  "build": { "command": "npm run world:fetch && npm run world:build && npm run world:eventtest -- --write && npm run build" },
+  // The deploy does not build the world itself any more: pipeline/deploy-tiles.ts downloads the finished tiles
+  // that the GitHub world build published for the current world key (waiting for that build when it is still
+  // running) and only falls back to world:fetch + world:build here (~30 min) when there is nothing to wait for.
+  // vite copies public/tiles into dist, so they are served as static assets next to the game (unchanged files
+  // are not uploaded again). Move them to R2 once the world outgrows asset limits.
+  "build": { "command": "npm run world:deploy && npm run build" },
   "assets": { "directory": "./dist" },
   // Required by `wrangler preview`, which Workers Builds runs for non-main branches.
   "previews": {}

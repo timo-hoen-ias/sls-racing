@@ -75,6 +75,8 @@ describe('game feel', () => {
   // Coasts at 25 m/s over the strip; returns the longest time in the air and the jump length.
   const coast = (feel: 'fun' | 'real', mesh: { v: number[]; i: number[] }) => {
     const { car, drive } = setup(feel, false, mesh);
+    // Same speed at the hump or ramp for both: the coasting brake is not what is measured here.
+    car.feel.coast = 0;
     drive({}, 1);
     car.body.setLinvel({ x: 0, y: 0, z: -25 }, true);
     let air = 0, longest = 0, from = 0, jump = 0;
@@ -143,6 +145,33 @@ describe('game feel', () => {
     const real = run('real');
     expect(real).toBeGreaterThan(0.3);
     expect(fun).toBeLessThan(0.05);
+  });
+
+  it('rolling backwards after a crash slows down by itself and never speeds up', () => {
+    for (const feel of ['fun', 'real'] as const) {
+      const { car, drive } = setup(feel);
+      drive({}, 1);
+      drive({ throttle: 1 }, 1);
+      // Bounced back off a wall: rolling backwards, still in a forward gear.
+      car.body.setLinvel({ x: 0, y: 0, z: 8 }, true);
+      drive({}, 1 / 120);
+      let fastest = Math.abs(car.speed);
+      const v0 = fastest;
+      for (let i = 0; i < 2 * 120; i++) { drive({}, 1 / 120); fastest = Math.max(fastest, Math.abs(car.speed)); }
+      expect(fastest).toBeLessThanOrEqual(v0 + 0.05);
+      if (feel === 'fun') expect(Math.abs(car.speed)).toBeLessThan(0.5);
+    }
+  });
+
+  it('fun slows down off the pedals more than real', () => {
+    const coast = (feel: 'fun' | 'real') => {
+      const { car, drive } = setup(feel);
+      drive({}, 1);
+      car.body.setLinvel({ x: 0, y: 0, z: -22 }, true);
+      drive({}, 3);
+      return car.speed;
+    };
+    expect(coast('fun')).toBeLessThan(coast('real') - 4);
   });
 
   it('a short nitro tap fires a burst forward', () => {

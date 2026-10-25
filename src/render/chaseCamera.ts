@@ -1,8 +1,9 @@
 import * as THREE from 'three';
+import { VEHICLE } from '../vehicle/tuning.ts';
 
 export type CamMode = 'chase' | 'far' | 'hood' | 'cockpit';
 const MODES: CamMode[] = ['chase', 'far', 'hood', 'cockpit'];
-/** Driver's eye in body space (left-hand drive: +x is left). */
+/** Driver's eye in body space at real size (left-hand drive: +x is left), times VEHICLE.scale. */
 const EYE = new THREE.Vector3(0.37, 0.69, -0.46);
 const UP = new THREE.Vector3(0, 1, 0);
 /** Angle into -π..π. */
@@ -104,7 +105,7 @@ export class ChaseCamera {
     let desired: THREE.Vector3;
     let target: THREE.Vector3;
     if (this.mode === 'hood') {
-      desired = carPos.clone().addScaledVector(fwd, 0.6).add(new THREE.Vector3(0, 1.25, 0));
+      desired = carPos.clone().addScaledVector(fwd, 0.6 * VEHICLE.scale).add(new THREE.Vector3(0, 1.25 * VEHICLE.scale, 0));
       target = carPos.clone().addScaledVector(fwd, 20).add(new THREE.Vector3(0, 1.0, 0));
     } else {
       const far = this.mode === 'far';
@@ -168,7 +169,7 @@ export class ChaseCamera {
     const h = Math.min(dt, 0.05);
     this.headVel.addScaledVector(new THREE.Vector3().subVectors(target, this.head), w * w * h).multiplyScalar(Math.max(0, 1 - 2 * z * w * h));
     this.head.addScaledVector(this.headVel, h);
-    const eye = EYE.clone().add(this.head).applyQuaternion(carQuat).add(carPos);
+    const eye = EYE.clone().multiplyScalar(VEHICLE.scale).add(this.head).applyQuaternion(carQuat).add(carPos);
     this.camera.position.copy(eye);
     // Camera looks down -z; the car's forward is +z: turn round, then look into the corner and tilt with the head.
     const look = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI + (lookBack ? Math.PI : 0) + this.lookAngle + m.steer * 0.35 * k);

@@ -12,11 +12,12 @@ import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, type Way } from './lib/osm.ts';
 import { halfWidthAt, halfWidths } from './lib/overlap.ts';
-import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
+import { loadRegion, loadWorld, paths, unproject, useRoadProfile } from './lib/region.ts';
 import { auxLoss, isDrivable, roadProfile } from './lib/roads.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
 import { matchLevels } from './lib/levels.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
+import { smoothBends } from './lib/smooth.ts';
 import { roadSection } from '../src/world/roadSpec.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
@@ -35,6 +36,8 @@ type Kind = (typeof GAP_KINDS)[number];
 interface Issue { x: number; y: number; z: number; kind: Kind; size: number; way: number; what: string; lane: number }
 
 const index: WorldIndex = JSON.parse(readFileSync(`${paths.out}index.json`, 'utf8'));
+// The same road widths as the build.
+useRoadProfile({ index });
 const W = index.world;
 function tile(k: string): TileContent | null {
   const f = `${paths.out}t/${k}.bin`;
@@ -51,6 +54,8 @@ async function main() {
   const regions = [loadRegion(region)];
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   const height = terrainHeight(regions, unproject(cfg.zone), undefined, osm.polygons);
+  // The same rounded bends as the build (game road profile).
+  smoothBends(osm.ways, new Set(osm.points.map((p) => p.id)));
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
   separateCarriageways(osm.ways);
   const ramps = planRamps(osm.ways);

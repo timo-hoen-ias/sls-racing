@@ -29,6 +29,38 @@ export class GameSfx {
     for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
   }
 
+  private sirenVoice?: { gain: GainNode; pan: StereoPannerNode; osc: OscillatorNode };
+  private sirenT = 0;
+
+  /**
+   * Police siren (T3): German two-tone horn (≈ 440/585 Hz, switching every 0.6 s), loudness 0..1 by the
+   * nearest police car's distance, pan by its side. Call every frame; 0 silences it.
+   */
+  siren(level: number, pan = 0, dt = 0) {
+    if (!this.ctx || this.ctx.state !== 'running') return;
+    const c = this.ctx;
+    if (!this.sirenVoice && level > 0) {
+      const osc = c.createOscillator();
+      osc.type = 'sawtooth';
+      const f = c.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 2200;
+      const gain = c.createGain();
+      gain.gain.value = 0;
+      const p = c.createStereoPanner();
+      osc.connect(f).connect(gain).connect(p).connect(this.out);
+      osc.start();
+      this.sirenVoice = { gain, pan: p, osc };
+    }
+    const v = this.sirenVoice;
+    if (!v) return;
+    this.sirenT += dt;
+    const hi = Math.floor(this.sirenT / 0.6) % 2 === 1;
+    v.osc.frequency.setTargetAtTime(hi ? 585 : 440, c.currentTime, 0.01);
+    v.gain.gain.setTargetAtTime(this.enabled ? Math.max(0, Math.min(1, level)) * 0.07 : 0, c.currentTime, 0.08);
+    v.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), c.currentTime, 0.1);
+  }
+
   setVolume(v: number) {
     this.volume = v;
     if (this.out) this.out.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);

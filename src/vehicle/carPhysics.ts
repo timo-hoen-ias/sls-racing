@@ -104,9 +104,10 @@ export class CarPhysics {
    * arcade brakes: extra deceleration in g on top of what the tyres can hold, at full pedal,
    * road hold 0..1: bumps and crests do not throw the car into the air (feel.stick),
    * step assist 0..1: low edges that catch the body are climbed instead of stopping the car (feel.step),
-   * and straight braking 0..1: both wheels of an axle brake alike and the car does not yaw away (feel.straight).
+   * straight braking 0..1: both wheels of an axle brake alike and the car does not yaw away (feel.straight),
+   * and a coasting brake in g off both pedals, three times that when rolling against the gear (feel.coast).
    */
-  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0, step: 0, straight: 0 };
+  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0, step: 0, straight: 0, coast: 0 };
   /** A short tap on nitro fires a burst instead of the steady boost (feel.burst). */
   burst = { enabled: true, tap: 0.22, kick: 5, cost: 0.14 };
   /** Nitro gained from style moves since the last frame (near misses, jumps …), added by the game. */
@@ -194,7 +195,7 @@ export class CarPhysics {
       this.body,
     );
     // Lower the centre of mass for stability.
-    this.body.setAdditionalMassProperties(0, { x: 0, y: -0.25, z: 0.05 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, true);
+    this.body.setAdditionalMassProperties(0, { x: 0, y: CAR.com.y, z: CAR.com.z }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, true);
   }
 
   /** Takes over a changed CAR (another car picked): chassis box and mass, wheel positions and size, springs. */
@@ -427,13 +428,20 @@ export class CarPhysics {
       const k = -yawRate * this.k.yaw * Math.min(1, 10 * straight * brakePedal * dt);
       body.applyTorqueImpulse({ x: up.x * k, y: up.y * k, z: up.z * k }, true);
     }
-    if (brakePedal > 0 && this.feel.brake > 0 && contacts > 0) {
+    let decelG = brakePedal > 0 ? this.feel.brake * brakePedal * sf.brake : 0;
+    // Coasting brake: off both pedals the car slows down by itself, harder when it rolls against its gear
+    // (backwards in a forward gear after a crash, or forwards in reverse).
+    if (this.feel.coast > 0 && input.throttle < 0.05 && input.brake < 0.05 && !input.handbrake && !this.driftDir) {
+      const against = (dt0.gear > 0 && v < -1) || (dt0.gear < 0 && v > 1);
+      decelG = Math.max(decelG, this.feel.coast * (against ? 3 : 1) * Math.max(sf.brake, 0.5));
+    }
+    if (decelG > 0 && contacts > 0) {
       const lv = body.linvel();
       const un = lv.x * up.x + lv.y * up.y + lv.z * up.z;
       const px = lv.x - up.x * un, py = lv.y - up.y * un, pz = lv.z - up.z * un;
       const sp = Math.hypot(px, py, pz);
       if (sp > 0.5) {
-        const decel = this.feel.brake * 9.81 * brakePedal * sf.brake * (contacts / 4) * clamp((sp - 0.5) / 2.5, 0, 1);
+        const decel = decelG * 9.81 * (contacts / 4) * clamp((sp - 0.5) / 2.5, 0, 1);
         const j = (Math.min(decel * dt, sp - 0.5) * mass) / sp;
         body.applyImpulse({ x: -px * j, y: -py * j, z: -pz * j }, true);
       }

@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { KINDS, type VehicleKind } from './trafficSim.ts';
+import { REAL_KINDS as KINDS, type VehicleKind } from './trafficSim.ts';
 
-// Low-poly traffic vehicles for instancing. Model space: ground at y = 0, +z forward, +x left.
+// Low-poly traffic vehicles for instancing, at real size (drawn at VEHICLE.scale). Model space: ground at y = 0, +z forward, +x left.
 // Every model has four parts: paint (tinted per instance), fixed-colour details (glass, tyres, trim),
 // lights (head and tail lights, always lit), brake lights and hazard lights (shown on demand).
 

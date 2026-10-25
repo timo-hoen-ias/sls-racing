@@ -16,6 +16,7 @@ import { GUIDE_SIGN_NAMES, type SignsFile } from '../src/world/signSpec.ts';
 import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.ts';
 import { terrainHeights } from '../src/world/tileBuild.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
+import { scaleCar, VEHICLE } from '../src/vehicle/tuning.ts';
 import { readOsm } from './lib/osm.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
@@ -23,6 +24,9 @@ import { separateCarriageways } from './lib/carriageways.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
 import { densify, isMotorRoad, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
+
+// The test car at the game's vehicle scale (smaller wheels meet the same road steps).
+scaleCar(VEHICLE.scale);
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';

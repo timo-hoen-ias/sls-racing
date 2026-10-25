@@ -195,7 +195,7 @@ export class CarPhysics {
       this.body,
     );
     // Lower the centre of mass for stability.
-    this.body.setAdditionalMassProperties(0, { x: 0, y: -0.25, z: 0.05 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, true);
+    this.body.setAdditionalMassProperties(0, { x: 0, y: CAR.com.y, z: CAR.com.z }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0, w: 1 }, true);
   }
 
   /** Takes over a changed CAR (another car picked): chassis box and mass, wheel positions and size, springs. */

@@ -1,7 +1,7 @@
 import type { EngineSoundProfile } from '../audio/engineSound.ts';
 import type { EngineSpec } from './drivetrain.ts';
 import type { CarGeometry } from './sportsCarModel.ts';
-import { CAR, ENGINE, ENGINE_SOUND } from './tuning.ts';
+import { CAR, ENGINE, ENGINE_SOUND, scaleCar, VEHICLE } from './tuning.ts';
 
 // The cars the player can pick (car.select, options menu → Fahren). Each one is a Blender GLB with the same
 // node layout as sportscar.glb, plus its own engine, sound and handling written over the base tuning in
@@ -125,7 +125,7 @@ function deepAssign(target: Overrides, src: Overrides) {
 
 /**
  * Makes CAR, ENGINE and ENGINE_SOUND describe this car (in place, so every holder sees it): the base tuning,
- * then the car's own values, then the dimensions of its model. Debug changes (car.tune …) are reset.
+ * then the car's own values, then the dimensions of its model, all at VEHICLE.scale. Debug changes (car.tune …) are reset.
  * The physics takes it over with CarPhysics.rebuild(), the sound with EngineSound.setProfile().
  */
 export function applyCar(spec: CarSpec, geometry?: CarGeometry) {
@@ -154,6 +154,8 @@ export function applyCar(spec: CarSpec, geometry?: CarGeometry) {
     h.z = geometry.length / 2 - 0.075;
     h.x = geometry.width / 2 - 0.03;
   }
+  // Real size above, then everything at the game's vehicle scale (the drivetrain keeps the real wheel radius).
+  scaleCar(VEHICLE.scale);
   const v = ENGINE_SOUND.voice as { idleRpm: number; maxRpm: number };
   v.idleRpm = ENGINE.idleRpm;
   v.maxRpm = ENGINE.maxRpm;

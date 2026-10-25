@@ -139,6 +139,10 @@ export interface RoadGraphData {
   w?: { k: number; w: number; s: number; p: number[] }[];
   /** Junctions with traffic lights: [node, group]; nodes of one group (a big junction) share their phases. */
   s?: [number, number][];
+  /** Banned turns from OSM turn restrictions, flat [from edge, via node, to edge, …]. */
+  t?: number[];
+  /** Bus routes: line number (ref), name and the graph edges they run along, in order. */
+  b?: { r: string; n: string; e: number[] }[];
 }
 
 export const tileKey = (ix: number, iy: number) => `${ix}_${iy}`;

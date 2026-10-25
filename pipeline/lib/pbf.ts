@@ -5,6 +5,7 @@
 import { closeSync, openSync, readSync, statSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import type { OsmJson } from './osm.ts';
+import { wantedNode, wantedRelation, wantedWay } from './osmTags.ts';
 
 type Tags = Record<string, string>;
 type El = OsmJson['elements'][number];
@@ -226,37 +227,14 @@ class PbfFile {
   }
 }
 
-/** Features the game uses; mirrors the Overpass query in fetch.ts. */
-export function wanted(tags: Tags): boolean {
-  return !!(
-    tags.highway || tags.building || tags.landuse ||
-    /^(water|wood|scrub|grassland)$/.test(tags.natural ?? '') ||
-    tags.waterway === 'riverbank' ||
-    /^(river|stream|canal|ditch|drain)$/.test(tags.waterway ?? '') ||
-    /^(park|pitch|garden|playground)$/.test(tags.leisure ?? '') ||
-    tags.amenity === 'parking' || tags.amenity === 'fuel' ||
-    /^(fence|wall|hedge|guard_rail)$/.test(tags.barrier ?? '')
-  );
-}
-
-/** Point features: trees and street furniture; mirrors the node lines of the Overpass query in fetch.ts. */
-export function wantedNode(tags: Tags | undefined): boolean {
-  if (!tags) return false;
-  return !!(
-    tags.natural === 'tree' ||
-    /^(traffic_signals|stop|give_way|bus_stop|street_lamp|crossing|motorway_junction)$/.test(tags.highway ?? '') || !!tags.kerb ||
-    /^(city|town|village|suburb|quarter|hamlet)$/.test(tags.place ?? '') ||
-    /^(bollard|block)$/.test(tags.barrier ?? '') ||
-    /^(bench|waste_basket|post_box|bicycle_parking|telephone|vending_machine|recycling|fuel)$/.test(tags.amenity ?? '') ||
-    tags.emergency === 'fire_hydrant' || tags.advertising === 'column' || tags.traffic_sign
-  );
-}
+/** Features the game uses (osmTags.ts); mirrors the Overpass query in fetch.ts. */
+export { wantedNode, wantedWay as wanted };
 
 /** Named towns, villages and districts (destinations on signs; also kept in the far view extract). */
 const isPlace = (tags: Tags | undefined) => !!tags?.name && /^(city|town|village|suburb)$/.test(tags.place ?? '');
 
-const wantedRelation = (tags: Tags) =>
-  !!tags.building || (tags.type === 'multipolygon' && (!!tags.landuse || tags.amenity === 'fuel' || /^(water|wood)$/.test(tags.natural ?? '')));
+/** Relations whose member ways are areas: all of them are kept, also outside the box, so the rings close. */
+const isArea = (tags: Tags) => tags.type !== 'route' && tags.type !== 'restriction';
 
 export interface Cut {
   /** Postal code whose boundary relation defines the area, or a lon/lat box. */
@@ -324,12 +302,13 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
     });
 
     // 4. Ways touching the box, plus every member way of a wanted relation (decided below).
+    // Turn restrictions and bus routes only keep their members inside the box.
     const memberOf = new Set<number>();
-    for (const r of relations) for (const m of r.members) if (m.type === 'way') memberOf.add(m.ref);
+    for (const r of relations) if (isArea(r.tags)) for (const m of r.members) if (m.type === 'way') memberOf.add(m.ref);
     const ways = new Map<number, { refs: number[]; tags: Tags; hit: boolean }>();
     pbf.scan(KIND_WAYS, {
       way(id, refs, tags) {
-        const isWanted = (cut.keep ?? wanted)(tags);
+        const isWanted = (cut.keep ?? wantedWay)(tags);
         if (!isWanted && !memberOf.has(id)) return;
         const hit = refs.some((r) => inside.has(r));
         if (hit || memberOf.has(id)) ways.set(id, { refs, tags, hit: isWanted && hit });
@@ -338,7 +317,7 @@ export function extractRegion(file: string, cut: Cut, log = console.log): OsmJso
     const keptRelations = relations.filter((r) => r.members.some((m) => m.type === 'way' && ways.get(m.ref)?.refs.some((n) => inside.has(n))));
     const keepWays = new Set<number>();
     for (const [id, w] of ways) if (w.hit) keepWays.add(id);
-    for (const r of keptRelations) for (const m of r.members) if (m.type === 'way' && ways.has(m.ref)) keepWays.add(m.ref);
+    for (const r of keptRelations) if (isArea(r.tags)) for (const m of r.members) if (m.type === 'way' && ways.has(m.ref)) keepWays.add(m.ref);
     for (const id of boundaryWays.keys()) keepWays.add(id);
 
     // 5. Nodes of kept ways that lie outside the box, so geometry stays complete.

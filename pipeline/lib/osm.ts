@@ -1,4 +1,5 @@
 // Minimal reader for Overpass JSON ("out body" with nodes, ways and relations).
+import { coreWay, extraWay } from './osmTags.ts';
 
 export interface OsmJson {
   elements: (
@@ -67,6 +68,13 @@ export interface OsmData {
   /** Other tagged point features (street furniture, signals, bus stops), projected. */
   points: { id: number; tags: Record<string, string>; e: number; n: number }[];
   boundary?: [number, number][][];
+  /** Features only the detail modules read (osmTags.ts extraWay): railways, power lines, sports grounds …
+   *  Kept apart so the road modules, which loop over all ways and polygons, see the same input as before. */
+  extra?: { ways: Way[]; areas: Polygon[] };
+  /** Turn restrictions: from way, via node, to way (OSM ids); only = only this turn is allowed. */
+  restrictions?: { from: number; via: number; to: number; only: boolean; kind: string }[];
+  /** Bus routes: name/ref and member way ids in order, stops as node ids. */
+  busRoutes?: { id: number; ref: string; name: string; ways: number[]; stops: number[] }[];
 }
 
 export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [number, number]): OsmData {
@@ -86,18 +94,47 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
 
   const ways: Way[] = [];
   const polygons: Polygon[] = [];
+  const extra: NonNullable<OsmData['extra']> = { ways: [], areas: [] };
+  const restrictions: NonNullable<OsmData['restrictions']> = [];
+  const busRoutes: NonNullable<OsmData['busRoutes']> = [];
   let boundary: [number, number][][] | undefined;
   for (const [id, w] of wayById) {
     const ids = w.nodes.filter((n) => nodes.has(n));
     const pts = toPts(ids);
     if (pts.length < 2) continue;
     const closed = w.nodes.length > 3 && w.nodes[0] === w.nodes[w.nodes.length - 1];
+    // Ways without tags are relation members only (rings); core features as before; the rest is extra.
+    const core = !Object.keys(w.tags).length || coreWay(w.tags) || !extraWay(w.tags);
+    if (!core) {
+      extra.ways.push({ id, tags: w.tags, pts, ids, closed });
+      if (closed) extra.areas.push({ id, tags: w.tags, outer: pts, holes: [] });
+      continue;
+    }
     if (Object.keys(w.tags).length) ways.push({ id, tags: w.tags, pts, ids, closed });
     if (closed && isArea(w.tags)) polygons.push({ id, tags: w.tags, outer: pts, holes: [] });
   }
   for (const el of json.elements) {
     if (el.type !== 'relation') continue;
     const tags = el.tags ?? {};
+    if (tags.type === 'restriction') {
+      const from = el.members.find((m) => m.type === 'way' && m.role === 'from');
+      const via = el.members.filter((m) => m.role === 'via');
+      const to = el.members.find((m) => m.type === 'way' && m.role === 'to');
+      const r = tags.restriction ?? '';
+      // Via ways (U-turn bans over a median) are rare; only node restrictions are read.
+      if (from && to && via.length === 1 && via[0].type === 'node' && /^(no|only)_/.test(r))
+        restrictions.push({ from: from.ref, via: via[0].ref, to: to.ref, only: r.startsWith('only_'), kind: r });
+      continue;
+    }
+    if (tags.type === 'route') {
+      if (tags.route === 'bus')
+        busRoutes.push({
+          id: el.id, ref: tags.ref ?? '', name: tags.name ?? '',
+          ways: el.members.filter((m) => m.type === 'way' && !/platform/.test(m.role) && wayById.has(m.ref)).map((m) => m.ref),
+          stops: el.members.filter((m) => m.type === 'node' && /stop/.test(m.role)).map((m) => m.ref),
+        });
+      continue;
+    }
     const isBoundary = tags.boundary === 'postal_code';
     if (tags.type !== 'multipolygon' && !isBoundary) continue;
     const rings = (role: string) =>
@@ -108,9 +145,10 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
       continue;
     }
     const inners = rings('inner');
-    for (const outer of outers) polygons.push({ id: el.id, tags, outer, holes: inners });
+    const list = coreWay(tags) || !extraWay(tags) ? polygons : extra.areas;
+    for (const outer of outers) list.push({ id: el.id, tags, outer, holes: inners });
   }
-  return { ways, polygons, trees, points, boundary };
+  return { ways, polygons, trees, points, boundary, extra, restrictions, busRoutes };
 }
 
 function isArea(tags: Record<string, string>) {

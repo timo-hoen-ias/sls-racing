@@ -33,6 +33,8 @@ const PLATEAU_GRADE = 0.12;
 const GRADE_SPAN = 4, GRADE_REACH = 16;
 /** Grade of each road at a junction, for the plateau's tilt, is measured over this much either side (m). */
 const TILT_SPAN = 8;
+/** Direction of a junction arm is taken over this length (m); a plateau reaches at most this far along an arm. */
+const ARM_SPAN = 10, MAX_ARM_REACH = 30;
 
 const median = (vs: number[]) => {
   const s = vs.slice().sort((a, b) => a - b);
@@ -185,8 +187,9 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
       const k0 = d.findIndex((v) => v >= nodeAt[i] - 1e-6);
       const delta = target - smooth[k0];
       maxCorrection = Math.max(maxCorrection, Math.abs(delta));
-      const before = pi > 0 ? nodeAt[i] - nodeAt[pins[pi - 1]] : 0;
-      const after = pi < pins.length - 1 ? nodeAt[pins[pi + 1]] - nodeAt[i] : 0;
+      // Before the first pin and after the last the correction fades out towards the road's free end.
+      const before = nodeAt[i] - (pi > 0 ? nodeAt[pins[pi - 1]] : 0);
+      const after = (pi < pins.length - 1 ? nodeAt[pins[pi + 1]] : nodeAt[w.ids.length - 1]) - nodeAt[i];
       // Smoothstep fade: its steepest grade is 1.5 × delta / reach.
       const reach = Math.max(PIN_REACH, (1.5 * Math.abs(delta)) / RAMP_GRADE);
       for (let k = 0; k < prof.length; k++) {
@@ -245,15 +248,58 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     tilt.set(id, g);
   }
 
+  // Arms of each junction: the direction each road leaves it in (over its first ARM_SPAN metres), and its
+  // half width. Where two arms leave at an acute angle their surfaces overlap for a long way, so the plateau
+  // reaches along each arm as far as another arm's surface still overlaps it.
+  const armDir = (w: Way, i: number, step: 1 | -1): [number, number] | undefined => {
+    const [e0, n0] = w.pts[i];
+    let j = i + step;
+    if (j < 0 || j >= w.pts.length) return undefined;
+    while (j + step >= 0 && j + step < w.pts.length && Math.hypot(w.pts[j][0] - e0, w.pts[j][1] - n0) < ARM_SPAN) j += step;
+    const l = Math.hypot(w.pts[j][0] - e0, w.pts[j][1] - n0) || 1;
+    return [(w.pts[j][0] - e0) / l, (w.pts[j][1] - n0) / l];
+  };
+  const arms = new Map<number, { w: Way; u: [number, number]; hw: number }[]>();
+  for (const w of roads) {
+    const hw = roadWidth(w.tags)! / 2;
+    w.ids.forEach((id, i) => {
+      if (!isJunction(id)) return;
+      if (!arms.has(id)) arms.set(id, []);
+      for (const step of [-1, 1] as const) {
+        const u = armDir(w, i, step);
+        if (u) arms.get(id)!.push({ w, u, hw });
+      }
+    });
+  }
+  /** How far along the arm of `w` leaving in direction `u` another arm's surface still overlaps it. */
+  const overlapReach = (id: number, w: Way, u: [number, number], hw: number) => {
+    let r = 0;
+    for (const a of arms.get(id) ?? []) {
+      if (a.w === w) continue;
+      const cos = u[0] * a.u[0] + u[1] * a.u[1];
+      if (cos <= 0) continue;
+      const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
+      r = Math.max(r, Math.min(MAX_ARM_REACH, (hw + a.hw) / Math.max(sin, 1e-3)));
+    }
+    return r;
+  };
+
   for (const w of roads) {
     const { nodeAt } = raw.get(w)!;
     const d = dists.get(w)!;
     const prof = pinned.get(w)!;
+    const hw = roadWidth(w.tags)! / 2;
     const flats = w.ids.flatMap((id, i) => {
       if (!isJunction(id)) return [];
       const [ge, gn] = tilt.get(id) ?? [0, 0];
       const [ue, un] = heading(w, i);
-      return [{ at: nodeAt[i], y: nodeH.get(id)!, r: widest.get(id)! + 0.5, slope: ge * ue + gn * un }];
+      const base = widest.get(id)! + 0.5;
+      const back = armDir(w, i, -1), fwd = armDir(w, i, 1);
+      return [{
+        at: nodeAt[i], y: nodeH.get(id)!, slope: ge * ue + gn * un,
+        rBack: Math.max(base, back ? overlapReach(id, w, back, hw) : 0),
+        rFwd: Math.max(base, fwd ? overlapReach(id, w, fwd, hw) : 0),
+      }];
     });
     if (flats.length)
       for (let k = 0; k < prof.length; k++) {
@@ -261,10 +307,10 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
         // passes continuously from one to the next instead of stepping where the nearer one changes.
         let wt = 0, sw = 0, sy = 0;
         for (const f of flats) {
-          const off = Math.abs(d[k] - f.at);
-          const t = off <= f.r ? 1 : Math.max(0, 1 - (off - f.r) / JUNCTION_BLEND);
+          const off = Math.abs(d[k] - f.at), r = d[k] < f.at ? f.rBack : f.rFwd;
+          const t = off <= r ? 1 : Math.max(0, 1 - (off - r) / JUNCTION_BLEND);
           if (!t) continue;
-          const tw = off <= f.r ? 1e6 : t;
+          const tw = off <= r ? 1e6 : t;
           wt = Math.max(wt, t); sw += tw; sy += tw * (f.y + f.slope * (d[k] - f.at));
         }
         const y = sw ? sy / sw : 0;

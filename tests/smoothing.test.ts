@@ -61,3 +61,14 @@ describe('flat plazas', () => {
     expect(planPlazas([garage], raw).plazas).toHaveLength(0);
   });
 });
+
+describe('pins at one end only', () => {
+  it('a road ending at a bridge deck ramps up to it instead of stepping', () => {
+    const height = (e: number, n: number) => 180 + noise(e, n);
+    const road: Way = { id: 1, tags: { highway: 'service' }, pts: [[0, 0], [112, 0]], ids: [1, 2], closed: false };
+    roadProfiles([road], height, new Map([[2, 185]]));
+    const { y } = road.profile!;
+    expect(y.at(-1)).toBeCloseTo(185, 5);
+    for (let k = 1; k < y.length; k++) expect(Math.abs(y[k] - y[k - 1])).toBeLessThan(0.25);
+  });
+});

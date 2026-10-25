@@ -66,7 +66,7 @@ export function registerWorldCommands(g: WorldCommandContext) {
 
   registerCommand({
     name: 'road.profile', help: 'Straßenprofil der Kacheln: game (breitere Fahrbahnen, Fun-Racer) oder real. Neu bauen mit SLS_ROAD_PROFILE=real npm run world:build',
-    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrbahnen 15–35 % breiter (road.widen), Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.bends} Knicke zu Bögen` : ''}${g.index.roadShape?.curves ? `, ${g.index.roadShape.curves} Straßen als runde Kurven (${g.index.roadShape.curvePoints} Stützpunkte ergänzt)` : ''}`,
+    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrbahnen 15–35 % breiter (road.widen), Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.slots ? `${g.index.roadShape.slots} Spaltzellen zwischen Fahrbahnen gefüllt, ` : ''}${g.index.roadShape.bends} Knicke zu Bögen` : ''}${g.index.roadShape?.curves ? `, ${g.index.roadShape.curves} Straßen als runde Kurven (${g.index.roadShape.curvePoints} Stützpunkte ergänzt)` : ''}`,
   });
   registerCommand({
     name: 'road.widen',
@@ -321,6 +321,45 @@ export function registerWorldCommands(g: WorldCommandContext) {
       if (plazas) return runPlaza(a);
       loadPlazas().then(() => g.print(runPlaza(a))).catch((e) => g.print(`Fehler: ${(e as Error).message}`));
       return 'Lade plazas.json …';
+    },
+  });
+
+  // OSM details the pipeline placed (details.json): turning circles, speed bumps, mini roundabouts and later more.
+  let details: [string, number, number, string][] | null = null;
+  const detailCursor = new Map<string, number>();
+  const runDetails = (kind: string | undefined, a: string): string => {
+    const all = details!;
+    const kinds = [...new Set(all.map((d) => d[0]))].sort();
+    if (!kind || kind === 'list') return kinds.length ? kinds.map((k) => `${k}: ${all.filter((d) => d[0] === k).length}`).join(' · ') + ' · osm.details <art> [next|prev|<nr>|near]' : 'Keine OSM-Details in dieser Welt.';
+    const list = all.filter((d) => d[0] === kind);
+    if (!list.length) return `Keine "${kind}" (${kinds.join(', ')})`;
+    const p = g.pos();
+    const line = (i: number) => `${kind} #${i + 1}/${list.length}: ${list[i][3] || '–'} · ${Math.hypot(list[i][1] - p.x, list[i][2] - p.z).toFixed(0)} m entfernt`;
+    if (a === 'near') {
+      const near = list.map((d, i) => [i, Math.hypot(d[1] - p.x, d[2] - p.z)] as const).sort((x, y) => x[1] - y[1]).slice(0, 8);
+      return near.map(([i]) => line(i)).join('\n');
+    }
+    const n = list.length, cur = detailCursor.get(kind) ?? -1;
+    const i = /^\d+$/.test(a) ? Math.min(n, Math.max(1, +a)) - 1 : (cur + (a === 'prev' ? n - 1 : 1)) % n;
+    detailCursor.set(kind, i);
+    g.teleport(list[i][1], list[i][2]);
+    return line(i);
+  };
+  registerCommand({
+    name: 'osm.details',
+    help: 'Aus OSM gebaute Details (Wendehämmer, Schwellen, Aufpflasterungen, Mini-Kreisel …): ohne Art die Anzahl, mit Art next/prev/<nr> teleportiert hin, near listet die nächsten',
+    args: '[<art>] [next|prev|<nr>|near]',
+    complete: (a) => (a.length <= 1 ? ['list', ...new Set((details ?? []).map((d) => d[0]))] : ['next', 'prev', 'near']),
+    run([kind, a = 'next']) {
+      if (details) return runDetails(kind, a);
+      fetch(`${g.baseUrl}/details.json`)
+        .then((res) => {
+          if (!res.ok) throw new Error(`details.json fehlt (HTTP ${res.status}), "npm run world:build" ausführen`);
+          return res.json() as Promise<{ spots: [string, number, number, string][] }>;
+        })
+        .then((j) => { details = j.spots; g.print(runDetails(kind, a)); })
+        .catch((e) => g.print(`Fehler: ${(e as Error).message}`));
+      return 'Lade details.json …';
     },
   });
 

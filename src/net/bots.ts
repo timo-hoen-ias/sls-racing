@@ -140,7 +140,7 @@ export class Bot {
       const cur: Edge = e;
       const node: number = this.along < 0 ? cur.a : cur.b;
       const over = this.along < 0 ? -this.along : this.along - cur.length;
-      const options = g.adj[node].filter(([id]) => id !== cur.id && !g.edges[id].noCars && (!g.edges[id].oneway || g.edges[id].a === node));
+      const options = g.adj[node].filter(([id]) => id !== cur.id && !g.edges[id].noCars && (!g.edges[id].oneway || g.edges[id].a === node) && !g.banned(cur.id, node, id));
       const pick = options.length ? options[Math.floor(Math.random() * options.length)] : g.adj[node].find(([id]) => id === cur.id);
       if (!pick) return;
       e = this.edge = g.edges[pick[0]];

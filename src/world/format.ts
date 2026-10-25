@@ -40,8 +40,8 @@ export interface WorldIndex {
   attribution: string[];
   /** Road profile the tiles were built with (roadSpec.ts); missing in builds before it existed (real widths). */
   roadProfile?: 'game' | 'real';
-  /** Game profile (S2): rounded junction corners, smoothed kinks and ways drawn as splines (with the points added). */
-  roadShape?: { corners: number; bends: number; curves?: number; curvePoints?: number };
+  /** Game profile (S2): rounded junction corners, patched slots between carriageways, smoothed kinks and ways drawn as splines (with the points added). */
+  roadShape?: { corners: number; slots?: number; bends: number; curves?: number; curvePoints?: number };
 }
 
 /** A packed mesh. Arrays are base64-encoded little-endian typed arrays. */
@@ -74,6 +74,8 @@ export interface TileData {
   sidewalks?: PackedMesh;
   /** Footpaths, cycle paths and steps: road shader, wheels-only collision. */
   paths?: PackedMesh;
+  /** OSM details, visual only: vertex colours (sRGB bytes) and normals (pipeline/lib/details.ts). */
+  details?: PackedMesh;
   /** Float32 x, y, z, heading per street lamp. */
   lamps?: string;
   /** Uint8 tree kind per tree, see vegKinds.ts. */
@@ -139,6 +141,10 @@ export interface RoadGraphData {
   w?: { k: number; w: number; s: number; p: number[] }[];
   /** Junctions with traffic lights: [node, group]; nodes of one group (a big junction) share their phases. */
   s?: [number, number][];
+  /** Banned turns from OSM turn restrictions, flat [from edge, via node, to edge, …]. */
+  t?: number[];
+  /** Bus routes: line number (ref), name and the graph edges they run along, in order. */
+  b?: { r: string; n: string; e: number[] }[];
 }
 
 export const tileKey = (ix: number, iy: number) => `${ix}_${iy}`;

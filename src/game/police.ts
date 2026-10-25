@@ -161,14 +161,17 @@ export class Police {
     this.keepUnits(player, heat);
     let seen = false, caught = false;
     const sight = this.sight + heat * 15;
-    for (const u of this.units) {
+    // A copy: drive() takes a flipped unit out of the world, and its car must not be stepped after that.
+    for (const u of [...this.units]) {
       const t = u.car.body.translation();
       const d = Math.hypot(t.x - player.x, t.z - player.z);
       if (u.mode === 'block') {
         u.car.update({ throttle: 0, brake: 1, steer: 0, nitro: false, handbrake: true, lookBack: false }, dt);
         u.life -= dt;
       } else {
-        u.car.update(this.drive(u, player, d, dt), dt);
+        const input = this.drive(u, player, d, dt);
+        if (!this.units.includes(u)) continue;
+        u.car.update(input, dt);
       }
       if (d < sight) seen = true;
       if (d < 7.5 && player.speed < 3) caught = true;

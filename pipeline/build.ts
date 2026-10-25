@@ -27,9 +27,14 @@ import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
+import { applyOsmFixes } from './lib/osmFixes.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
+import { drawCalming, drawRoundaboutIslands, planTurningCircles } from './lib/roadDetails.ts';
+import { Details } from './lib/details.ts';
+import { TRACK, buildRail, isTrack } from './lib/rail.ts';
+import { fillSlots } from './lib/slots.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
@@ -95,6 +100,7 @@ function main() {
     }
   }
 
+  for (const line of applyOsmFixes(merged)) console.log(`OSM fix: ${line}`);
   const osm = readOsm(merged, project);
   const height = terrainHeight(regions, toLonLat, console.log, osm.polygons);
   // Game road profile: kinks in the mapped lines become short arcs, before anything reads the geometry.
@@ -116,14 +122,19 @@ function main() {
   // Kerbs and pavements only in built-up areas, on the mapped sides; the graph stores them for the game.
   const kerbs = planKerbs(osm.ways, osm.polygons, osm.points);
   console.log(`Kerbs: ${kerbs.urban} streets in town, ${kerbs.rural} rural without kerbs, ${kerbs.tagged} with mapped sidewalks, ${kerbs.crossings} lowered crossings`);
-  const { graph, junctions } = buildGraph(osm.ways, info, height);
+  const { graph, junctions, banned } = buildGraph(osm.ways, info, height, osm);
+  console.log(`Turn restrictions: ${osm.restrictions?.length ?? 0} mapped → ${banned} banned turns · bus lines: ${graph.b?.length ?? 0} (${osm.busRoutes?.length ?? 0} routes)`);
   // Rounded junction corners (game road profile): kerbs, lamps and props keep clear of them like of a junction.
   const fillets = planFillets(osm.ways, height);
+  const corners = fillets.length;
+  // Turning circles at dead ends (roadDetails.ts) are fillets too.
+  const turning = planTurningCircles(osm, height);
+  fillets.push(...turning.fillets);
   for (const f of fillets) {
     const [x, z] = utmToLocal(info, f.node[0], f.node[1]);
     junctions.push({ x, z, width: 2 * Math.max(0, f.reach - 2.8) });
   }
-  console.log(`Junction corners: ${fillets.length} rounded`);
+  console.log(`Junction corners: ${corners} rounded · turning circles: ${turning.fillets.length} (${turning.skipped} left out: buildings or slope)`);
   const carve = new RoadCarve(TERRAIN_STEP);
   // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
   const real = regions.some((r) => r.boundary.type !== 'fixture');
@@ -132,6 +143,17 @@ function main() {
   const dressed = new Set(landmarks.flatMap((l) => (l.bridge ? [l.bridge] : [])));
   const samples = buildRoads(osm.ways, info, height, tiles, junctions, carve, halfWidths(osm.ways, height, info), { dressed, railings }, ramps);
   drawFillets(fillets, info, tiles, carve);
+  const calming = drawCalming(osm, info, tiles, height);
+  console.log(`Traffic calming: ${calming.bumps} bumps, ${calming.tables} tables, ${calming.rings} mini roundabouts`);
+  // Visual OSM details (details.ts): roundabout islands now, rail, power and leisure later.
+  const details = new Details(info, tiles);
+  const islands = drawRoundaboutIslands(osm.ways, info, tiles, details, height);
+  console.log(`Roundabout islands: ${islands.islands} raised, ${islands.spots.length - islands.islands} left open`);
+  const rail = buildRail(osm, info, details, height);
+  console.log(`Rail: ${rail.km.toFixed(1)} km track (${rail.electrifiedKm.toFixed(1)} km electrified, ${rail.masts} masts), ${rail.bridges} bridges, ${rail.crossings} level crossings`);
+  // Narrow slots left between carriageways get patched, so no wheel drops between two roads.
+  const slots = fillSlots(tiles, info);
+  console.log(`Road slots: ${slots} cells of 0.5 m patched between carriageways`);
   // Footpaths, cycle paths and steps on the terrain mesh as carved for the roads, stopping at carriageways and sidewalks.
   const pathStats = (() => {
     // Scoped so the index is freed before the tiles are written.
@@ -207,6 +229,7 @@ function main() {
   };
   // Freely designed houses, villas and administrative buildings in place of fitting surveyed ones (houses.ts).
   const houseRoad = new RoadMask(osm.ways, 2.0);
+  houseRoad.addFillets(fillets);
   const osmKept = osm.polygons.filter((p) => p.tags.building && p.tags.building !== 'no' && p.outer.length > 3 && !footprints.covers(p.outer.slice(0, -1)) && !landmarkFoot.contains(...centre(p.outer.slice(0, -1))));
   const lod2Kept = lod2Rings.filter((b) => {
     const r = b.ring;
@@ -256,6 +279,10 @@ function main() {
   const onMotorLanes = new RoadMask(osm.ways, -0.5, (t) => !noCars(t));
   // Trees a little further: their trunk collider is up to TREE_COLLIDER_MAX wide and the mask is a 2 m grid.
   const treeLanes = new RoadMask(osm.ways, 1.0);
+  // No trees or bushes on the railway beds (rail.ts).
+  const railBed = new RoadMask([], 0.5);
+  railBed.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
+  treeLanes.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
   for (const m of [onRoad, onLanes, onMotorLanes, nearLanes, treeLanes]) m.addFillets(fillets);
   const offLanes = (lamps: number[]) => {
     const out: number[] = [];
@@ -404,6 +431,10 @@ function main() {
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   // Guard rails, delineators and chevron boards outside town (roadside.ts).
   const roadside = buildRoadside(osm.ways, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), dressed });
+  for (const [k, list] of rail.props) {
+    if (!props.tiles.has(k)) props.tiles.set(k, []);
+    props.tiles.get(k)!.push(...list);
+  }
   for (const [k, list] of roadside.props) {
     if (!props.tiles.has(k)) props.tiles.set(k, []);
     props.tiles.get(k)!.push(...list);
@@ -455,6 +486,13 @@ function main() {
   const levels = waterLevels(grids, TERRAIN_N, Ground.water);
   console.log(`Water: smooth levels in ${levels.size} tiles`);
 
+  const osmLamps = new Map<string, typeof props.lamps>();
+  for (const l of props.lamps) {
+    const k = tileKey(Math.floor(l.e / T), Math.floor(l.n / T));
+    if (!osmLamps.has(k)) osmLamps.set(k, []);
+    osmLamps.get(k)!.push(l);
+  }
+  let mappedLamps = 0;
   let bytes = 0;
   const index: [number, number][] = [];
   let written = 0;
@@ -480,7 +518,7 @@ function main() {
           for (let i = 0; i < nt + nb; i++) {
             const te = e + rand(e, n, i * 2 + 5) * TREE_CELL;
             const tn = n - rand(e, n, i * 2 + 6) * TREE_CELL;
-            if (onRoad.has(te, tn) || onPaths.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
+            if (onRoad.has(te, tn) || railBed.has(te, tn) || onPaths.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
             if (i < nt) {
               // Trunks keep clear of the carriageway like the measured trees.
               if (treeLanes.has(te, tn)) continue;
@@ -497,7 +535,7 @@ function main() {
     const tile: TileData = {
       v: 1, ix, iy, terrain: encode(h), ground: encode(g),
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
-      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(), paths: b?.paths.pack(),
+      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(), paths: b?.paths.pack(), details: b?.details.pack(),
     };
     const cover = landcover && tileCover(landcover, E0, N0, g);
     if (cover) {
@@ -507,6 +545,12 @@ function main() {
       coverTiles++;
     }
     const lamps = offLanes(b?.lamps ?? []);
+    // Mapped lamps where the generated ones have none within 12 m.
+    for (const l of osmLamps.get(k) ?? []) {
+      let near = false;
+      for (let i = 0; i < lamps.length && !near; i += 4) near = Math.hypot(lamps[i] - l.x, lamps[i + 2] - l.z) < 12;
+      if (!near) { lamps.push(l.x, l.y, l.z, l.heading); mappedLamps++; }
+    }
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const ri = roofInfo.get(k);
     if (ri) tile.roofInfo = encode(new Float32Array(ri));
@@ -563,7 +607,7 @@ function main() {
     tiles: index,
     graph: 'graph.json',
     roadProfile: activeRoadProfile(),
-    ...(fillets.length || smoothed || curves.ways ? { roadShape: { corners: fillets.length, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
+    ...(corners || smoothed || curves.ways || slots ? { roadShape: { corners, slots, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',
@@ -610,11 +654,17 @@ function main() {
     const [x, z] = utmToLocal(info, p.e0, p.n0);
     return [p.name, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(p.y0 * 100) / 100, Math.round(p.area), Math.round(p.rms * 100), Math.round(Math.hypot(p.ge, p.gn) * 1000) / 10];
   }) }));
+  // OSM details placed by the pipeline, for the osm.details command: [kind, x, z, note].
+  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots, ...rail.spots].map((s) => {
+    const [x, z] = utmToLocal(info, s.e, s.n);
+    return [s.kind, Math.round(x * 10) / 10, Math.round(z * 10) / 10, s.note];
+  }) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
   console.log(`Vegetation: ${nTrees} trees (${lidar.trees.length} from LiDAR, ${lidar.merged.size} of them mapped in OSM), ${nBushes} bushes`);
   if (landcover) console.log(`Land cover: ${coverTiles} tiles with survey colours and textures`);
+  console.log(`Street lamps: ${mappedLamps} of ${props.lamps.length} mapped ones added where the generated rows have none`);
   console.log(`Tiles: ${shard ? `${written} of ` : ''}${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 

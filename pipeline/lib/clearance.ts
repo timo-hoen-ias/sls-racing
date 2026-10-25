@@ -28,6 +28,20 @@ export class RoadMask {
     }
   }
 
+  /** Other strips (railway tracks …) as polylines with a half width, plus the margin. */
+  addLines(lines: { pts: [number, number][]; half: number }[]) {
+    const C = RoadMask.CELL;
+    for (const { pts, half } of lines) {
+      const r = half + this.margin, k = Math.ceil(r / C);
+      for (const [e, n] of densify(pts, C)) {
+        const ce = Math.round(e / C), cn = Math.round(n / C);
+        for (let dx = -k; dx <= k; dx++)
+          for (let dy = -k; dy <= k; dy++)
+            if (Math.hypot(dx * C, dy * C) <= r + C * 0.5) this.cells.add(ce + dx, cn + dy);
+      }
+    }
+  }
+
   /** Rounded junction corners (fillets.ts) count as carriageway too, with the same margin. */
   addFillets(fillets: Fillet[]) {
     const C = RoadMask.CELL, m = this.margin;

@@ -335,6 +335,47 @@ export const CARS: CarSpec[] = [
       shiftPop: 0.7,
     },
   },
+  {
+    id: 'offroad',
+    label: 'Geländewagen',
+    info: '3,6-l-V6 (230 kW), Allrad mit Sperren, viel Federweg und Bodenfreiheit, Geländereifen: für Feldwege, Wiesen und Wald',
+    url: `${MODELS}cars/offroad.glb`,
+    tuning: {
+      mass: 1750,
+      com: { y: -0.32 },
+      wheel: { rest: 0.36, travel: 0.32 },
+      suspension: { stiffness: 30, compression: 3.4, relaxation: 4.4 },
+      arb: { front: 26000, rear: 18000 },
+      tyre: { mu: 1.3, rearMu: 1.08, slide: 0.9, loose: 0.55 },
+      diff: { front: 3, rear: 4 },
+      frontDrive: 0.45,
+      aero: { drag: 0.75, downforce: 0.15, balance: 0.45, rolling: 0.016 },
+      brake: { force: 17000, bias: 0.62 },
+      steer: { lowSpeed: 0.66, rate: 3.4 },
+    },
+    engine: {
+      idleRpm: 750,
+      shiftRpm: 6000,
+      maxRpm: 6400,
+      // ~420 Nm from 2 500/min, ~230 kW at 6 000/min.
+      torque: [[750, 260], [1500, 340], [2500, 415], [4500, 420], [6000, 365], [6400, 320]],
+      gears: [4.7, 3.1, 2.1, 1.65, 1.29, 1.0, 0.84, 0.66],
+      final: 3.7,
+      stallRpm: 2400,
+      shiftTime: 0.18,
+      engineBrake: { base: 30, perRpm: 0.011 },
+    },
+    sound: {
+      voice: { cylinders: 6, layout: 'v6', lumpy: 0.12, irregular: 0.1, pulse: { noise: 0.4, tone: 0.6, toneHz: 200, decay: 0.8, color: 0.6 }, header: 0.6, pipe: 3.2, cross: 0.5, intakeLen: 0.5, mech: 0.35 },
+      resonances: [{ freq: 110, q: 1.8, gain: 6 }, { freq: 650, q: 2, gain: 4 }, { freq: 2200, q: 3, gain: 2 }],
+      drive: 0.6,
+      lpIdle: 900,
+      lpFull: 5200,
+      intake: 0.12,
+      pops: 0,
+      shiftPop: 0,
+    },
+  },
 ];
 
 export const DEFAULT_CAR = 'sportscar';
@@ -389,6 +430,18 @@ export function applyCar(spec: CarSpec, geometry?: CarGeometry) {
   const v = ENGINE_SOUND.voice as { idleRpm: number; maxRpm: number };
   v.idleRpm = ENGINE.idleRpm;
   v.maxRpm = ENGINE.maxRpm;
+}
+
+/** A car's engine sound and gearbox without touching the player's car (the other players' cars online). */
+export function carSound(spec: CarSpec) {
+  const engine = structuredClone(BASE.engine), sound = structuredClone(BASE.sound);
+  delete sound.turbo;
+  if (spec.engine) deepAssign(engine, spec.engine as Overrides);
+  if (spec.sound) deepAssign(sound, spec.sound);
+  const e = engine as unknown as typeof ENGINE;
+  const profile = sound as unknown as typeof ENGINE_SOUND;
+  profile.voice = { ...profile.voice, idleRpm: e.idleRpm, maxRpm: e.maxRpm };
+  return { profile, engine: e };
 }
 
 /** Peak power (kW) and torque (Nm) of the current ENGINE, for car.info. */

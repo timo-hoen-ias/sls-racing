@@ -71,8 +71,9 @@ export const CAR = {
    * Tyres: friction coefficient, slip angle of peak lateral grip (rad), grip left when fully sliding,
    * how fast grip falls past the peak, load sensitivity (heavily loaded tyres grip less per kg),
    * and how much of the tyre force acts at road level (roll and pitch; the rest acts at the centre of mass).
+   * loose: share of the grip lost on gravel, grass, fields and forest floor that the tread wins back (all-terrain 0.5).
    */
-  tyre: { mu: 1.55, peakSlip: 0.11, slide: 0.88, falloff: 1.4, loadSens: 0.08, rearMu: 1.12, roll: 0.45, pitch: 0.8, minSpeed: 3 },
+  tyre: { mu: 1.55, peakSlip: 0.11, slide: 0.88, falloff: 1.4, loadSens: 0.08, rearMu: 1.12, roll: 0.45, pitch: 0.8, minSpeed: 3, loose: 0 },
   /** Limited-slip differentials as torque bias ratio (1 = open, 2–3 = LSD, ≥ 50 = locked). */
   diff: { front: 1.4, rear: 2.6 },
   /** Drive split to the front axle (the rest goes to the rear). */

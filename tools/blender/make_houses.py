@@ -8,7 +8,7 @@
 # Model space: ground at y = 0 (the plinth reaches 2.5 m below it for slopes), the front with the door faces +z,
 # x along the front, footprint centred on the origin (w x d from the catalogue). Meshes per model:
 #   <id>_lod0 / <id>_lod1         walls, roofs and details: vertex colours, uv.x = surface code (SURFACE in
-#                                 src/world/houseKinds.ts), uv.y = 1 where the game tints the wall colour
+#                                 src/world/houseKinds.ts), uv.y = tint code T_* (the glTF export stores 1 - uv.y)
 #   <id>_glas0 / <id>_glas1       window glass (lit at night by the game)
 # Garden parts: garten-<teil>_lod0 / _lod1, ground at y = 0; linear parts (fences, walls, hedges, paths) are 1 m
 # long along z, centred on the origin, scaled along z by the game; point parts face +z.
@@ -26,23 +26,27 @@ CAT = json.load(open(os.path.join(HERE, '..', '..', 'src', 'world', 'houseCatalo
 
 # Surface codes in uv.x: keep in sync with SURFACE in src/world/houseKinds.ts.
 SURF = dict(paint=0, plaster=1, rough=2, brick=3, concrete=4, clay=5, slate=6, gravel=7, metal=8, wood=9, glass=10,
-            stone=11, foliage=12, lawn=13, paving=14, kies=15, timber=16)
+            stone=11, foliage=12, lawn=13, paving=14, kies=15, timber=16, seam=17)
 
-# Base palette: key -> (colour, surface, tinted by the game's per-house wall colour).
+# Tint codes in uv.y: keep in sync with TINT in src/world/houseKinds.ts. The game varies these per house: the wall
+# colour from the style's TINTS, roof shades and the colours of shutters and doors from its seed.
+T_WALL, T_ROOF, T_SHUTTER, T_DOOR = 1, 2, 3, 4
+
+# Base palette: key -> (colour, surface, tint code (0 = fixed, T_*)).
 BASE = {
     'wall': (0xece6da, 'plaster', 1), 'wall2': (0xd9d2c4, 'rough', 1), 'plinth': (0x8c8880, 'rough', 0),
     'reveal': (0xe4ded2, 'plaster', 1), 'frame': (0xf2f2ee, 'paint', 0), 'frame.dark': (0x34373b, 'paint', 0),
-    'sill': (0xb8b2a6, 'concrete', 0), 'door': (0x5a3a26, 'wood', 0), 'door.dark': (0x2c2e31, 'paint', 0),
-    'door.white': (0xe8e6e0, 'paint', 0), 'garagedoor': (0xd8d8d4, 'metal', 0),
-    'roof': (0x9a4a36, 'clay', 0), 'roof.slate': (0x4a4c52, 'slate', 0), 'roof.metal': (0x3c3f43, 'metal', 0),
+    'sill': (0xb8b2a6, 'concrete', 0), 'door': (0x5a3a26, 'wood', T_DOOR), 'door.dark': (0x2c2e31, 'paint', T_DOOR),
+    'door.white': (0xe8e6e0, 'paint', T_DOOR), 'garagedoor': (0xd8d8d4, 'metal', 0),
+    'roof': (0x9a4a36, 'clay', T_ROOF), 'roof.slate': (0x4a4c52, 'slate', T_ROOF), 'roof.metal': (0x5a5e63, 'seam', 0),
     'roof.flat': (0x8a8882, 'gravel', 0), 'fascia': (0xeeeeea, 'paint', 0), 'gutter': (0x8a8d90, 'metal', 0),
     'parapet': (0xe6e2da, 'plaster', 1), 'cap': (0x7c8084, 'metal', 0), 'chimney': (0x8a4a3a, 'brick', 0),
     'brick': (0xa65a42, 'brick', 0), 'brick.dark': (0x6e3a2e, 'brick', 0), 'stone': (0xc8b490, 'stone', 0),
     'stone.red': (0xa8705a, 'stone', 0), 'concrete': (0xb4b2ac, 'concrete', 0), 'concrete.dark': (0x5a5c5e, 'concrete', 0),
     'wood': (0xa87a4e, 'wood', 0), 'wood.dark': (0x5a4434, 'wood', 0), 'wood.red': (0x8a2e24, 'wood', 0),
     'wood.grey': (0x8c8a84, 'wood', 0), 'timber': (0x4a3426, 'timber', 0), 'metal': (0x3a3d40, 'metal', 0),
-    'metal.light': (0xb4b8bc, 'metal', 0), 'corten': (0x8a4a2a, 'metal', 0), 'shutter': (0x3e6a48, 'paint', 0),
-    'shutter.blue': (0x3a5a7a, 'paint', 0), 'shutter.white': (0xe8e8e2, 'paint', 0), 'terracotta': (0xc87a52, 'clay', 0),
+    'metal.light': (0xb4b8bc, 'metal', 0), 'corten': (0x8a4a2a, 'metal', 0), 'shutter': (0x3e6a48, 'paint', T_SHUTTER),
+    'shutter.blue': (0x3a5a7a, 'paint', T_SHUTTER), 'shutter.white': (0xe8e8e2, 'paint', 0), 'terracotta': (0xc87a52, 'clay', T_ROOF),
     'step': (0xa8a49c, 'concrete', 0), 'column': (0xeeeae2, 'stone', 0), 'copper': (0x5f8f7a, 'metal', 0),
     'flower.red': (0xc8283a, 'foliage', 0), 'flower.pink': (0xe070a0, 'foliage', 0), 'flower.yellow': (0xe8c030, 'foliage', 0),
     'flower.white': (0xf2f0e8, 'foliage', 0), 'flower.blue': (0x6a70d0, 'foliage', 0), 'leaf': (0x4a7a3a, 'foliage', 0),
@@ -237,7 +241,7 @@ class Wall:
 
 def wall(m, g, w, key, L, H, ops, lod, rkey=None, depth=0.2):
     """A wall rectangle L x H with openings [(u0, v0, u1, v1, kind, opts)]: holes with reveals in lod0."""
-    rkey = rkey or ('reveal' if m.pal[key][2] else key)
+    rkey = rkey or ('reveal' if m.pal[key][2] == T_WALL else key)
     if lod:
         m.face(key, [w.p(0, 0), w.p(L, 0), w.p(L, H), w.p(0, H)], w.n)
         for op in ops:
@@ -291,6 +295,13 @@ def fill_deep(m, g, w, op, d):
         if bars & 2:
             v = v0 + (v1 - v0) * 0.72
             bar(m, fk, w, a0, v - ft / 2, a1, v + ft / 2, d - 0.08, d - 0.02)
+        if o.get('blind') and kind == 'win':
+            # Roller shutters or external blinds, lowered by a different amount in each window (fixed per model).
+            rnd = random.Random(int(abs(a0 * 7919 + v0 * 104729 + w.o[0] * 31 + w.o[2] * 17 + w.n[0] * 5 + w.n[2] * 3) * 1000))
+            if rnd.random() < 0.55:
+                f = rnd.choice((0.15, 0.3, 0.45, 0.6, 0.75))
+                bar(m, o['blind'], w, a0 + 0.01, v1 - f * (v1 - v0), a1 - 0.01, v1, d - 0.15, d - 0.1)
+            bar(m, o['blind'], w, a0, v1 - 0.12, a1, v1, d - 0.17, d - 0.1)
     elif kind == 'door':
         dk = o.get('door', 'door')
         bar(m, dk, w, a0, v0, a1, v1, d - 0.06, d)
@@ -376,6 +387,17 @@ def decorate(m, w, op, deco, lod):
             m.ball(cols[k % len(cols)] if k % 2 else 'leaf', 0.11, p, seg=6, rings=4)
 
 
+def door_furniture(m, w, op):
+    """Wall lamp beside the door, house number and bell plate."""
+    a0, v0, a1, v1 = op[:4]
+    la = a0 - 0.32
+    bar(m, 'frame.dark', w, la - 0.09, v1 - 0.45, la + 0.09, v1 - 0.05, -0.03, 0.0)
+    bar(m, 'lamp', w, la - 0.07, v1 - 0.4, la + 0.07, v1 - 0.12, -0.16, -0.03)
+    bar(m, 'frame.dark', w, la - 0.09, v1 - 0.12, la + 0.09, v1 - 0.06, -0.18, -0.03)
+    bar(m, 'metal.light', w, a1 + 0.08, 1.05, a1 + 0.2, 1.35, -0.025, 0.0)
+    bar(m, 'frame.dark', w, a1 + 0.06, v1 - 0.3, a1 + 0.26, v1 - 0.12, -0.025, 0.0)
+
+
 def spread(L, ww, gap, margin, n=None):
     """Centres of n equal windows of width ww spread over L (n from the gap if not given)."""
     if n is None:
@@ -426,7 +448,7 @@ def volume(m, g, v, lod):
                 if f * fh + sill + wh > H - 0.15:
                     continue
                 for c in spread(L, ww, sw['gap'], sw['margin'], sw.get('n')):
-                    ops.append([c - ww / 2, f * fh + sill, c + ww / 2, f * fh + sill + wh, 'win', {'floor': f, 'frame': sw.get('frame', 'frame'), 'bars': sw.get('bars', 'auto'), 'transom': sw.get('transom', True)}])
+                    ops.append([c - ww / 2, f * fh + sill, c + ww / 2, f * fh + sill + wh, 'win', {'floor': f, 'frame': sw.get('frame', 'frame'), 'bars': sw.get('bars', 'auto'), 'transom': sw.get('transom', True), 'blind': sw.get('blind')}])
             if side == 'front':
                 for dx, kind, dw, dh, extra in v.get('doors', []):
                     a = to_u(v, side, dx)
@@ -441,6 +463,8 @@ def volume(m, g, v, lod):
         wall(m, g, w, keys.get(side, key), L, H, ops, lod, rkey=v.get('reveal'))
         for op in ops:
             decorate(m, w, op, deco, lod)
+            if op[4] == 'door' and not lod and v.get('door_lamp', True) and op[0] > 0.5 and op[2] < L - 0.35:
+                door_furniture(m, w, op)
         if v.get('fachwerk') and (side in v['fachwerk'] if isinstance(v['fachwerk'], tuple) else True):
             fachwerk(m, w, L, H, ops, floors, fh, lod, v.get('fachwerk_from', 0))
         if v.get('quoins') and not lod:
@@ -455,6 +479,9 @@ def volume(m, g, v, lod):
         m.box(ck, x0 - c, x1 + c, top - 0.28, top, z0 - c, z1 + c)
         if not lod:
             m.box(ck, x0 - c * 0.5, x1 + c * 0.5, top - 0.4, top - 0.28, z0 - c * 0.5, z1 + c * 0.5)
+            if v.get('brackets'):
+                for x in spread(x1 - x0, 0.14, 0.7, 0.25):
+                    m.box(ck, x0 + x - 0.07, x0 + x + 0.07, top - 0.62, top - 0.4, z1, z1 + c * 0.75)
     roof(m, v.get('roof'), x0, x1, z0, z1, top, lod)
     return top
 
@@ -573,6 +600,10 @@ def roof(m, r, x0, x1, z0, z1, e, lod):
             slab_roof(m, key, pts, th, fk)
             if not lod:
                 gutter(m, x0 - o, x1 + o, e - drop - 0.05, zs + s * (o + 0.08))
+                if r.get('pipes', True):
+                    downpipes(m, (x0 + 0.2, x1 - 0.2), zs, s, e - drop - 0.05, zs + s * (o + 0.08))
+                if r.get('rafters'):
+                    rafters(m, x0 - o, x1 + o, zs, s, e, o, pitch, key=r['rafters'] if isinstance(r['rafters'], str) else 'wood.dark')
         for xs, s in ((x0, -1), (x1, 1)):
             if t == 'gable':
                 m.face(wk, [(xs, e, z0), (xs, e, z1), (xs, ridge - 0.05, zm)], (s, 0, 0))
@@ -605,6 +636,9 @@ def roof(m, r, x0, x1, z0, z1, e, lod):
         if not lod:
             gutter(m, X0, X1, E - 0.05, Z1 + 0.08)
             gutter(m, X0, X1, E - 0.05, Z0 - 0.08)
+            if r.get('pipes', True):
+                downpipes(m, (x0 + 0.2, x1 - 0.2), z1, 1, E - 0.05, Z1 + 0.08)
+                downpipes(m, (x1 - 0.2,), z0, -1, E - 0.05, Z0 - 0.08)
         return ridge
     if t == 'mansard':
         ml = r.get('lower', 2.6)
@@ -686,6 +720,77 @@ def gutter(m, xa, xb, y, z):
     m.box('gutter', xa, xb, y - 0.1, y + 0.02, z - 0.06, z + 0.06)
 
 
+def obox(m, key, c, a, b, d):
+    """Box centred at c with the half-extent vectors a, b, d (any orientation)."""
+    P = lambda i, j, k: tuple(c[n] + i * a[n] + j * b[n] + k * d[n] for n in range(3))
+    for q in ([P(1, -1, -1), P(1, 1, -1), P(1, 1, 1), P(1, -1, 1)], [P(-1, -1, -1), P(-1, -1, 1), P(-1, 1, 1), P(-1, 1, -1)],
+              [P(-1, 1, -1), P(-1, 1, 1), P(1, 1, 1), P(1, 1, -1)], [P(-1, -1, -1), P(1, -1, -1), P(1, -1, 1), P(-1, -1, 1)],
+              [P(-1, -1, 1), P(1, -1, 1), P(1, 1, 1), P(-1, 1, 1)], [P(-1, -1, -1), P(-1, 1, -1), P(1, 1, -1), P(1, -1, -1)]):
+        m.face(key, q, away=c)
+
+
+def downpipes(m, xs, z_wall, s, y_top, z_gutter):
+    """Downpipes from the gutter (top y_top at z_gutter) down a wall at z_wall (facing s) to the ground at the x positions."""
+    for x in xs:
+        m.cyl('gutter', 0.05, 0.05, y_top - 0.15, x, z_wall + s * 0.09, seg=6)
+        m.box('gutter', x - 0.04, x + 0.04, y_top - 0.22, y_top - 0.12, min(z_wall + s * 0.04, z_gutter), max(z_wall + s * 0.04, z_gutter))
+        m.box('gutter', x - 0.06, x + 0.06, 0.05, 0.25, min(z_wall + s * 0.09, z_wall + s * 0.3), max(z_wall + s * 0.09, z_wall + s * 0.3))
+
+
+def rafters(m, x0, x1, zs, s, e, o, pitch, key='wood.dark', step=0.9):
+    """Rafter ends under the eave overhang of a slope whose eave runs along x at the wall z = zs (outward s)."""
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    n = (0, cp, s * sp)
+    L = o / cp
+    k = max(1, int((x1 - x0) / step))
+    for i in range(k + 1):
+        x = x0 + 0.1 + (x1 - x0 - 0.2) * i / k
+        top = (x, e - o * math.tan(pitch) / 2, zs + s * o / 2)
+        c = tuple(top[j] - n[j] * 0.26 for j in range(3))
+        obox(m, key, c, (0.05, 0, 0), (0, 0.07 * cp, 0.07 * s * sp), (0, -sp * L / 2 * 0.98, s * cp * L / 2 * 0.98))
+
+
+def slope_quad(x0, x1, z_eave, y_eave, z_ridge, y_ridge, t0, t1, lift):
+    """Corner points of a strip of a roof slope between the fractions t0..t1 from the eave to the ridge."""
+    za, zb = z_eave + (z_ridge - z_eave) * t0, z_eave + (z_ridge - z_eave) * t1
+    ya, yb = y_eave + (y_ridge - y_eave) * t0 + lift, y_eave + (y_ridge - y_eave) * t1 + lift
+    return [(x0, ya, za), (x1, ya, za), (x1, yb, zb), (x0, yb, zb)]
+
+
+def solar_slope(m, x0, x1, z_eave, y_eave, z_ridge, y_ridge, t0=0.12, t1=0.82):
+    """PV panels on a slope (eave and ridge lines along x), a thin dark slab just above the tiles."""
+    rows = max(1, round((t1 - t0) * math.hypot(z_ridge - z_eave, y_ridge - y_eave) / 1.75))
+    for i in range(rows):
+        a = t0 + (t1 - t0) * i / rows + 0.006
+        b = t0 + (t1 - t0) * (i + 1) / rows - 0.006
+        m.slab('solar', slope_quad(x0, x1, z_eave, y_eave, z_ridge, y_ridge, a, b, 0.1), 0.04, edge='metal.light')
+
+
+def solar_flat(m, x0, x1, z0, z1, y, tilt=math.radians(15)):
+    """Rows of PV panels on a flat roof, tilted towards +z on low racks."""
+    z = z0
+    while z + 1.1 <= z1:
+        pts = [(x0, y + 0.15, z + 1.0), (x1, y + 0.15, z + 1.0), (x1, y + 0.15 + math.sin(tilt), z + 1.0 - math.cos(tilt)), (x0, y + 0.15 + math.sin(tilt), z + 1.0 - math.cos(tilt))]
+        m.slab('solar', pts, 0.04, edge='metal.light')
+        for x in (x0 + 0.2, x1 - 0.2):
+            m.box('metal.light', x - 0.03, x + 0.03, y, y + 0.15 + math.sin(tilt), z + 0.05, z + 0.11)
+        z += 1.7
+
+
+def skylight(m, g, x, z_eave, y_eave, z_ridge, y_ridge, t, w=0.8, h=1.1, lod=0):
+    """Roof window on a slope (eave and ridge lines along x) at the fraction t up the slope."""
+    L = math.hypot(z_ridge - z_eave, y_ridge - y_eave)
+    dt = h / L / 2
+    m.slab('frame.dark', slope_quad(x - w / 2, x + w / 2, z_eave, y_eave, z_ridge, y_ridge, t - dt, t + dt, 0.1), 0.1)
+    gp = slope_quad(x - w / 2 + 0.07, x + w / 2 - 0.07, z_eave, y_eave, z_ridge, y_ridge, t - dt + 0.07 / L, t + dt - 0.07 / L, 0.112)
+    g.face('glass', gp, newell_up(gp))
+
+
+def newell_up(pts):
+    n = newell(pts)
+    return n if n[1] >= 0 else neg(n)
+
+
 def dormer(m, g, x, zf, e_base, depth, h, lod, flat=False, w=1.6, key='wall', roof_key='roof', win=True, gl=None):
     """Dormer with its front at zf: walls from e_base up h, a window, a small roof; reaches depth back into the roof."""
     x0, x1 = x - w / 2, x + w / 2
@@ -709,7 +814,10 @@ def dormer(m, g, x, zf, e_base, depth, h, lod, flat=False, w=1.6, key='wall', ro
 
 def chimney(m, x, z, y0, y1, key='chimney'):
     m.box(key, x - 0.3, x + 0.3, y0, y1, z - 0.3, z + 0.3)
+    m.box(key, x - 0.34, x + 0.34, y1 - 0.32, y1 - 0.2, z - 0.34, z + 0.34)
     m.box('cap', x - 0.36, x + 0.36, y1, y1 + 0.08, z - 0.36, z + 0.36)
+    for dx in (-0.13, 0.13):
+        m.cyl('terracotta' if key != 'stone' else 'concrete.dark', 0.08, y1 + 0.08, y1 + 0.32, x + dx, z, seg=6, r2=0.065)
 
 
 def steps(m, x, z, w, n, rise=0.15, run=0.3, key='step'):
@@ -793,7 +901,7 @@ def solar(m, x0, x1, z0, z1, y0, y1, n_rows=1):
         m.slab('solar', [(x0, ya, za), (x1, ya, za), (x1, yb, zb), (x0, yb, zb)], 0.04, edge='metal.light')
 
 
-BASE['solar'] = (0x1a2232, 'metal', 0)
+BASE['solar'] = (0x141a26, 'paint', 0)
 
 
 # ---------------------------------------------------------------- the catalogue
@@ -833,10 +941,10 @@ PALETTES = {
     'verwaltung': {'wall': (0xe2d4b8, 'plaster', 1), 'plinth': (0x9a8a70, 'stone', 0), 'sill': (0xc8b490, 'stone', 0)},
 }
 
-MODERN_WIN = dict(w=1.6, h=1.6, sill=0.6, gap=1.4, margin=1.1, deco={'deepframe': True}, frame='frame.dark', transom=False)
+MODERN_WIN = dict(w=1.6, h=1.6, sill=0.6, gap=1.4, margin=1.1, deco={'deepframe': True}, frame='frame.dark', transom=False, blind='frame.dark')
 ANTIK_WIN = dict(w=1.05, h=1.75, sill=0.8, gap=1.2, margin=1.0, deco={'sill': True, 'surround': True, 'pediment': 'mixed'})
 LAND_WIN = dict(w=0.95, h=1.25, sill=0.85, gap=1.1, margin=0.9, deco={'sill': True, 'shutters': True, 'flowerbox': True})
-KLASS_WIN = dict(w=1.25, h=1.35, sill=0.9, gap=1.3, margin=1.0, deco={'sill': True})
+KLASS_WIN = dict(w=1.25, h=1.35, sill=0.9, gap=1.3, margin=1.0, deco={'sill': True}, blind='metal.light')
 VILLA_WIN = dict(w=1.1, h=1.6, sill=0.8, gap=1.2, margin=1.1, deco={'sill': True, 'surround': True})
 
 
@@ -846,7 +954,8 @@ def modern_kubus(m, g, lod, hw, hd, c):
     v = V(-hw, hw, -hd, hd, floors=2, fh=3.0, win=MODERN_WIN, roof=dict(type='flat', parapet=0.3),
           doors=[dr(c['door'], 'door', 1.2, 2.3, door='door.dark', panels=False)],
           side_win={'front': dict(n=2)})
-    volume(m, g, v, lod)
+    e = volume(m, g, v, lod)
+    solar_flat(m, -hw + 1.0, hw - 1.0, -hd + 1.0, hd - 1.0, e)
     # Slim canopy over the door.
     canopy(m, c['door'], hd, 2.2, 1.2, 2.85)
     steps(m, c['door'], hd, 1.6, 2)
@@ -900,7 +1009,7 @@ def modern_dachterrasse(m, g, lod, hw, hd, c):
 # --- antik
 
 def antik_walmdach(m, g, lod, hw, hd, c):
-    v = V(-hw, hw, -hd, hd, floors=2, fh=3.3, plinth=0.75, win=ANTIK_WIN, quoins=True, bands=True, cornice=0.22,
+    v = V(-hw, hw, -hd, hd, floors=2, fh=3.3, plinth=0.75, win=ANTIK_WIN, quoins=True, bands=True, cornice=0.22, brackets=True,
           roof=dict(type='hip', pitch=38, key='roof.slate', over=0.35), doors=[dr(0, 'door', 1.3, 2.6, door='door.white')])
     e = volume(m, g, v, lod)
     portico(m, 0, hd, 2.6, 1.6, 3.3, lod)
@@ -925,7 +1034,7 @@ def portico(m, x, z, w, depth, h, lod, key='column'):
 
 def antik_mansarde(m, g, lod, hw, hd, c):
     v = V(-hw, hw, -hd, hd, floors=2, fh=3.3, plinth=0.75, win=dict(ANTIK_WIN, deco={'sill': True, 'surround': True, 'pediment': 'straight'}),
-          quoins=True, bands=True, cornice=0.25, roof=dict(type='mansard', lower=2.7, inset=1.0, key='roof.slate'),
+          quoins=True, bands=True, cornice=0.25, brackets=True, roof=dict(type='mansard', lower=2.7, inset=1.0, key='roof.slate'),
           doors=[dr(0, 'door', 1.3, 2.6, door='door.white')])
     e = volume(m, g, v, lod)
     for x in spread(c['w'], 1.2, 1.6, 1.6, 3):
@@ -948,7 +1057,7 @@ def antik_risalit(m, g, lod, hw, hd, c):
 
 
 def antik_erker(m, g, lod, hw, hd, c):
-    e = volume(m, g, V(-hw, hw, -hd, hd, floors=2, fh=3.3, plinth=0.75, win=ANTIK_WIN, quoins=True, bands=True, cornice=0.2,
+    e = volume(m, g, V(-hw, hw, -hd, hd, floors=2, fh=3.3, plinth=0.75, win=ANTIK_WIN, quoins=True, bands=True, cornice=0.2, brackets=True,
                         roof=dict(type='hip', pitch=40, key='roof.slate', over=0.3), doors=[dr(c['door'], 'door', 1.2, 2.6, door='door.white')],
                         side_win={'front': dict(n=2, margin=1.1)}), lod)
     tower(m, g, hw - 0.6, hd - 0.6, 1.9, 0, e + 1.4, 4.2, lod, key='wall', win_rows=[(1.6, 3.1), (4.9, 6.4), (e + 0.1, e + 1.1)])
@@ -975,6 +1084,8 @@ def architekt_pultdach(m, g, lod, hw, hd, c):
     volume(m, g, V(hw - 4.5, hw, -hd + 0.8, hd - 0.4, floors=1, fh=3.2, wall='concrete', reveal='frame.dark',
                     win=dict(MODERN_WIN, w=3.4, h=2.6, sill=0.1, n=1, deco={}), sides=('front', 'right'), roof=dict(type='flat', parapet=0.2, parapet_key='concrete')), lod)
     m.box('concrete', -hw - 0.6, hw - 4.5, 2.95, 3.15, hd, hd + 1.4)
+    e = 0.45 + 6.0
+    solar_slope(m, -hw + 0.5, hw - 5.0, -hd, e, hd, e + c['d'] * math.tan(math.radians(12)), 0.08, 0.9)
     steps(m, c['door'], hd, 1.4, 2)
 
 
@@ -1012,6 +1123,8 @@ def architekt_scheune(m, g, lod, hw, hd, c):
           doors=[dr(c['door'], 'door', 1.2, 2.3, door='door.dark', panels=False)])
     e = volume(m, g, v, lod)
     rh = hd * math.tan(math.radians(45))
+    for x in (-3.4, -0.4):
+        skylight(m, g, x, hd, e, 0, e + rh, 0.5, w=1.0, h=1.3, lod=lod)
     g.face('glass', [(-hw - 0.012, e + 0.2, -1.5), (-hw - 0.012, e + 0.2, 1.5), (-hw - 0.012, e + rh - 1.6, 0)], (-1, 0, 0))
     m.box('concrete', -1.0, 6.0, -0.4, 0.15, hd, hd + 2.0)
 
@@ -1020,9 +1133,11 @@ def architekt_scheune(m, g, lod, hw, hd, c):
 
 def landhaus_fachwerk(m, g, lod, hw, hd, c):
     v = V(-hw, hw, -hd, hd, floors=2, fh=2.7, wall='wall', fachwerk=True, win=dict(LAND_WIN, deco={'flowerbox': True, 'flowerbox_floor': 1}),
-          roof=dict(type='gable', pitch=52, key='roof', over=0.45), doors=[dr(c['door'], 'door', 1.1, 2.2)])
+          roof=dict(type='gable', pitch=52, key='roof', over=0.45, rafters=True), doors=[dr(c['door'], 'door', 1.1, 2.2)])
     e = volume(m, g, v, lod)
     rh = hd * math.tan(math.radians(52))
+    for x in (-2.4, 1.6):
+        skylight(m, g, x, -hd, e, 0, e + rh, 0.42, lod=lod)
     for s, xs in ((-1, -hw), (1, hw)):
         g.face('glass', [(xs + s * 0.012, e + 0.9, -0.45), (xs + s * 0.012, e + 0.9, 0.45), (xs + s * 0.012, e + 1.9, 0.45), (xs + s * 0.012, e + 1.9, -0.45)], (s, 0, 0))
     chimney(m, 2.5, -1, e, e + rh + 0.6)
@@ -1033,7 +1148,7 @@ def landhaus_steinsockel(m, g, lod, hw, hd, c):
     volume(m, g, V(-hw, hw, -hd, hd, floors=1, fh=2.9, wall='stone', reveal='stone', win=dict(LAND_WIN, deco={'sill': True, 'shutters': True}),
                     doors=[dr(c['door'], 'door', 1.2, 2.3)]), lod)
     e = volume(m, g, V(-hw - 0.15, hw + 0.15, -hd - 0.15, hd + 0.15, y0=0.45 + 2.9, plinth=0, floors=1, fh=2.7, fachwerk=True,
-                        win=dict(LAND_WIN, deco={'flowerbox': True, 'flowerbox_floor': 0}), roof=dict(type='gable', pitch=48, key='roof', over=0.5)), lod)
+                        win=dict(LAND_WIN, deco={'flowerbox': True, 'flowerbox_floor': 0}), roof=dict(type='gable', pitch=48, key='roof', over=0.5, rafters=True)), lod)
     for x in (-2.5, 2.5):
         dormer(m, g, x, hd - 0.6, e + 0.8, 1.8, 1.3, lod, w=1.4, gl=g)
     chimney(m, -3, 0, e, e + 4.5)
@@ -1042,7 +1157,7 @@ def landhaus_steinsockel(m, g, lod, hw, hd, c):
 
 def landhaus_kruppelwalm(m, g, lod, hw, hd, c):
     e = volume(m, g, V(-hw, hw, -hd, hd, floors=2, fh=2.8, wall='wall', win=dict(LAND_WIN, deco={'sill': True, 'shutters': True}, n=4),
-                        roof=dict(type='kruppel', pitch=46, key='roof', over=0.45, kruppel=0.35), doors=[dr(0, 'door', 1.2, 2.3, door='wood.dark')]), lod)
+                        roof=dict(type='kruppel', pitch=46, key='roof', over=0.45, kruppel=0.35, rafters=True), doors=[dr(0, 'door', 1.2, 2.3, door='wood.dark')]), lod)
     canopy(m, 0, hd, 2.4, 1.2, 2.75, key='wood.dark')
     for s in (-1, 1):
         m.box('wood.dark', s * 1.1 - 0.08, s * 1.1 + 0.08, 0.45, 2.75, hd + 1.0, hd + 1.16)
@@ -1074,7 +1189,7 @@ def landhaus_gauben(m, g, lod, hw, hd, c):
 def landhaus_cottage(m, g, lod, hw, hd, c):
     v = V(-hw, hw, -hd, hd, floors=1, fh=2.8, knee=0.4, wall='stone', reveal='stone', plinth=0.3,
           win=dict(LAND_WIN, w=0.9, h=1.2, deco={'sill': True, 'flowerbox': True, 'flowerbox_floor': 0}),
-          roof=dict(type='gable', pitch=50, key='roof.slate', over=0.35, wall='stone'), doors=[dr(c['door'], 'door', 1.0, 2.1, door='shutter')])
+          roof=dict(type='gable', pitch=50, key='roof.slate', over=0.35, wall='stone', rafters=True), doors=[dr(c['door'], 'door', 1.0, 2.1, door='shutter')])
     e = volume(m, g, v, lod)
     dormer(m, g, -1.5, hd - 0.3, e + 0.5, 1.6, 1.3, lod, w=1.3, roof_key='roof.slate', gl=g)
     chimney(m, -hw + 0.6, 0, e - 1, e + hd * math.tan(math.radians(50)) + 0.8, key='stone')
@@ -1085,7 +1200,7 @@ def landhaus_cottage(m, g, lod, hw, hd, c):
 # --- klassisch
 
 def klassisch_siedlung(m, g, lod, hw, hd, c):
-    v = V(-hw, hw, -hd, hd, floors=1, fh=2.8, knee=0.6, win=dict(KLASS_WIN, n=2), roof=dict(type='gable', axis='z', pitch=48, key='roof', over=0.4),
+    v = V(-hw, hw, -hd, hd, floors=1, fh=2.8, knee=0.6, win=dict(KLASS_WIN, n=2), roof=dict(type='gable', axis='z', pitch=48, key='roof', over=0.4, rafters=True),
           doors=[dr(c['door'], 'door', 1.0, 2.2, door='wood')])
     e = volume(m, g, v, lod)
     g.face('glass', [(-0.6, e + 1.0, hd + 0.012), (0.6, e + 1.0, hd + 0.012), (0.6, e + 2.2, hd + 0.012), (-0.6, e + 2.2, hd + 0.012)], (0, 0, 1))
@@ -1110,6 +1225,7 @@ def klassisch_bungalow(m, g, lod, hw, hd, c):
     e = volume(m, g, V(-hw, hw, -hd, hd, floors=1, fh=2.75, win=dict(KLASS_WIN, w=1.6, gap=1.4), roof=dict(type='hip', pitch=24, key='roof', over=0.7),
                         doors=[dr(c['door'], 'door', 1.1, 2.2, door='wood')], side_keys={'front': 'wall'}), lod)
     m.box('brick', -hw - 0.01, -hw + 4.0, 0.45, 3.2, hd - 0.02, hd + 0.02)
+    solar_slope(m, -2.4, 2.4, hd, e, 0, e + hd * math.tan(math.radians(24)), 0.15, 0.7)
     chimney(m, -3, 0, e, e + 2.6)
     steps(m, c['door'], hd, 1.4, 2)
 
@@ -1118,6 +1234,9 @@ def klassisch_garage(m, g, lod, hw, hd, c):
     e = volume(m, g, V(-hw, hw - 3.3, -hd, hd, floors=2, fh=2.75, win=dict(KLASS_WIN, n=2), roof=dict(type='gable', pitch=42, key='roof', over=0.45),
                         doors=[dr(c['door'], 'door', 1.1, 2.2, door='wood')]), lod)
     volume(m, g, V(hw - 3.3, hw, -hd, hd - 0.6, floors=1, fh=2.6, sides=(), garages=[(c['garage'], 2.6)], wall='wall2', roof=dict(type='flat', parapet=0.15)), lod)
+    rh = hd * math.tan(math.radians(42))
+    solar_slope(m, -hw + 0.9, hw - 4.6, hd, e, 0, e + rh)
+    skylight(m, g, -2.0, -hd, e, 0, e + rh, 0.45, lod=lod)
     chimney(m, -2.5, -1, e, e + 3.4)
     canopy(m, c['door'], hd, 1.6, 0.9, 2.7, key='metal')
     steps(m, c['door'], hd, 1.4, 2)
@@ -1134,7 +1253,7 @@ def klassisch_zeltdach(m, g, lod, hw, hd, c):
 # --- stadtvilla
 
 def stadtvilla_zeltdach(m, g, lod, hw, hd, c):
-    e = volume(m, g, V(-hw, hw, -hd, hd, floors=2, fh=3.0, win=dict(VILLA_WIN, n=3, deco={'sill': True}), bands=True, band_key='wall2',
+    e = volume(m, g, V(-hw, hw, -hd, hd, floors=2, fh=3.0, win=dict(VILLA_WIN, n=3, deco={'sill': True}, blind='metal.light'), bands=True, band_key='wall2',
                         roof=dict(type='tent', pitch=22, key='roof.slate', over=0.7), doors=[dr(0, 'door', 1.2, 2.4, door='door.dark')]), lod)
     canopy(m, 0, hd, 2.0, 1.2, 2.9, key='metal')
     steps(m, 0, hd, 1.6, 3)
@@ -1156,7 +1275,7 @@ def stadtvilla_toskana(m, g, lod, hw, hd, c):
 
 
 def stadtvilla_erker(m, g, lod, hw, hd, c):
-    e = volume(m, g, V(-hw, hw, -hd, hd, floors=2, fh=3.0, win=dict(VILLA_WIN, deco={'sill': True}), roof=dict(type='hip', pitch=25, key='roof.slate', over=0.6),
+    e = volume(m, g, V(-hw, hw, -hd, hd, floors=2, fh=3.0, win=dict(VILLA_WIN, deco={'sill': True}, blind='frame.dark'), roof=dict(type='hip', pitch=25, key='roof.slate', over=0.6),
                         doors=[dr(c['door'], 'door', 1.2, 2.4, door='door.dark')], side_win={'front': dict(n=2, margin=0.8)}), lod)
     # Bay window over both floors on the left of the front.
     bv = V(-3.6, -1.0, hd, hd + 1.0, floors=2, fh=3.0, wall='wall2', win=dict(VILLA_WIN, w=1.6, n=1, deco={'sill': True}), sides=('front', 'left', 'right'),
@@ -1169,7 +1288,7 @@ def stadtvilla_erker(m, g, lod, hw, hd, c):
 def stadtvilla_schwedenhaus(m, g, lod, hw, hd, c):
     v = V(-hw, hw, -hd, hd, floors=1, fh=2.8, knee=0.5, wall='wood.red', reveal='white', plinth=0.4,
           win=dict(LAND_WIN, deco={'sill': True}, frame='white'), side_keys={},
-          roof=dict(type='gable', pitch=42, key='roof.slate', over=0.4, wall='wood.red'), doors=[dr(0, 'door', 1.1, 2.2, door='door.white')])
+          roof=dict(type='gable', pitch=42, key='roof.slate', over=0.4, wall='wood.red', rafters='white'), doors=[dr(0, 'door', 1.1, 2.2, door='door.white')])
     e = volume(m, g, v, lod)
     # White corner boards and window trims.
     if not lod:
@@ -1198,7 +1317,7 @@ def stadtvilla_mediterran(m, g, lod, hw, hd, c):
 
 def villa_jugendstil(m, g, lod, hw, hd, c):
     e = volume(m, g, V(-hw, hw - 4, -hd, hd, floors=2, fh=3.4, plinth=0.9, win=dict(VILLA_WIN, deco={'sill': True, 'surround': True, 'pediment': 'mixed'}), quoins=True, bands=True,
-                        cornice=0.25, roof=dict(type='hip', pitch=45, key='roof.slate', over=0.4), doors=[dr(0, 'door', 1.4, 2.7, door='door.white')]), lod)
+                        cornice=0.25, brackets=True, roof=dict(type='hip', pitch=45, key='roof.slate', over=0.4), doors=[dr(0, 'door', 1.4, 2.7, door='door.white')]), lod)
     e2 = volume(m, g, V(hw - 4, hw, -hd + 1.5, hd + 1.0, floors=2, fh=3.4, plinth=0.9, win=dict(VILLA_WIN, n=1, w=1.4, deco={'sill': True, 'surround': True, 'pediment': 'triangle'}),
                          quoins=True, bands=True, roof=dict(type='gable', axis='z', pitch=50, key='roof.slate', over=0.35)), lod)
     tower(m, g, -hw + 0.4, hd - 0.4, 2.2, 0, e + 2.2, 5.0, lod, win_rows=[(1.9, 3.6), (5.3, 7.0), (e + 0.4, e + 1.8)])
@@ -1254,7 +1373,7 @@ def villa_glas(m, g, lod, hw, hd, c):
 
 def verwaltung_klassisch(m, g, lod, hw, hd, c):
     e = volume(m, g, V(-hw, hw, -hd, hd, floors=3, fh=3.6, plinth=1.0, win=dict(ANTIK_WIN, w=1.3, h=2.1, gap=1.4, deco={'sill': True, 'surround': True, 'pediment': 'mixed'}),
-                        quoins=True, bands=True, cornice=0.35, roof=dict(type='mansard', lower=3.0, inset=1.1, key='roof.slate'),
+                        quoins=True, bands=True, cornice=0.35, brackets=True, roof=dict(type='mansard', lower=3.0, inset=1.1, key='roof.slate'),
                         side_keys={}, blank_floors={}), lod)
     # Central projection with columns over two floors, the pediment carrying the clock.
     rv = V(-5.5, 5.5, hd - 0.2, hd + 1.0, floors=3, fh=3.6, plinth=1.0, quoins=True, bands=True, wall='wall2', cornice=0.3,
@@ -1306,6 +1425,7 @@ def verwaltung_modern(m, g, lod, hw, hd, c):
     volume(m, g, V(-hw + 3, hw - 3, -hd + 2, hd - 2.5, y0=e, plinth=0, floors=1, fh=3.2, wall='metal', reveal='frame.dark',
                     win=dict(MODERN_WIN, w=3.2, h=2.4, sill=0.3, gap=0.4, deco={}, transom=False), roof=dict(type='flat', parapet=0.3, parapet_key='metal', cap='metal')), lod)
     railing(m, -hw + 0.2, hw - 0.2, -hd + 0.2, hd - 0.2, e + 0.6, 0.6, 'metal', lod)
+    solar_flat(m, -hw + 3.6, hw - 3.6, -hd + 2.4, hd - 3.0, e + 3.2)
     steps(m, 0, hd, 8.0, 2, run=0.4)
 
 

@@ -426,9 +426,10 @@ export function buildRoads(
       if (carve || lifted) {
         // Centred on the carriageway where it lies off the OSM line (placement, auxiliary lane).
         const co = (p: typeof a) => (Rn.get(p)! - Ln) / 2;
-        const ch = Math.min(L.get(a)! + co(a), R.get(a)! - co(a), L.get(b)! + co(b), R.get(b)! - co(b));
-        if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted);
-        else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted);
+        const ext = [L.get(a)! + co(a), R.get(a)! - co(a), L.get(b)! + co(b), R.get(b)! - co(b)];
+        const ch = Math.min(...ext), cap = Math.max(...ext);
+        if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted, cap);
+        else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted, cap);
         const c = (p: typeof a, d: number) => p.y - d;
         // Another road just below beside this one (a junction arm, a road alongside at another height): the
         // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.

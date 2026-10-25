@@ -14,6 +14,7 @@ import { type LocalServer, startLocal } from './localServer.ts';
 import { type NetEvent, NetSession, WsTransport } from './netSession.ts';
 import { PoseFlag, POSE_LEN, type RaceInfo, type RoomSummary } from './protocol.ts';
 import { RemoteCars } from './remoteCars.ts';
+import { RemoteEngineSounds } from './remoteSound.ts';
 
 // Online play in the game (O2): the server browser and lobby, the other players' cars, shared races and the
 // net.* debug commands. Real servers are the Worker's Durable Objects (worker/net.ts), public with
@@ -43,6 +44,8 @@ const API = `${import.meta.env?.BASE_URL ?? '/'}api/net`;
 export class NetPlay {
   readonly session = new NetSession();
   readonly cars: RemoteCars;
+  /** Engine sounds of the other players' cars, after the first click (attachAudio). */
+  sound?: RemoteEngineSounds;
   readonly browser: ServerBrowser;
   readonly hud: NetHud;
   /** The local test server while it runs (net.local). */
@@ -98,6 +101,11 @@ export class NetPlay {
   }
 
   get online() { return this.session.online; }
+
+  /** Hooks the other players' engine sounds into the game's audio graph (after the first user gesture). */
+  attachAudio(ctx: AudioContext, destination: AudioNode) {
+    this.sound ??= new RemoteEngineSounds(ctx, destination);
+  }
 
   private inRace(r: RaceInfo | null) {
     const me = this.session.me?.id;
@@ -291,6 +299,7 @@ export class NetPlay {
       return buf;
     });
     this.cars.sync(s.players, s.renderTime(), dt, night, time, eye, performance.now());
+    this.sound?.update(dt, eye, (fn) => this.cars.forShown(fn));
     const st = this.standings();
     const run = this.d.game.runner;
     if (this.racing && run.event?.id === this.racing && run.busy) {
@@ -390,6 +399,20 @@ export class NetPlay {
     registerCommand({ name: 'net.race.join', help: 'Beim angekündigten Rennen mitfahren (Taste F)', run: () => { this.joinRace(); return 'angemeldet'; } });
     registerCommand({ name: 'net.race.go', help: 'Als Gastgeber das Rennen sofort starten', run: () => { s.send({ t: 'go' }); return 'Start'; } });
     registerCommand({ name: 'net.race.quit', help: 'Gemeinsames Rennen verlassen', run: () => { this.quitRace(); return 'verlassen'; } });
+    registerToggle('net.sound', 'Motorsound der anderen Spieler (räumlich, mit ihrem Auto)', () => this.sound?.enabled ?? true, (v) => {
+      if (!this.sound) throw new Error('Ton startet erst nach dem Klick auf Losfahren');
+      this.sound.enabled = v;
+    });
+    registerValue('net.sound.volume', 'Lautstärke der anderen Spieler 0..2', () => this.sound?.volume ?? 1, (v) => {
+      if (!this.sound) throw new Error('Ton startet erst nach dem Klick auf Losfahren');
+      this.sound.volume = v;
+    }, [0, 2]);
+    registerCommand({ name: 'net.sound.info', help: 'Welche Mitspieler-Autos gerade zu hören sind: Auto, Drehzahl, Gang, Last', run: () => {
+      if (!this.sound) throw new Error('Ton startet erst nach dem Klick auf Losfahren');
+      const names = new Map([...s.players.values()].map((p) => [p.info.id, p.info.name]));
+      const a = this.sound.active;
+      return a.length ? a.map((x) => `${names.get(x.id) ?? `#${x.id}`} · ${x.car} · ${x.rpm.toFixed(0)} /min · Gang ${x.gear} · Last ${x.load.toFixed(2)}`).join('\n') : 'kein Mitspieler in Hörweite';
+    } });
     registerToggle('net.collide', 'Zusammenstöße mit den Autos der anderen Spieler', () => this.cars.collide, (v) => (this.cars.collide = v));
     registerToggle('net.tags', 'Namensschilder über den Autos der anderen', () => this.cars.tags, (v) => (this.cars.tags = v));
     registerToggle('net.hud', 'Online-Anzeige links (Server, Spieler, Rennstand, Chat)', () => this.hud.visible, (v) => (this.hud.visible = v));

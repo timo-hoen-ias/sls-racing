@@ -73,6 +73,8 @@ export type AgentState = 'drive' | 'follow' | 'yield' | 'player' | 'crashed';
 export interface Agent {
   id: number;
   kind: VehicleKind;
+  /** Buses: the bus line (RoadGraph.busLines index) they follow where the network allows it. */
+  line?: number;
   spec: KindSpec;
   /** Paint colour, 0xrrggbb. */
   color: number;
@@ -209,7 +211,8 @@ export class TrafficSim {
   /** Puts a vehicle on a lane at a distance along it. Returns undefined when the spot is taken. */
   spawn(lane: Lane, s: number, kind?: VehicleKind): Agent | undefined {
     if (lane.edge.oneway && lane.dir < 0) return undefined;
-    kind ??= this.pickKind(lane.edge.rank);
+    const lines = this.graph.busOnEdge.get(lane.edge.id);
+    kind ??= this.pickKind(lane.edge.rank, !!lines);
     const spec = KINDS[kind];
     s = Math.min(Math.max(s, 0), lane.edge.length);
     for (const b of this.agents) if (sameLane(b, lane) && Math.abs(b.s - s) < (spec.length + b.spec.length) / 2 + 8) return undefined;
@@ -218,6 +221,7 @@ export class TrafficSim {
       id: this.nextId++, kind, spec, color: this.pickColor(kind), edge: lane.edge, dir: lane.dir, s,
       v: limit * 0.7, desire: 0.88 + this.rng() * 0.22, state: 'drive', wait: 0, crashed: 0, blocked: 0, stuck: 0, braking: false,
       x: 0, y: 0, z: 0, yaw: 0, pitch: 0,
+      ...(kind === 'bus' && lines ? { line: lines[Math.floor(this.rng() * lines.length)] } : {}),
     };
     this.pose(a);
     this.agents.push(a);
@@ -288,10 +292,18 @@ export class TrafficSim {
     }
   }
 
-  private pickKind(rank: number): VehicleKind {
+  /** Share of new vehicles on a bus line's road that are buses of that line (traffic.busanteil). */
+  busShare = 0.12;
+  /** Vehicles keep to the turn restrictions (traffic.verbote). */
+  respectBans = true;
+
+  private pickKind(rank: number, busLine = false): VehicleKind {
     const r = this.rng();
+    // With mapped bus lines, buses run on them only; without, on any main road.
+    const lines = this.graph.busLines.length > 0;
+    if (busLine && r < this.busShare) return 'bus';
     if (rank >= 8) return r < 0.14 ? 'truck' : r < 0.26 ? 'van' : 'car';
-    if (rank >= 5) return r < 0.06 ? 'bus' : r < 0.18 ? 'van' : r < 0.21 ? 'truck' : 'car';
+    if (rank >= 5) return !lines && r < 0.06 ? 'bus' : r < 0.18 ? 'van' : r < 0.21 ? 'truck' : 'car';
     return r < 0.1 ? 'van' : 'car';
   }
 
@@ -451,9 +463,12 @@ export class TrafficSim {
       if (e === a.edge || !carries(e) || this.closed.has(e.id)) continue;
       const dir: 1 | -1 = e.a === n ? 1 : -1;
       if (e.oneway && dir < 0) continue;
+      if (this.respectBans && this.graph.banned(a.edge.id, n, e.id)) continue;
       const lane = { edge: e, dir };
       const turn = Math.abs(this.turnAngle(here, lane));
-      options.push({ lane, w: (0.6 + e.rank / 3) * (turn < 0.5 ? 3 : turn > 2.4 ? 0.1 : 1) });
+      // Buses stay on their line.
+      const onLine = a.line !== undefined && this.graph.busLines[a.line]?.edges.has(e.id) ? 30 : 1;
+      options.push({ lane, w: (0.6 + e.rank / 3) * (turn < 0.5 ? 3 : turn > 2.4 ? 0.1 : 1) * onLine });
     }
     // Dead end: turn round, also on one-way stubs (better than getting stuck).
     if (!options.length) return { edge: a.edge, dir: a.dir > 0 ? -1 : 1 };

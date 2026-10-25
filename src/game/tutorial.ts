@@ -9,7 +9,7 @@ export const STEPS: { id: TutorialStep; text: string }[] = [
   { id: 'nitro', text: 'Zünde Nitro (Umschalt oder A): es füllt sich durch Beinaheunfälle, Drifts und Sprünge' },
   { id: 'skill', text: 'Hol dir Stilpunkte: knapp an Autos vorbei, driften oder springen' },
   { id: 'event', text: 'Fahr ein Event: J öffnet die Liste, an einem Start drückst du F' },
-  { id: 'garage', text: 'Besuch die Garage: Titelmenü oder der Lichtmarker neben dem Start (F)' },
+  { id: 'garage', text: 'Öffne die Garage: Taste G, oder fahr zum blauen Lichtmarker neben dem Start (F)' },
 ];
 
 export class Tutorial {

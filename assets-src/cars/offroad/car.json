@@ -1,0 +1,13 @@
+{
+  "name": "Geländewagen",
+  "credit": "Generic passenger car pack von Comrade1280, CC BY 4.0, sketchfab.com/3d-models/20f9af9b8a404d5cb022ac6fe87f21f5",
+  "file": "passenger-pack/generic_passenger_car_pack.glb",
+  "near": { "node": "Offroad Body", "radius": 2 },
+  "forward": "+z",
+  "yaw": 108,
+  "wheels": "Wheel_G",
+  "optics": ["Optics_3"],
+  "paint": { "materials": ["Body_3"] },
+  "tyre": ["Wheel_2"],
+  "lod": [0.5, 0.2]
+}

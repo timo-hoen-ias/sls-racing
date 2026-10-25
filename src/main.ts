@@ -220,14 +220,14 @@ async function boot() {
   view.scene.add(routeLine.mesh);
   const traffic = new Traffic(RAPIER, world, graph, { maxAgents: quality.traffic, shadows: quality.shadows > 0 });
   view.scene.add(traffic.view.root);
-  // Blender vehicles replace the procedural ones once loaded (traffic.models switches back).
+  // Pack cars and Blender vehicles replace the procedural ones once loaded (traffic.models switches).
   // Generated trees: foliage textures, species and impostors (treeRender.ts); the Blender GLB still has the hedge.
   vegetation.init(view.renderer).catch((e) => console.warn('[veg] Bäume nicht geladen', e));
   loadVegetation().then((set) => {
     const hedge = set.species.hecke;
     if (hedge) props.setModel(Prop.hedge, hedge.lod0);
   }, (e) => console.warn('[veg] GLB nicht geladen', e));
-  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
+  loadVehicleParts().then((set) => { traffic.view.setModels(set, 'pack'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
   water.hideInMirror.push(props.root, traffic.view.root, vegetation.root, guideSigns.root);
   // Street furniture, signs, and traffic light heads from Blender (props.models).
   loadProps().then((set) => {
@@ -265,6 +265,7 @@ async function boot() {
     radio.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
+    net.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
     joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});
@@ -666,6 +667,8 @@ async function boot() {
       if (e === 'online') net.toggleMenu();
       if (e === 'chat' && !bigMap.open && !debug.open) net.openChat();
       if (e === 'events') game.openList();
+      // The home garage from anywhere (outside events); the dealer is still a drive away.
+      if (e === 'garage') game.openGarage('home');
       if (e === 'rewind') rewind();
       if (e === 'camera') cam.next();
       if (e === 'mute') { sound?.toggleMute(); weather.sound?.toggleMute(); }

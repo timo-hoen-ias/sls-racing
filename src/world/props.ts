@@ -10,7 +10,7 @@ import { patchMaterial } from '../weather/weatherMaterials.ts';
 import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, isDetected, isMeasured, linearLength, signTypeOf } from './propKinds.ts';
 import { PROP_LOD_DISTANCE, type PropSet } from './propGlb.ts';
 import { LINEAR, addPropColliders } from './propColliders.ts';
-import { buildPropGeometries, buildReflectorGeometries } from './propModels.ts';
+import { buildPropGeometries, buildReflectorGeometries, chainLinkMaterial, chainLinkPanel, variantKey } from './propModels.ts';
 import { type WorldInfo, utmToLocal } from './format.ts';
 import { registerTileLayer } from './tileHooks.ts';
 
@@ -36,7 +36,8 @@ export interface PropHit {
   breakable: boolean;
 }
 
-const BREAKABLE = new Set<PropKind>([Prop.busStop, Prop.sign, Prop.stopSign, Prop.giveWay, Prop.cityLimit, Prop.bollard, Prop.bench, Prop.bin, Prop.postBox, Prop.hydrant, Prop.bikeStand, Prop.fence, Prop.hedge, Prop.delineator, Prop.chevronLeft, Prop.chevronRight]);
+const BREAKABLE = new Set<PropKind>([Prop.busStop, Prop.sign, Prop.stopSign, Prop.giveWay, Prop.cityLimit, Prop.bollard, Prop.bench, Prop.bin, Prop.postBox, Prop.hydrant, Prop.bikeStand, Prop.fence, Prop.hedge, Prop.delineator, Prop.chevronLeft, Prop.chevronRight,
+  Prop.gate, Prop.liftGate, Prop.cycleBarrier, Prop.guidepost, Prop.infoBoard, Prop.camera, Prop.emergencyPhone, Prop.posterBox, Prop.vending, Prop.trafficMirror, Prop.picnicTable, Prop.waysideCross, Prop.boundaryStone, Prop.railCross]);
 
 interface TileProps { key: string; cx: number; cz: number; data: Float32Array }
 
@@ -106,10 +107,13 @@ export class PropLayer {
     this.reflectorMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0, emissive: '#fff4d6', emissiveIntensity: 0.05 });
     const reflectors = buildReflectorGeometries();
     for (const [k, g] of Object.entries(buildPropGeometries())) {
-      const key = (k === 'busShelter' ? k : Number(k)) as ModelKey;
+      const key = (/^\d+$/.test(k) ? Number(k) : k) as ModelKey;
       const r = typeof key === 'number' ? reflectors[key as PropKind] : undefined;
-      this.addModel(key, r ? [[g, mat], [r, this.reflectorMat]] : [[g, mat]]);
+      this.addModel(key, r ? [[g, mat], [r, this.reflectorMat]] : key === Prop.chainLink ? [[g, mat], [chainLinkPanel(), chainLinkMaterial()]] : [[g, mat]]);
     }
+    // The wire mesh casts no shadow: the shadow pass would draw it as a solid sheet.
+    const wire = this.meshes.get(Prop.chainLink)?.[1];
+    if (wire) wire.castShadow = false;
     this.setVehicles(proceduralVehicleSet());
   }
   private info: WorldInfo;
@@ -264,7 +268,7 @@ export class PropLayer {
         if (this.hiddenKinds.has(kind) || this.gone(t.key, i, t.data)) continue;
         const size = t.data[i * PROP_STRIDE + 5];
         if ((!this.showDetected && isDetected(kind, size)) || (!this.showMeasured && isMeasured(kind, size))) continue;
-        let model: ModelKey = kind === Prop.busStop && size ? 'busShelter' : kind;
+        let model: ModelKey = kind === Prop.busStop && size ? 'busShelter' : variantKey(kind, size) ?? kind;
         const o = i * PROP_STRIDE;
         const dist = Math.hypot(t.data[o + 1] - cam.x, t.data[o + 3] - cam.z);
         const glb = this.glbName(kind, size);
@@ -445,6 +449,8 @@ export class PropLayer {
     registerToggle('props', 'Straßenmöbel und parkende Autos anzeigen', () => this.visible, (v) => (this.visible = v));
     registerToggle('props.laserhecken', 'Hecken aus den Laserhöhen (DOM1 − DGM1 mit Luftbild-NDVI) zeigen (sonst nur OSM-Hecken)', () => this.showMeasured, (v) => { this.showMeasured = v; this.dirty = true; });
     registerToggle('props.mapillary', 'Schilder, Bänke und Hydranten aus Mapillary-Fotos zeigen (sonst nur OSM)', () => this.showDetected, (v) => { this.showDetected = v; this.dirty = true; });
+    const wire = () => this.meshes.get(Prop.chainLink)?.[1];
+    registerToggle('props.maschendraht.netz', 'Drahtgeflecht der Maschendrahtzäune zeigen (aus: nur Pfosten und Rohre)', () => wire()?.visible ?? false, (v) => { const w = wire(); if (w) w.visible = v; });
     registerValue('props.carbox', 'Parkende Autos ab dieser Entfernung (m) als einfache Kästen ohne Schatten', () => this.carBoxDistance, (v) => { this.carBoxDistance = v; this.dirty = true; }, [0, 1500]);
     registerValue('props.parkdensity', 'Anteil der parkenden Autos 0..1 (weniger = mehr Platz zum Fahren)', () => this.parkDensity, (v) => { this.parkDensity = v; this.applyParkFilter(); }, [0, 1]);
     registerValue('props.parkwidth', 'Parkende Autos nur an Straßen ab dieser Fahrbahnbreite in m (0 = überall)', () => this.parkMinWidth, (v) => { this.parkMinWidth = v; this.applyParkFilter(); }, [0, 20]);

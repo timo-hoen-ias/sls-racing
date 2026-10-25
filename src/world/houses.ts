@@ -5,14 +5,16 @@ import { BUILDING, NATURE, STREET, cellIndex } from '../render/pbr/textureSets.t
 import { patchMaterial } from '../weather/weatherMaterials.ts';
 import type { HouseSet } from './houseGlb.ts';
 import {
-  GARDEN_LINEAR, GARDEN_PARTS, GARDEN_STRIDE, HOUSE_MODELS, HOUSE_STRIDE, HOUSE_STYLES, SURFACE, TINTS, type HouseStyle,
+  DOOR_COLOURS, GARDEN_LINEAR, GARDEN_PARTS, GARDEN_STRIDE, HOUSE_MODELS, HOUSE_STRIDE, HOUSE_STYLES, ROOF_SHADES, SHUTTER_COLOURS, SURFACE,
+  TINT, TINTS, type HouseStyle,
 } from './houseKinds.ts';
 import { registerTileLayer } from './tileHooks.ts';
 
 // Freely designed houses and their front gardens (pipeline/lib/houses.ts) as a tile layer, drawn with the Blender
 // models of houses.glb. Every model and LOD is one instanced mesh for the whole loaded world; instances move
 // between LOD 0 and 1 by distance when the camera has moved. Walls, roofs and paving get photo detail from the PBR
-// atlases by their surface code; window glass lights up at night, a random share of windows per house.
+// atlases by their surface code; window glass lights up at night, a random share of windows per house. Each house
+// varies its wall colour, roof shade and the colours of shutters and doors by its tint and seed.
 // The colliders come with the tile physics (houseColliders.ts).
 
 interface HouseTile {
@@ -36,7 +38,7 @@ const B = (n: string) => `${cellIndex(BUILDING, n)}.0`;
 const N = (n: string) => `${cellIndex(NATURE, n)}.0`;
 const S = (n: string) => `${cellIndex(STREET, n)}.0`;
 
-/** Surface detail by the uv.x code: photo luminance on the vertex colour, procedural boards and stone joints. */
+/** Surface detail by the uv.x code: photo luminance on the vertex colour; tints per house by the uv.y code. */
 const BODY = /* glsl */ `
   float code = floor(vPbrUv.x + 0.5);
   vec3 n = normalize(vPbrNrm);
@@ -45,12 +47,26 @@ const BODY = /* glsl */ `
   vec3 t3 = vec3(tw.x, 0.0, tw.y);
   // Along the face: horizontal u, v up the wall or down the roof slope; flat faces top-down.
   vec2 uv = abs(n.y) > 0.97 ? p.xz : vec2(dot(p, t3), dot(p, normalize(cross(n, t3))));
-  float tint = vPbrUv.y;
-  diffuseColor.rgb *= mix(vec3(1.0), vHouseTint, tint);
+  // The glTF export flips v (v = 1 - code), so the tint code is read back as 1 - uv.y.
+  float tint = floor(1.5 - vPbrUv.y);
+  if (tint == ${TINT.wall}.0) diffuseColor.rgb *= vHouseTint;
+  else if (tint == ${TINT.roof}.0) diffuseColor.rgb *= HOUSE_ROOF[int(fract(vHouseSeed * 7.13) * ${ROOF_SHADES.length}.0)];
+  else if (tint == ${TINT.shutter}.0 || tint == ${TINT.door}.0) {
+    // Replace the model's colour (applied after this hook as vColor) with the house's accent colour.
+    vec3 accent = tint == ${TINT.shutter}.0 ? HOUSE_SHUTTER[int(fract(vHouseSeed * 3.71) * ${SHUTTER_COLOURS.length}.0)]
+      : HOUSE_DOOR[int(fract(vHouseSeed * 5.37) * ${DOOR_COLOURS.length}.0)];
+#ifdef USE_COLOR
+    if (accent.r >= 0.0) diffuseColor.rgb *= accent / max(vColor.rgb, vec3(0.005));
+#endif
+  }
   float cell = -1.0;
   int atlas = 0;
   if (code == ${SURFACE.plaster}.0) cell = ${B('plaster')};
-  else if (code == ${SURFACE.rough}.0 || code == ${SURFACE.stone}.0) cell = ${B('plaster_rough')};
+  else if (code == ${SURFACE.rough}.0) cell = ${B('plaster_rough')};
+  else if (code == ${SURFACE.stone}.0) cell = ${B('sandstone')};
+  else if (code == ${SURFACE.wood}.0) cell = ${B('wood_cladding')};
+  else if (code == ${SURFACE.timber}.0) cell = ${B('timber')};
+  else if (code == ${SURFACE.seam}.0) cell = ${B('roof_seam')};
   else if (code == ${SURFACE.brick}.0) cell = ${B('brick')};
   else if (code == ${SURFACE.concrete}.0) cell = ${B('concrete')};
   else if (code == ${SURFACE.clay}.0) cell = ${B('roof_clay')};
@@ -84,29 +100,27 @@ const BODY = /* glsl */ `
     }
     pbrCell = cell;
   }
-  if (code == ${SURFACE.stone}.0) {
-    // Sandstone blocks: courses of 0.36 m, blocks 0.72 m long, every other course shifted.
-    float row = floor(uv.y / 0.36);
-    float bu = uv.x / 0.72 + mod(row, 2.0) * 0.5;
-    float jx = abs(fract(bu) - 0.5), jy = abs(fract(uv.y / 0.36) - 0.5);
-    float joint = max(smoothstep(0.47, 0.495, jx), smoothstep(0.44, 0.48, jy));
-    l *= mix(0.92 + 0.16 * pbrHash(vec2(floor(bu), row)), 0.72, joint);
-  } else if (code == ${SURFACE.wood}.0 || code == ${SURFACE.timber}.0) {
-    // Boards: vertical planks with dark seams and grain on cladding, grain only on beams.
-    float board = code == ${SURFACE.wood}.0 ? uv.x / 0.15 : 0.0;
-    float seam = code == ${SURFACE.wood}.0 ? smoothstep(0.42, 0.49, abs(fract(board) - 0.5)) : 0.0;
-    float grain = pbrFbm(vec2(floor(board) * 3.7 + uv.x * 6.0, uv.y * 0.6)) ;
-    l = mix(0.8 + 0.35 * grain + 0.1 * pbrHash(vec2(floor(board), 1.0)), 0.55, seam);
-    pbrRough = 0.8;
-  } else if (code == ${SURFACE.paint}.0) {
+  // Sandstone, cladding boards, beams and standing seams come from the PATINA cells of the building atlas.
+  if (code == ${SURFACE.paint}.0) {
     pbrRough = 0.45;
   }
   if (uPbrOn < 0.5) l = 1.0;
   diffuseColor.rgb *= clamp(mix(1.0, l, 0.8), 0.45, 1.6);
 `;
 
+const glslColours = (list: (number | null)[]) =>
+  list.map((h) => {
+    if (h === null) return 'vec3(-1.0)';
+    const c = new THREE.Color().setHex(h).convertSRGBToLinear();
+    return `vec3(${c.r.toFixed(4)}, ${c.g.toFixed(4)}, ${c.b.toFixed(4)})`;
+  }).join(', ');
+
 const BODY_FUNCTIONS = /* glsl */ `
 varying vec3 vHouseTint;
+varying float vHouseSeed;
+const vec3 HOUSE_ROOF[${ROOF_SHADES.length}] = vec3[](${ROOF_SHADES.map((v) => `vec3(${v.map((x) => x.toFixed(3)).join(', ')})`).join(', ')});
+const vec3 HOUSE_SHUTTER[${SHUTTER_COLOURS.length}] = vec3[](${glslColours(SHUTTER_COLOURS)});
+const vec3 HOUSE_DOOR[${DOOR_COLOURS.length}] = vec3[](${glslColours(DOOR_COLOURS)});
 `;
 
 /** Lit windows: warm light behind a random share of the panes, per pane cell and house. */
@@ -150,8 +164,8 @@ export class HouseLayer {
     // Per-instance wall colour and seed into varyings, before the PBR hooks wrap this.
     this.body.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec3 houseTint;\nvarying vec3 vHouseTint;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHouseTint = houseTint;');
+        .replace('#include <common>', '#include <common>\nattribute vec3 houseTint;\nvarying vec3 vHouseTint;\nattribute float houseSeed;\nvarying float vHouseSeed;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vHouseTint = houseTint;\n  vHouseSeed = houseSeed;');
     };
     patchPbr(this.body, { key: 'house', atlases: ['building', 'nature', 'street'], body: BODY, functions: BODY_FUNCTIONS });
     patchMaterial(this.body, { wet: 0.5, snow: 0.8 });

@@ -197,6 +197,11 @@ export class RemoteCars {
     return false;
   }
 
+  /** Every car on screen: player id, car id (vehicle/cars.ts) and its pose (for the engine sounds). */
+  forShown(fn: (id: number, car: string, pose: readonly number[]) => void) {
+    for (const [id, c] of this.cars) if (c.shown) fn(id, c.key.slice(0, c.key.lastIndexOf('|')), c.pose);
+  }
+
   /** Pose of a player's car as drawn (for the map and the race standings). */
   poseOf(id: number) {
     const c = this.cars.get(id);

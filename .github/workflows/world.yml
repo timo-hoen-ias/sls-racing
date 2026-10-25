@@ -175,7 +175,7 @@ jobs:
             run: npm run world:gaps -- --max=145
           - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags)
             # ratchet (2026-10-25, Landkreis 16.7 km² carriageway: 349 critical, 6169 total; Saarlouis 6.2 km²: 132/1867): lower as fixes land
-            run: npm run world:surface -- --max-critical=370 --max=6400
+            run: npm run world:surface -- --max-critical=370 --max=6400 --max-critical-main=60
     name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4

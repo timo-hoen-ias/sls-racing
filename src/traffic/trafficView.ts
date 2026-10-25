@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { VEHICLE } from '../vehicle/tuning.ts';
 import { type Agent, type AgentState, type VehicleKind } from './trafficSim.ts';
-import { proceduralVehicleSet, VEHICLE_LOD_DISTANCE, type VehicleSet } from './vehicleGlb.ts';
+import { proceduralVehicleSet, VEHICLE_LOD_DISTANCE, type VehicleModels, type VehicleSet } from './vehicleGlb.ts';
 import type { VehicleParts } from './vehicleModels.ts';
 
 type PartMeshes = Record<keyof VehicleParts, THREE.InstancedMesh>;
@@ -14,7 +14,9 @@ export class TrafficView {
   /** Coloured markers above every vehicle showing its state (traffic.debug). */
   debug = false;
   /** Which models are drawn (traffic.models). */
-  models: 'glb' | 'procedural' = 'procedural';
+  models: VehicleModels = 'procedural';
+  /** The vehicle set in use (traffic.models lists its variants). */
+  set!: VehicleSet;
   /** Forced level of detail (traffic.lod), or null for automatic by camera distance. */
   forcedLod: 0 | 1 | null = null;
   /** Per kind and variant: [lod0, lod1]. */
@@ -52,11 +54,12 @@ export class TrafficView {
     this.root.add(this.markers);
   }
 
-  /** Swaps the vehicle models (the Blender set once it has loaded, or back to the procedural one). */
-  setModels(set: VehicleSet, models: 'glb' | 'procedural') {
+  /** Swaps the vehicle models (the loaded set, or back to the procedural one). */
+  setModels(set: VehicleSet, models: VehicleModels) {
     for (const kind of Object.keys(this.parts) as VehicleKind[])
       for (const variant of this.parts[kind]) for (const lod of variant) for (const im of Object.values(lod)) { im.removeFromParent(); im.dispose(); }
     this.models = models;
+    this.set = set;
     const make = (g: THREE.BufferGeometry, mat: THREE.Material, cast = false) => {
       const im = new THREE.InstancedMesh(g, mat, this.capacity);
       im.count = 0;

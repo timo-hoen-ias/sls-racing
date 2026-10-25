@@ -66,6 +66,8 @@ export interface TileBuild {
   sidewalks: MeshBuf;
   /** Footpaths, cycle paths and steps (pipeline/lib/paths.ts). */
   paths: MeshBuf;
+  /** Visual OSM details, vertex-coloured with normals (pipeline/lib/details.ts). */
+  details: MeshBuf;
   trees: number[];
   lamps: number[];
 }
@@ -80,6 +82,11 @@ export class TileMap {
     this.owns = owns;
   }
 
+  /** Whether a tile holds anything yet (detail layers add only to tiles the roads and terrain made). */
+  has(e: number, n: number): boolean {
+    return this.tiles.has(`${Math.floor(e / this.tileSize)}_${Math.floor(n / this.tileSize)}`);
+  }
+
   /** Tile containing a UTM position. */
   at(e: number, n: number): TileBuild {
     const ix = Math.floor(e / this.tileSize);
@@ -88,7 +95,7 @@ export class TileMap {
     let t = this.tiles.get(key);
     if (!t) {
       const Buf = this.owns(ix, iy) ? MeshBuf : NullBuf;
-      t = { ix, iy, roads: new Buf(), markings: new Buf(), buildings: new Buf(), collide: new Buf(), sidewalks: new Buf(), paths: new Buf(), trees: [], lamps: [] };
+      t = { ix, iy, roads: new Buf(), markings: new Buf(), buildings: new Buf(), collide: new Buf(), sidewalks: new Buf(), paths: new Buf(), details: new Buf(), trees: [], lamps: [] };
       this.tiles.set(key, t);
     }
     return t;

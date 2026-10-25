@@ -18,7 +18,7 @@ import { MEDAL_NAMES, SaveGame } from './save.ts';
 import { LineTracker, RIVAL_LEVELS, type RivalLevel, type Rivals } from './rivals.ts';
 import type { StyleEvent } from './style.ts';
 import { PlaceView } from './placeView.ts';
-import { CAR_SHOP, findPlaces, PART_NAMES, type Place, ratingOf, recommendedLs, SLOT_LABELS, SLOTS, Workshop } from './workshop.ts';
+import { CAR_SHOP, findPlaces, PART_NAMES, type Place, ratingOf, recommendedLs, SLOT_LABELS, SLOTS, SPEC_INFO, SPEC_LABELS, SPEC_SHOP, SPECS, type Spec, Workshop } from './workshop.ts';
 import { CARS } from '../vehicle/cars.ts';
 import type { CarPhysics } from '../vehicle/carPhysics.ts';
 import { BUST, type PlayerNow, type Police } from './police.ts';
@@ -164,6 +164,7 @@ export class Game {
         buy: (id) => act(() => { const m = shop.buy(id); if (shop.owned(id)) void shop.use(id).then(after); return m; }),
         fit: (slot, level) => act(() => shop.fit(slot as (typeof SLOTS)[number], level)),
         fitBest: () => act(() => `${shop.fitBest()} Teile eingebaut`),
+        spec: (id) => act(() => shop.buySpec(id as Spec)),
         close: () => this.garageMenu?.hide(),
       });
       d.scene.add(this.placeView.root);
@@ -268,10 +269,15 @@ export class Game {
         cars: CARS.map((c) => {
           const sale = CAR_SHOP[c.id] ?? { price: 0, level: 1, ls: 120 };
           // Figures of the car in use change with its parts; the others are measured once per opening.
-          const key = `${c.id}:${c.id === cur ? JSON.stringify(parts) : ''}`;
+          const key = `${c.id}:${c.id === cur ? shop.spec() + JSON.stringify(parts) : ''}`;
           if (!statCache.has(key)) statCache.set(key, cars.stats(c.id));
           return { id: c.id, label: c.label, info: c.info, owned: shop.owned(c.id), current: c.id === cur, ls: ratingOf(c.id, shop.parts(c.id)),
             price: sale.price, level: sale.level, locked: this.progress.level < sale.level, stats: statCache.get(key)! };
+        }),
+        specs: SPECS.map((sp) => {
+          const sale = sp === 'street' ? { price: 0, level: 1 } : SPEC_SHOP[sp];
+          return { id: sp, label: SPEC_LABELS[sp], info: SPEC_INFO[sp], owned: shop.hasSpec(cur, sp), current: shop.spec() === sp,
+            price: sale.price, level: sale.level, locked: this.progress.level < sale.level };
         }),
         slots: SLOTS.map((s) => ({ slot: s, label: SLOT_LABELS[s], level: parts[s] ?? 0, name: PART_NAMES[parts[s] ?? 0],
           spares: inv.filter(([slot]) => slot === s).map(([, l, n]) => ({ level: l, name: PART_NAMES[l], count: n })) })),

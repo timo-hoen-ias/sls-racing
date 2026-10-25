@@ -28,9 +28,22 @@ export interface SlotRow {
   spares: { level: number; name: string; count: number }[];
 }
 
+/** A build of the car in use (A2): street, drift, off-road. */
+export interface SpecRow {
+  id: string;
+  label: string;
+  info: string;
+  owned: boolean;
+  current: boolean;
+  price: number;
+  level: number;
+  locked: boolean;
+}
+
 export interface GarageData {
   mode: 'home' | 'dealer';
   cars: CarRow[];
+  specs: SpecRow[];
   slots: SlotRow[];
   ls: number;
   credits: number;
@@ -41,6 +54,8 @@ export interface GarageActions {
   buy(id: string): void;
   fit(slot: string, level: number): void;
   fitBest(): void;
+  /** Uses a build, or buys it first. */
+  spec(id: string): void;
   close(): void;
 }
 
@@ -126,6 +141,19 @@ export class GarageMenu {
     }
     const parts = el('section', 'gm-parts');
     if (d.mode === 'home') {
+      // Builds of the car in use (A2); each has its own parts below.
+      const sh = el('h3', '', 'Version');
+      parts.append(sh);
+      const specs = el('div', 'gm-specs');
+      for (const sp of d.specs) {
+        const label = sp.current ? `${sp.label} ✓` : sp.owned ? sp.label : sp.locked ? `${sp.label} · ab Stufe ${sp.level}` : `${sp.label} · ${sp.price.toLocaleString('de-DE')} Cr`;
+        const b = btn(label, () => this.a.spec(sp.id), sp.current ? 'primary' : '');
+        b.title = sp.info;
+        b.dataset.key = `spec:${sp.id}`;
+        b.disabled = sp.current || (!sp.owned && (sp.locked || d.credits < sp.price));
+        specs.append(b);
+      }
+      parts.append(specs, el('p', 'gm-hint', d.specs.find((x) => x.current)?.info ?? ''));
       const h = el('h3', '', 'Teile');
       const best = btn('Beste einbauen', () => this.a.fitBest());
       best.dataset.key = 'best';

@@ -32,6 +32,51 @@ export const CAR_SHOP: Record<string, { price: number; level: number; ls: number
   hyper: { price: 120000, level: 12, ls: 185 },
 };
 
+/**
+ * Builds per car (A2), as in The Crew: the same car as a street, drift or off-road version, each with its own
+ * setup on top of the car's tuning and its own fitted parts. "street" is the car as sold.
+ */
+export const SPECS = ['street', 'drift', 'offroad'] as const;
+export type Spec = (typeof SPECS)[number];
+export const SPEC_LABELS: Record<Spec, string> = { street: 'Straße', drift: 'Drift', offroad: 'Gelände' };
+export const SPEC_INFO: Record<Spec, string> = {
+  street: 'Ab Werk: Grip und Tempo auf Asphalt',
+  drift: 'Hinten weniger Grip, mehr Lenkeinschlag, Sperre hinten: rutscht willig quer',
+  offroad: 'Mehr Federweg und Bodenfreiheit, weicher, grobe Reifen: für Feldwege und Sprünge',
+};
+/** Price and level from which a build can be bought for a car. */
+export const SPEC_SHOP: Record<Exclude<Spec, 'street'>, { price: number; level: number }> = {
+  drift: { price: 8000, level: 3 },
+  offroad: { price: 10000, level: 4 },
+};
+/** Save key of a car's parts in a build: the street build keeps the plain car id (older saves). */
+export const partsKey = (carId: string, spec: Spec) => (spec === 'street' ? carId : `${carId}:${spec}`);
+
+/** Writes a build's setup over CAR, which applyCar has just set (before the parts). */
+export function applySpec(spec: Spec) {
+  if (spec === 'street') return;
+  const car = CAR as unknown as {
+    tyre: { mu: number; rearMu: number }; steer: { lowSpeed: number; drift: number }; arb: { front: number; rear: number };
+    diff: { rear: number }; wheel: { rest: number; travel: number }; suspension: { stiffness: number; compression: number; relaxation: number };
+    aero: { downforce: number };
+  };
+  if (spec === 'drift') {
+    car.tyre.rearMu *= 0.9;
+    car.steer.lowSpeed *= 1.15;
+    car.steer.drift *= 1.3;
+    car.arb.rear *= 1.3;
+    car.diff.rear *= 1.4;
+  } else {
+    car.wheel.rest *= 1.2;
+    car.wheel.travel *= 1.45;
+    car.suspension.stiffness *= 0.75;
+    car.suspension.compression *= 0.85;
+    car.suspension.relaxation *= 0.85;
+    car.tyre.mu *= 0.96;
+    car.aero.downforce *= 0.7;
+  }
+}
+
 /** Performance level of a car with its parts. */
 export function ratingOf(carId: string, parts: PartLevels = {}) {
   const base = CAR_SHOP[carId]?.ls ?? 120;
@@ -146,8 +191,40 @@ export class Workshop {
     if (!s.cars.includes(s.car)) s.cars.push(s.car);
   }
 
-  parts(carId = this.d.current()): PartLevels {
-    return (this.d.save.data.parts[carId] ??= {}) as PartLevels;
+  /** Parts of a car's build (default: the build in use). */
+  parts(carId = this.d.current(), spec = this.spec(carId)): PartLevels {
+    return (this.d.save.data.parts[partsKey(carId, spec)] ??= {}) as PartLevels;
+  }
+
+  /** Build in use for a car (A2). */
+  spec(carId = this.d.current()): Spec {
+    const u = this.d.save.data.specs?.[carId]?.use;
+    return (SPECS as readonly string[]).includes(u ?? '') ? u as Spec : 'street';
+  }
+
+  hasSpec(carId: string, spec: Spec) {
+    return spec === 'street' || !!this.d.save.data.specs?.[carId]?.owned.includes(spec);
+  }
+
+  /** Buys a build for a car (credits, player level); it is used at once. */
+  buySpec(spec: Spec, carId = this.d.current()): string {
+    if (spec === 'street' || this.hasSpec(carId, spec)) { this.useSpec(spec, carId); return `${SPEC_LABELS[spec]}-Version`; }
+    const shop = SPEC_SHOP[spec];
+    if (this.d.progress.level < shop.level) return `${SPEC_LABELS[spec]}-Version: ab Stufe ${shop.level}`;
+    if (!this.d.progress.spend(shop.price)) return `${SPEC_LABELS[spec]}-Version: ${shop.price.toLocaleString('de-DE')} Credits nötig`;
+    const specs = (this.d.save.data.specs ??= {});
+    (specs[carId] ??= { owned: [], use: 'street' }).owned.push(spec);
+    this.useSpec(spec, carId);
+    return `${SPEC_LABELS[spec]}-Version gebaut`;
+  }
+
+  /** Switches a car to another owned build; the current car is retuned. */
+  useSpec(spec: Spec, carId = this.d.current()) {
+    if (!this.hasSpec(carId, spec)) throw new Error(`${SPEC_LABELS[spec]}-Version: noch nicht gebaut`);
+    const specs = (this.d.save.data.specs ??= {});
+    (specs[carId] ??= { owned: [], use: 'street' }).use = spec;
+    this.d.save.touch();
+    if (carId === this.d.current()) this.d.retune();
   }
 
   rating(carId = this.d.current()) { return ratingOf(carId, this.parts(carId)); }
@@ -251,6 +328,25 @@ export class Workshop {
       return `LS ${this.rating()}`;
     } });
     registerCommand({ name: 'parts.clear', help: 'Alle Teile ausbauen (zurück ins Lager)', run: () => { for (const s of SLOTS) this.fit(s, 0); return `LS ${this.rating()}`; } });
+    const specOf = (v: string | undefined) => {
+      const sp = SPECS.find((x) => x === v?.toLowerCase() || SPEC_LABELS[x].toLowerCase() === v?.toLowerCase());
+      if (!sp) throw new Error(`Version: ${SPECS.join(', ')}`);
+      return sp;
+    };
+    registerCommand({ name: 'spec', help: 'Version des Autos: Straße, Drift oder Gelände, je mit eigener Abstimmung und eigenen Teilen (ohne Argument: Stand)', args: '[street|drift|offroad]',
+      complete: () => [...SPECS], run: ([v]) => {
+        if (v) return this.buySpec(specOf(v));
+        const car = this.d.current();
+        return SPECS.map((x) => `${x === this.spec() ? '▶' : ' '} ${SPEC_LABELS[x].padEnd(8)} ${this.hasSpec(car, x) ? `LS ${ratingOf(car, this.parts(car, x))}` : `${SPEC_SHOP[x as 'drift'].price.toLocaleString('de-DE')} Cr ab Stufe ${SPEC_SHOP[x as 'drift'].level}`} · ${SPEC_INFO[x]}`).join('\n');
+      } });
+    registerCommand({ name: 'spec.own', help: 'Version ohne Kosten bauen (Debug)', args: '<drift|offroad>', complete: () => ['drift', 'offroad'], run: ([v]) => {
+      const sp = specOf(v);
+      const specs = (this.d.save.data.specs ??= {});
+      const row = (specs[this.d.current()] ??= { owned: [], use: 'street' });
+      if (sp !== 'street' && !row.owned.includes(sp)) row.owned.push(sp);
+      this.useSpec(sp);
+      return `${SPEC_LABELS[sp]}-Version in Gebrauch`;
+    } });
     registerToggle('parts.autofit', 'Gewonnene bessere Teile sofort einbauen', () => this.autofit, (v) => (this.autofit = v));
     registerCommand({ name: 'car.rating', help: 'Leistungsstufe (LS) aller Autos mit ihren Teilen', run: () =>
       CARS.map((c) => `${c.id === this.d.current() ? '▶' : ' '} ${c.label.padEnd(16)} LS ${String(this.rating(c.id)).padStart(3)}${this.owned(c.id) ? '' : ` · ${CAR_SHOP[c.id]?.price.toLocaleString('de-DE')} Cr ab Stufe ${CAR_SHOP[c.id]?.level}`}`).join('\n') });

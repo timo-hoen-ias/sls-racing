@@ -35,11 +35,13 @@ export interface SaveData {
   stats: Record<string, number>;
   /** Tutorial steps done (E8). */
   tutorial: string[];
+  /** Builds per car (A2): the ones bought besides "street", and the one in use. */
+  specs: Record<string, { owned: string[]; use: string }>;
 }
 
 export const freshSave = (): SaveData => ({
   v: 1, xp: 0, credits: 5000, cars: ['sportscar'], car: 'sportscar', parts: {}, looks: {}, inventory: {}, events: {},
-  discovered: [], collected: [], daily: { day: '', tasks: [] }, stats: {}, tutorial: [],
+  discovered: [], collected: [], daily: { day: '', tasks: [] }, stats: {}, tutorial: [], specs: {},
 });
 
 const KEY = 'sls.save';

@@ -191,6 +191,7 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 #garage-menu .gm-bar i { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--accent) calc(var(--v) * 100%), #ffffff1a 0); }
 #garage-menu .gm-slot { display: grid; grid-template-columns: 90px 70px 1fr; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 6px; background: #ffffff0c; margin-bottom: 5px; font-size: 14px; }
 #garage-menu .gm-spares { display: flex; gap: 5px; flex-wrap: wrap; }
+#garage-menu .gm-specs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 #garage-menu .gm-none, #garage-menu .gm-hint { font-size: 12px; opacity: .55; }
 #garage-menu .p1 { color: #9be37a; } #garage-menu .p2 { color: #59b8ff; } #garage-menu .p3 { color: #c58bff; } #garage-menu .p4 { color: #ffb000; } #garage-menu .p5 { color: #ff5e5e; }
 #garage-menu button.p1, #garage-menu button.p2, #garage-menu button.p3, #garage-menu button.p4, #garage-menu button.p5 { background: #1d2736; }

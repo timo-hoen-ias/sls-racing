@@ -93,7 +93,7 @@ import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
 import { Game } from './game/game.ts';
-import { applyParts, carStats, type PartLevels } from './game/workshop.ts';
+import { applyParts, applySpec, carStats, type PartLevels, type Spec } from './game/workshop.ts';
 import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';
 import { distanceToPath } from './game/events/runner.ts';
@@ -426,9 +426,10 @@ async function boot() {
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   // Fitted parts (game/workshop.ts) are written over each car's tuning; the game is built further down.
   let partsOf: (id: string) => PartLevels = () => ({});
+  let specOf: (id: string) => Spec = () => 'street';
   const garage = new Garage({
     car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm),
-    afterApply: (spec) => applyParts(partsOf(spec.id)),
+    afterApply: (spec) => { applySpec(specOf(spec.id)); applyParts(partsOf(spec.id)); },
   });
   registerGarageCommands(garage);
   registerCommand({
@@ -538,6 +539,7 @@ async function boot() {
     groundAt: (x, z) => graph.snap(x, z, 80)?.y,
   });
   partsOf = (id) => game.workshop?.parts(id) ?? {};
+  specOf = (id) => game.workshop?.spec(id) ?? 'street';
   // The car from the save, with its parts.
   if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
   else garage.retune();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Progress, xpForLevel } from '../src/game/progress.ts';
 import { SaveGame } from '../src/game/save.ts';
-import { applyParts, carStats, partFor, ratingOf, recommendedLs, Workshop } from '../src/game/workshop.ts';
+import { applyParts, applySpec, carStats, partFor, ratingOf, recommendedLs, Workshop } from '../src/game/workshop.ts';
 import type { GameEvent } from '../src/game/events/types.ts';
 import { applyCar, findCar } from '../src/vehicle/cars.ts';
 import { CAR, ENGINE } from '../src/vehicle/tuning.ts';
@@ -77,5 +77,43 @@ describe('dealer (P4)', () => {
     await w.use('gt');
     expect(save.data.car).toBe('gt');
     await expect(w.use('hothatch')).rejects.toThrow();
+  });
+});
+
+describe('builds per car (A2)', () => {
+  it('drift and off-road change the setup, and applyCar puts the street car back', () => {
+    const spec = findCar('sportscar')!;
+    applyCar(spec);
+    const rear = CAR.tyre.rearMu, travel = CAR.wheel.travel, rest = CAR.wheel.rest;
+    applySpec('drift');
+    expect(CAR.tyre.rearMu).toBeLessThan(rear);
+    applyCar(spec);
+    applySpec('offroad');
+    expect(CAR.wheel.travel).toBeGreaterThan(travel);
+    expect(CAR.wheel.rest).toBeGreaterThan(rest);
+    applyCar(spec);
+    expect(CAR.wheel.travel).toBe(travel);
+    expect(CAR.tyre.rearMu).toBe(rear);
+  });
+
+  it('a build is bought once per car, keeps its own parts, and the street parts stay under the old key', () => {
+    const { save, progress, w, retunes } = shop();
+    w.give('motor', 3);
+    w.fit('motor', 3);
+    expect(save.data.parts.sportscar.motor).toBe(3);
+    expect(w.buySpec('drift')).toMatch(/ab Stufe/);
+    save.data.xp = xpForLevel(3);
+    save.data.credits += 20000;
+    const credits = progress.credits;
+    expect(w.buySpec('drift')).toMatch(/gebaut/);
+    expect(progress.credits).toBe(credits - 8000);
+    expect(w.spec()).toBe('drift');
+    expect(w.parts().motor ?? 0).toBe(0);
+    w.useSpec('street');
+    expect(w.parts().motor).toBe(3);
+    expect(w.buySpec('drift')).toMatch(/Drift-Version/);
+    expect(progress.credits).toBe(credits - 8000);
+    expect(() => w.useSpec('offroad')).toThrow();
+    expect(retunes()).toBeGreaterThan(2);
   });
 });

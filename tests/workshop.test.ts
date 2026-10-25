@@ -117,3 +117,18 @@ describe('builds per car (A2)', () => {
     expect(retunes()).toBeGreaterThan(2);
   });
 });
+
+describe('visual tuning (P5)', () => {
+  it('keeps a look per car in the save and falls back on broken values', async () => {
+    const { lookFrom } = await import('../src/vehicle/looks.ts');
+    const { save, w } = shop();
+    let calls = 0;
+    w.onLook = () => calls++;
+    w.setLook({ color: '#1d4fd8', finish: 'matte', wing: false, glow: '#00e5ff' });
+    expect(calls).toBe(1);
+    expect(w.look()).toMatchObject({ color: '#1d4fd8', finish: 'matte', wing: false, glow: '#00e5ff' });
+    expect(save.data.looks.sportscar.wing).toBe(0);
+    expect(w.look('gt').color).toBe('#c0141c');
+    expect(lookFrom({ color: 'rot', finish: 'gold', glow: 'x' })).toMatchObject({ color: '#c0141c', finish: 'metallic', glow: '' });
+  });
+});

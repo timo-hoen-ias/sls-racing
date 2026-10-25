@@ -223,3 +223,7 @@ body.photo > :not(#game):not(#photo-bar):not(#console) { visibility: hidden !imp
   max-width: calc(100vw - 32px); font: 12px/1.4 system-ui, sans-serif; color: #fff;
   background: #000a; padding: 6px 12px; border-radius: 6px; text-align: center; pointer-events: none;
 }
+#garage-menu .gm-swatch { width: 26px; height: 26px; min-width: 26px; padding: 0; border-radius: 50%; background: var(--c, #333); border: 2px solid #fff3; }
+#garage-menu .gm-swatch:not([style]) { width: auto; border-radius: 13px; padding: 0 10px; }
+#garage-menu .gm-swatch.on { border-color: #fff; box-shadow: 0 0 0 2px #3aa0ff; }
+#garage-menu .gm-look .gm-slot { grid-template-columns: 100px 1fr; }

@@ -1,5 +1,6 @@
 import { parseNum, registerCommand, registerToggle } from '../debug/registry.ts';
 import { CARS, findCar } from '../vehicle/cars.ts';
+import { CALIPERS, FINISH_LABELS, FINISHES, GLOWS, type Look, lookFrom, lookToSave, PAINTS, RIMS } from '../vehicle/looks.ts';
 import { CAR, ENGINE } from '../vehicle/tuning.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
 import type { GameEvent } from './events/types.ts';
@@ -183,6 +184,8 @@ export interface WorkshopDeps {
 export class Workshop {
   /** Better parts won are fitted at once. */
   autofit = true;
+  /** Called when the look of the car in use changed (P5). */
+  onLook?: () => void;
   private d: WorkshopDeps;
 
   constructor(d: WorkshopDeps) {
@@ -194,6 +197,17 @@ export class Workshop {
   /** Parts of a car's build (default: the build in use). */
   parts(carId = this.d.current(), spec = this.spec(carId)): PartLevels {
     return (this.d.save.data.parts[partsKey(carId, spec)] ??= {}) as PartLevels;
+  }
+
+  /** Paint, rims, wing and underglow of a car (P5). */
+  look(carId = this.d.current()): Look {
+    return lookFrom(this.d.save.data.looks[carId]);
+  }
+
+  setLook(patch: Partial<Look>, carId = this.d.current()) {
+    this.d.save.data.looks[carId] = lookToSave({ ...this.look(carId), ...patch });
+    this.d.save.touch();
+    if (carId === this.d.current()) this.onLook?.();
   }
 
   /** Build in use for a car (A2). */
@@ -347,6 +361,30 @@ export class Workshop {
       this.useSpec(sp);
       return `${SPEC_LABELS[sp]}-Version in Gebrauch`;
     } });
+    const pick = (list: [string, string][], v: string | undefined, what: string) => {
+      const hit = list.find(([hex, name]) => hex.toLowerCase() === v?.toLowerCase() || name.toLowerCase() === v?.toLowerCase());
+      if (hit) return hit[0];
+      if (v && /^#[0-9a-f]{6}$/i.test(v)) return v;
+      throw new Error(`${what}: ${list.map(([, n]) => n).join(', ')} oder #rrggbb`);
+    };
+    const names = (list: [string, string][]) => list.map(([, n]) => n.toLowerCase());
+    registerCommand({ name: 'look', help: 'Optik des Autos: Lack, Lackart, Felgen, Bremssättel, Heckflügel, Unterbodenlicht', run: () => {
+      const l = this.look();
+      const nm = (list: [string, string][], hex: string) => list.find(([h]) => h === hex)?.[1] ?? hex;
+      return `Lack ${nm(PAINTS, l.color)} (${FINISH_LABELS[l.finish]}) · Felgen ${nm(RIMS, l.rim)} · Sättel ${nm(CALIPERS, l.caliper)} · Flügel ${l.wing ? 'an' : 'ab'} · Unterboden ${nm(GLOWS, l.glow)}`;
+    } });
+    registerCommand({ name: 'look.color', help: 'Lackfarbe (Name oder #rrggbb), im Spielstand pro Auto', args: '<farbe>', complete: () => names(PAINTS), run: ([v]) => { this.setLook({ color: pick(PAINTS, v, 'Lack') }); return 'ok'; } });
+    registerCommand({ name: 'look.finish', help: 'Lackart: Metallic, Uni, Matt, Perleffekt, Chrom', args: '<art>', complete: () => [...FINISHES], run: ([v]) => {
+      const f = FINISHES.find((x) => x === v?.toLowerCase() || FINISH_LABELS[x].toLowerCase() === v?.toLowerCase());
+      if (!f) throw new Error(`Lackart: ${FINISHES.join(', ')}`);
+      this.setLook({ finish: f });
+      return FINISH_LABELS[f];
+    } });
+    registerCommand({ name: 'look.rim', help: 'Felgenfarbe (Name oder #rrggbb)', args: '<farbe>', complete: () => names(RIMS), run: ([v]) => { this.setLook({ rim: pick(RIMS, v, 'Felgen') }); return 'ok'; } });
+    registerCommand({ name: 'look.caliper', help: 'Farbe der Bremssättel (Name oder #rrggbb)', args: '<farbe>', complete: () => names(CALIPERS), run: ([v]) => { this.setLook({ caliper: pick(CALIPERS, v, 'Sättel') }); return 'ok'; } });
+    registerToggle('look.wing', 'Heckflügel an (wo das Modell einen hat)', () => this.look().wing, (v) => this.setLook({ wing: v }));
+    registerCommand({ name: 'look.glow', help: 'Unterbodenlicht: Farbe oder aus', args: '<farbe|aus>', complete: () => names(GLOWS), run: ([v]) => { this.setLook({ glow: pick(GLOWS, v, 'Unterboden') }); return 'ok'; } });
+    registerCommand({ name: 'look.reset', help: 'Optik des Autos auf ab Werk', run: () => { delete this.d.save.data.looks[this.d.current()]; this.d.save.touch(); this.onLook?.(); return 'ab Werk'; } });
     registerToggle('parts.autofit', 'Gewonnene bessere Teile sofort einbauen', () => this.autofit, (v) => (this.autofit = v));
     registerCommand({ name: 'car.rating', help: 'Leistungsstufe (LS) aller Autos mit ihren Teilen', run: () =>
       CARS.map((c) => `${c.id === this.d.current() ? '▶' : ' '} ${c.label.padEnd(16)} LS ${String(this.rating(c.id)).padStart(3)}${this.owned(c.id) ? '' : ` · ${CAR_SHOP[c.id]?.price.toLocaleString('de-DE')} Cr ab Stufe ${CAR_SHOP[c.id]?.level}`}`).join('\n') });

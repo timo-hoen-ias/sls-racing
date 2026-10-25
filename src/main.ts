@@ -10,6 +10,7 @@ import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
+import { applyLook, type Look } from './vehicle/looks.ts';
 import { PhotoMode } from './render/photoMode.ts';
 import { createMaterials } from './render/materials.ts';
 import { PbrTextures } from './render/pbr/pbrTextures.ts';
@@ -427,9 +428,11 @@ async function boot() {
   // Fitted parts (game/workshop.ts) are written over each car's tuning; the game is built further down.
   let partsOf: (id: string) => PartLevels = () => ({});
   let specOf: (id: string) => Spec = () => 'street';
+  let lookOf: (id: string) => Look | undefined = () => undefined;
   const garage = new Garage({
     car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm),
     afterApply: (spec) => { applySpec(specOf(spec.id)); applyParts(partsOf(spec.id)); },
+    onModel: (spec) => { const l = lookOf(spec.id); if (l) applyLook(carView, l); },
   });
   registerGarageCommands(garage);
   registerCommand({
@@ -540,6 +543,12 @@ async function boot() {
   });
   partsOf = (id) => game.workshop?.parts(id) ?? {};
   specOf = (id) => game.workshop?.spec(id) ?? 'street';
+  lookOf = (id) => game.workshop?.look(id);
+  if (game.workshop) {
+    const shop = game.workshop;
+    shop.onLook = () => applyLook(carView, shop.look());
+    shop.onLook();
+  }
   // The car from the save, with its parts.
   if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
   else garage.retune();

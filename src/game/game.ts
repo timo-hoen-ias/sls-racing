@@ -165,6 +165,7 @@ export class Game {
         fit: (slot, level) => act(() => shop.fit(slot as (typeof SLOTS)[number], level)),
         fitBest: () => act(() => `${shop.fitBest()} Teile eingebaut`),
         spec: (id) => act(() => shop.buySpec(id as Spec)),
+        look: (patch) => { shop.setLook(patch); this.garageMenu?.render(); },
         close: () => this.garageMenu?.hide(),
       });
       d.scene.add(this.placeView.root);
@@ -274,6 +275,7 @@ export class Game {
           return { id: c.id, label: c.label, info: c.info, owned: shop.owned(c.id), current: c.id === cur, ls: ratingOf(c.id, shop.parts(c.id)),
             price: sale.price, level: sale.level, locked: this.progress.level < sale.level, stats: statCache.get(key)! };
         }),
+        look: shop.look(),
         specs: SPECS.map((sp) => {
           const sale = sp === 'street' ? { price: 0, level: 1 } : SPEC_SHOP[sp];
           return { id: sp, label: SPEC_LABELS[sp], info: SPEC_INFO[sp], owned: shop.hasSpec(cur, sp), current: shop.spec() === sp,

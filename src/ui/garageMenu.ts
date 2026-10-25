@@ -1,3 +1,4 @@
+import { CALIPERS, FINISH_LABELS, FINISHES, GLOWS, type Look, PAINTS, RIMS } from '../vehicle/looks.ts';
 import { PadNav } from './padNav.ts';
 
 // Home garage and car dealer (P4, P3, A3): one panel over the game. The garage shows the owned cars with
@@ -44,6 +45,8 @@ export interface GarageData {
   mode: 'home' | 'dealer';
   cars: CarRow[];
   specs: SpecRow[];
+  /** Look of the car in use (P5). */
+  look: Look;
   slots: SlotRow[];
   ls: number;
   credits: number;
@@ -56,6 +59,7 @@ export interface GarageActions {
   fitBest(): void;
   /** Uses a build, or buys it first. */
   spec(id: string): void;
+  look(patch: Partial<Look>): void;
   close(): void;
 }
 
@@ -174,6 +178,32 @@ export class GarageMenu {
         row.append(opts);
         parts.append(row);
       }
+      // Look (P5): swatches for paint, rims, calipers and underglow; finish and wing as buttons.
+      const look = el('section', 'gm-look');
+      look.append(el('h3', '', 'Optik'));
+      const row = (label: string, items: HTMLElement[]) => {
+        const r = el('div', 'gm-slot');
+        const o = el('div', 'gm-spares');
+        o.append(...items);
+        r.append(el('b', '', label), o);
+        look.append(r);
+      };
+      const swatches = (key: keyof Look, list: [string, string][]) => list.map(([hex, name]) => {
+        const b = btn(hex ? '' : name, () => this.a.look({ [key]: hex }), `gm-swatch${d.look[key] === hex ? ' on' : ''}`);
+        if (hex) b.style.setProperty('--c', hex);
+        b.title = name;
+        b.dataset.key = `look:${key}:${hex || 'off'}`;
+        return b;
+      });
+      row('Lack', swatches('color', PAINTS));
+      row('Lackart', FINISHES.map((f) => { const b = btn(FINISH_LABELS[f], () => this.a.look({ finish: f }), d.look.finish === f ? 'primary' : ''); b.dataset.key = `look:finish:${f}`; return b; }));
+      row('Felgen', swatches('rim', RIMS));
+      row('Bremssättel', swatches('caliper', CALIPERS));
+      const wing = btn(d.look.wing ? 'Heckflügel an' : 'Heckflügel ab', () => this.a.look({ wing: !d.look.wing }));
+      wing.dataset.key = 'look:wing';
+      row('Karosserie', [wing]);
+      row('Unterboden', swatches('glow', GLOWS));
+      parts.append(look);
       parts.append(el('p', 'gm-hint', 'Medaillen in Events gewinnen Teile. Je besser die Medaille und je schwerer das Event, desto besser das Teil.'));
     }
     this.body.replaceChildren(cars, parts);

@@ -25,6 +25,7 @@ import { WantedHud } from '../ui/wantedHud.ts';
 import { applySignal, type DailySignal, describeTask, drawDaily, taskGoal, today } from './daily.ts';
 import { Collectibles, DISTRICT_BONUS, placeTokens, TOKEN_REWARD } from './collectibles.ts';
 import { STEPS, Tutorial } from './tutorial.ts';
+import { type Destination, makeDelivery } from './delivery.ts';
 import { Discovery, DISTRICT_REWARD, type District, type Viewpoint, VIEWPOINT_REWARD } from './discovery.ts';
 import { GhostRecorder, type GhostRun, ghostStore, GhostView, type Pose } from './ghost.ts';
 
@@ -65,6 +66,8 @@ export interface GameDeps {
   /** The player car's pose (physics body, interpolated) and a car model for the ghost (E5). */
   pose?(): Pose;
   ghostModel?(): Promise<THREE.Object3D | undefined>;
+  /** A random house address between min and max metres from a point (E6). */
+  destination?(near: { x: number; z: number }, min: number, max: number): Promise<Destination | undefined>;
   /** Landmarks to find (W5). */
   viewpoints?: Viewpoint[];
 }
@@ -284,6 +287,25 @@ export class Game {
     return p.name;
   }
 
+  /** A courier run from the depot to a real address (E6); starts with the countdown where the car stands. */
+  async startDelivery() {
+    const depot = this.places.find((p) => p.id === 'courier');
+    if (!depot || !this.d.destination || this.runner.busy || this.pending) return 'kein Kurierdienst';
+    for (let tries = 0; tries < 5; tries++) {
+      const to = await this.d.destination(depot, 700, 2200);
+      if (!to) break;
+      const e = makeDelivery(this.d.graph, depot, to);
+      if (!e) continue;
+      this.d.toast(`Auftrag: ${to.label} · ${Math.round(e.limit ?? 0)} s`, 2.5);
+      this.lastRace = e;
+      this.pending = e;
+      this.prev = undefined;
+      return e.name;
+    }
+    this.d.toast('Gerade keine Aufträge', 1.5);
+    return 'keine Adresse gefunden';
+  }
+
   /** Fast travel to an event's start; races then start with a countdown. */
   goTo(e: GameEvent, force = false) {
     if (!force && e.level > this.progress.level) { this.d.toast(`${e.name}: ab Stufe ${e.level}`, 1.8); return; }
@@ -316,7 +338,8 @@ export class Game {
   interact() {
     if (this.hud.cardOpen) { this.hud.onClose?.(); return; }
     if (this.garageMenu?.open) return;
-    if (this.promptPlace && !this.runner.busy) { this.openGarage(this.promptPlace.id); return; }
+    if (this.promptPlace?.id === 'courier' && !this.runner.busy) { void this.startDelivery(); return; }
+    if (this.promptPlace && !this.runner.busy && this.promptPlace.id !== 'courier') { this.openGarage(this.promptPlace.id); return; }
     const e = this.promptEvent;
     if (!e || this.runner.busy) return;
     if (e.level > this.progress.level) { this.d.toast(`ab Stufe ${e.level}`, 1.5); return; }
@@ -339,7 +362,7 @@ export class Game {
       this.lastRace = e;
       this.runner.startRace(e);
       this.startRivals(e);
-      if (e.path && d.barriers) d.barriers.show(findBarriers(d.graph, e.path));
+      if (e.path && d.barriers && e.type !== 'delivery') d.barriers.show(findBarriers(d.graph, e.path));
     }
     if (ready && this.inGame) {
       this.runner.update(dt, car);
@@ -362,7 +385,7 @@ export class Game {
     const pe = this.runner.busy || this.overlay || this.promptPlace ? undefined : this.promptEvent;
     const ls = this.workshop?.rating();
     this.hud.showPrompt(pe, 'F', !!pe && pe.level > this.progress.level, pe && ls !== undefined && ls < recommendedLs(pe) ? `empf. LS ${recommendedLs(pe)}, deins ${ls}` : undefined);
-    this.hud.showPlace(this.promptPlace ? `${this.promptPlace.name} · F zum Betreten` : undefined);
+    this.hud.showPlace(this.promptPlace ? `${this.promptPlace.name} · F ${this.promptPlace.id === 'courier' ? 'für einen Auftrag' : 'zum Betreten'}` : undefined);
     this.updateNav(car);
   }
 
@@ -689,6 +712,7 @@ export class Game {
       return `${this.events.length} Events`;
     } });
     registerToggle('events', 'Events in der freien Fahrt (Tore, Marker, Start-Hinweise)', () => this.enabled, (v) => (this.enabled = v));
+    registerCommand({ name: 'courier', help: 'Kurierfahrt vom Kurierdienst zu einer zufälligen echten Adresse starten', run: () => { this.goToPlace('courier'); void this.startDelivery(); return 'Auftrag wird gesucht'; } });
     registerCommand({ name: 'tutorial', help: 'Einstieg: Schritte und Stand', run: () => STEPS.map((x) => `${this.tutorial.done.has(x.id) ? '✓' : '·'} ${x.text}`).join('\n') });
     registerCommand({ name: 'tutorial.skip', help: 'Einstieg überspringen', run: () => { this.tutorial.mark('skip'); return 'Einstieg übersprungen'; } });
     registerCommand({ name: 'tutorial.reset', help: 'Einstieg von vorn (nach dem nächsten Spielstart)', run: () => { this.tutorial.done.clear(); this.save.data.tutorial = []; this.save.touch(); this.tutorial.refresh(); return 'Einstieg zurückgesetzt'; } });

@@ -5,6 +5,7 @@ import { registerSoundCommands } from './audio/soundCommands.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
 import { registerAddressCommands } from './nav/addressCommands.ts';
+import { type AddressBook, loadAddresses } from './nav/addresses.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
@@ -42,7 +43,7 @@ import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
 import { Water } from './render/water.ts';
 import { registerWaterCommands } from './render/waterCommands.ts';
-import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
+import { localToUtm, type RoadGraphData, utmToLocal, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerScaleCommands } from './world/scaleCommands.ts';
 import { registerPathCommands } from './world/pathCommands.ts';
@@ -479,10 +480,23 @@ async function boot() {
   });
   police.registerCommands();
   let thinPath: number[] | undefined;
+  let addressBook: Promise<AddressBook | undefined> | undefined;
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
   const game = new Game({
     rivals, barriers, police,
+    destination: async (near, min, max) => {
+      addressBook ??= loadAddresses(`${import.meta.env.BASE_URL}data/addresses.json`);
+      const book = await addressBook;
+      if (!book?.list.length) return undefined;
+      for (let i = 0; i < 60; i++) {
+        const a = book.list[Math.floor(Math.random() * book.list.length)];
+        const [x, z] = utmToLocal(index.world, a.e, a.n);
+        const d = Math.hypot(x - near.x, z - near.z);
+        if (d >= min && d <= max) return { label: a.label, x, z };
+      }
+      return undefined;
+    },
     viewpoints: landmarks.list.filter((l) => !l.info.bridge && !l.info.id.startsWith('bruecke-')).map(({ info }) => ({
       id: info.id, x: info.x, z: info.z, radius: info.radius,
       name: info.name ?? info.id.split('-').map((w) => ({ sw: 'SW', no: 'NO', nw: 'NW', so: 'SO', st: 'St.', am: 'am' })[w] ?? w[0].toUpperCase() + w.slice(1)).join(' '),

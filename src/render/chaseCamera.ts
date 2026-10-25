@@ -24,8 +24,15 @@ export class ChaseCamera {
   speedFov = 1;
   /** Options menu: camera shake at high speed and under nitro, 0..2 (cam.shake). */
   shake = 1;
-  /** Body-frame acceleration (m/s², x = left, z = forward) and steering, set each frame for the cockpit view. */
-  motion = { ax: 0, az: 0, steer: 0 };
+  /** Body-frame acceleration (m/s², x = left, z = forward), steering and yaw rate (rad/s, + = left), set each frame. */
+  motion = { ax: 0, az: 0, steer: 0, yaw: 0 };
+  /**
+   * Chase view feel (cam.style arcade|ruhig, cam.lag, cam.swing, cam.height): how far the camera drops back
+   * under acceleration, how much it swings out and looks into corners, and its height above the road.
+   */
+  feel = { lag: 1, swing: 1, height: 1.8, dist: 5.8, speedFov: 0.06, boostFov: 9, maxKmh: 280 };
+  private lag = 0;
+  private swingAngle = 0;
   private head = new THREE.Vector3();
   private headVel = new THREE.Vector3();
   private pos = new THREE.Vector3();
@@ -89,9 +96,17 @@ export class ChaseCamera {
       target = carPos.clone().addScaledVector(fwd, 20).add(new THREE.Vector3(0, 1.0, 0));
     } else {
       const far = this.mode === 'far';
-      const dist = (far ? 9 : 6) + Math.min(kmh, 200) * 0.012;
-      desired = carPos.clone().addScaledVector(fwd, -dist).add(new THREE.Vector3(0, far ? 3.2 : 2.1, 0));
-      target = carPos.clone().addScaledVector(fwd, 4).add(new THREE.Vector3(0, 1.1, 0));
+      const fe = this.feel;
+      // Drops back when accelerating (more under nitro), closes in when braking.
+      const lagTarget = Math.max(-1, Math.min(1.6, this.motion.az * 0.07 + (boosting ? 0.8 : 0))) * fe.lag;
+      this.lag += (lagTarget - this.lag) * (1 - Math.exp(-dt * 2.5));
+      const dist = (far ? 9 : fe.dist) + Math.min(kmh, 220) * 0.01 + this.lag;
+      // Swings out of the corner a little, so the camera looks into the turn.
+      const swingTarget = Math.max(-0.35, Math.min(0.35, this.motion.yaw * 0.22)) * fe.swing * Math.min(1, kmh / 40);
+      this.swingAngle += (swingTarget - this.swingAngle) * (1 - Math.exp(-dt * 3));
+      const back = fwd.clone().applyAxisAngle(UP, -this.swingAngle);
+      desired = carPos.clone().addScaledVector(back, -dist).add(new THREE.Vector3(0, far ? 3.2 : fe.height, 0));
+      target = carPos.clone().addScaledVector(fwd, 4 + Math.min(kmh, 200) * 0.01).add(new THREE.Vector3(0, 1.0, 0));
     }
     if (!this.initialised) {
       this.pos.copy(desired);
@@ -107,7 +122,7 @@ export class ChaseCamera {
       this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * s, (Math.random() - 0.5) * s, 0));
     }
     this.camera.lookAt(this.look);
-    const fov = this.fov.chase + this.fovOffset + (Math.min(kmh, 220) * 0.045 + (boosting ? 6 : 0)) * this.speedFov;
+    const fov = this.fov.chase + this.fovOffset + (Math.min(kmh, this.feel.maxKmh) * this.feel.speedFov + (boosting ? this.feel.boostFov : 0)) * this.speedFov;
     this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
     this.camera.updateProjectionMatrix();
   }

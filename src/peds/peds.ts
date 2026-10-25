@@ -31,6 +31,7 @@ export class Pedestrians {
   registerCommands(player: () => { x: number; z: number }) {
     const sim = this.sim;
     registerValue('peds.density', 'Fußgängerdichte 0..1 (Anteil der maximalen Zahl)', () => sim.density, (v) => (sim.density = v), [0, 1]);
+    registerToggle('peds.safe', 'Fußgänger springen immer rechtzeitig weg und werden nie angefahren', () => sim.safe, (v) => (sim.safe = v));
     registerValue('peds.max', 'Maximale Zahl der Fußgänger um den Spieler', () => sim.maxPeds, (v) => (sim.maxPeds = Math.round(v)), [0, 400]);
     registerToggle('peds.debug', 'Zustand über jedem Fußgänger: grün geht, gelb quert, pink wartet an der Ampel, orange springt weg, rot liegt, blau steht', () => this.view.debug, (v) => (this.view.debug = v));
     registerCommand({

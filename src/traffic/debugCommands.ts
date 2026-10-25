@@ -28,7 +28,21 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
       return `${made} Fahrzeug(e) gesetzt`;
     },
   });
-  registerCommand({ name: 'traffic.clear', help: 'Alle KI-Fahrzeuge entfernen (sie kommen nach Dichte wieder)', run: () => { sim.clear(); return 'Verkehr entfernt'; } });
+  registerCommand({ name: 'traffic.clear', help: 'Alle KI-Fahrzeuge und Wracks entfernen (sie kommen nach Dichte wieder)', run: () => { sim.clear(); t.clearWrecks(); return 'Verkehr entfernt'; } });
+  registerToggle('traffic.punt', 'Rammen: getroffene Fahrzeuge fliegen als Wrack aus dem Verkehr (aus: Verkehr ist praktisch unverrückbar)', () => t.punt, (v) => { t.punt = v; t.applyMass(); });
+  registerValue('traffic.mass', 'Faktor auf die echte Masse der Fahrzeuge bei Zusammenstößen (kleiner = das eigene Auto verliert weniger Tempo)', () => t.massScale, (v) => { t.massScale = v; t.applyMass(); }, [0.05, 2]);
+  registerValue('traffic.wrecktime', 'Sekunden, bis ein Wrack weggeräumt wird', () => t.wreckTime, (v) => (t.wreckTime = v), [2, 300]);
+  registerCommand({
+    name: 'traffic.wreck',
+    help: 'Nächstes Fahrzeug als Wrack aus dem Verkehr stoßen (Test fürs Rammen)',
+    run() {
+      const p = player();
+      // The nearest vehicle that already has a body (only those within 110 m get one).
+      const near = sim.agents.map((a) => ({ a, d: Math.hypot(a.x - p.x, a.z - p.z) })).sort((x, y) => x.d - y.d).filter((n) => n.d < 110).find((n) => t.wreck(n.a, 1));
+      if (!near) throw new Error('kein Fahrzeug mit Kollision im Umkreis von 110 m');
+      return `Fahrzeug #${near.a.id} in ${near.d.toFixed(0)} m ist jetzt ein Wrack · ${t.wrecks.length} Wracks`;
+    },
+  });
   registerToggle('traffic.freeze', 'KI-Verkehr anhalten', () => sim.frozen, (v) => (sim.frozen = v));
   registerToggle('traffic.debug', 'Zustand über jedem Fahrzeug: grün fährt, blau folgt, gelb wartet, orange Spieler im Weg, rot Unfall', () => t.view.debug, (v) => (t.view.debug = v));
   registerToggle('traffic', 'KI-Verkehr anzeigen (aus: unsichtbar und ohne Kollision)', () => t.visible, (v) => (t.visible = v));

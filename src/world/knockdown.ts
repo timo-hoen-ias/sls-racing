@@ -13,6 +13,9 @@ import type { Knockable, KnockableSource } from './streamer.ts';
 // enough. The object leaves the world, its light goes out, and a loose copy tips over as debris. The car
 // loses a little speed and takes a light hit. Below minSpeed the object stays solid.
 
+/** Per source: minimum speed (m/s) to move it, share of the car's speed lost, share the object flies off with, tumbling factor. */
+export interface KnockOptions { minSpeed?: number; loss?: number; fling?: number; spin?: number }
+
 /** What a knocked-over object looks like as debris. */
 export type DebrisFactory = (k: Knockable) => THREE.Object3D[];
 
@@ -25,7 +28,7 @@ export class Knockdown {
   /** Called after each knock with the object, the impact speed and its direction (unit, world). */
   onKnock?: (k: Knockable, speed: number, dir: THREE.Vector3) => void;
   count = 0;
-  private sources: { source: KnockableSource; debris: DebrisFactory; mass: number }[] = [];
+  private sources: { source: KnockableSource; debris: DebrisFactory; mass: number; opts: KnockOptions }[] = [];
   private world: RAPIER_NS.World;
   private car: CarPhysics;
   private debris: Debris;
@@ -36,9 +39,9 @@ export class Knockdown {
     this.debris = debris;
   }
 
-  /** Adds a kind of knockable object; mass (kg) of its debris. */
-  addSource(source: KnockableSource, debris: DebrisFactory, mass: number) {
-    this.sources.push({ source, debris, mass });
+  /** Adds a kind of knockable object; mass (kg) of its debris; heavy objects can set their own speed rules. */
+  addSource(source: KnockableSource, debris: DebrisFactory, mass: number, opts: KnockOptions = {}) {
+    this.sources.push({ source, debris, mass, opts });
   }
 
   private find(c: RAPIER_NS.Collider) {
@@ -59,8 +62,7 @@ export class Knockdown {
     const col = body.collider(0);
     for (let n = 0; n < 4; n++) {
       const hit = this.world.castShape(col.translation(), col.rotation(), v, col.shape, 0, dt * 3, true, undefined, undefined, col, body, (c) => !!this.find(c));
-      if (!hit) break;
-      this.knock(hit.collider);
+      if (!hit || !this.knock(hit.collider)) break;
     }
   }
 
@@ -86,19 +88,21 @@ export class Knockdown {
     const lv = body.linvel();
     const vel = push ?? new THREE.Vector3(lv.x, 0, lv.z);
     const speed = vel.length();
+    // Heavy things (parked cars) only move when hit hard enough; slower, they stay solid.
+    if (!push && speed < (s.opts.minSpeed ?? 0)) return false;
     const dir = speed > 0.1 ? vel.clone().divideScalar(speed) : new THREE.Vector3(1, 0, 0);
     s.source.remove(collider);
     // The car pays for it with a little speed.
     if (!push) {
-      const m = body.mass() * this.speedLoss;
+      const m = body.mass() * (s.opts.loss ?? this.speedLoss);
       body.applyImpulse({ x: -lv.x * m, y: 0, z: -lv.z * m }, true);
     }
     // The loose object flies off with part of the car's speed and tips over away from it.
     const parts = s.debris(k);
     if (!parts.length) { this.count++; this.onKnock?.(k, speed, dir); return true; }
     const axis = new THREE.Vector3(0, 1, 0).cross(dir).normalize();
-    const v0 = dir.clone().multiplyScalar(speed * 0.55).add(new THREE.Vector3(0, 1.2, 0));
-    const spin = axis.multiplyScalar(Math.min(6, 0.8 + speed / 5));
+    const v0 = dir.clone().multiplyScalar(speed * (s.opts.fling ?? 0.55)).add(new THREE.Vector3(0, 1.2, 0));
+    const spin = axis.multiplyScalar(Math.min(6, 0.8 + speed / 5) * (s.opts.spin ?? 1));
     this.debris.spawn(parts, new THREE.Matrix4(), v0, spin, s.mass);
     this.count++;
     this.onKnock?.(k, speed, dir);

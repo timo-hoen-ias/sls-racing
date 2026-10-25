@@ -88,8 +88,8 @@ export class TrafficView {
       const i = counts.get(set) ?? 0;
       if (i >= set.paint.instanceMatrix.count) continue;
       counts.set(set, i + 1);
-      this.e.set(-a.pitch, a.yaw, 0);
-      this.q.setFromEuler(this.e);
+      if (a.quat) this.q.set(a.quat.x, a.quat.y, a.quat.z, a.quat.w);
+      else this.q.setFromEuler(this.e.set(-a.pitch, a.yaw, 0));
       this.m.compose(this.p.set(a.x, a.y, a.z), this.q, this.one);
       set.paint.setMatrixAt(i, this.m);
       set.paint.setColorAt(i, this.c.setHex(a.color));

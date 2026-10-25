@@ -80,6 +80,14 @@ import { registerSettingsCommands } from './settings/commands.ts';
 import { registerGameSettings } from './settings/gameSettings.ts';
 import { OptionsMenu } from './settings/menu.ts';
 import { SettingsStore } from './settings/store.ts';
+import { GameSfx } from './audio/gameSfx.ts';
+import { SpeedLines } from './render/speedLines.ts';
+import { GameFeel } from './game/feel.ts';
+import { WallGlide } from './game/forgive.ts';
+import { StyleScore } from './game/score.ts';
+import { StyleTracker } from './game/style.ts';
+import { StyleFeed } from './ui/styleFeed.ts';
+import type { PropHit } from './world/props.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
 
@@ -222,10 +230,14 @@ async function boot() {
   let mapTimer = 0;
 
   let sound: EngineSound | undefined;
+  // Arcade sound effects (nitro, points, countdown, finish); they start with the engine sound.
+  const sfx = new GameSfx();
+  sfx.registerCommands();
   const startBtn = $('start') as HTMLButtonElement;
   startBtn.addEventListener('click', async () => {
     startBtn.hidden = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
+    sfx.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
@@ -309,6 +321,7 @@ async function boot() {
   const resetCar = () => {
     const r = roadSpot() ?? safe;
     car.reset({ x: r.x, y: r.y + 1.2, z: r.z }, r.heading);
+    style.reset();
     prevVel.x = prevVel.y = prevVel.z = 0;
     hitCooldown = 0.6;
     // No interpolation between the old and the new spot, and no camera flight across town.
@@ -332,6 +345,7 @@ async function boot() {
   const rewind = () => {
     if (replay.active) return 'nicht während der Wiederholung';
     if (!rescue.rewind(car, recorder)) return 'noch nichts aufgezeichnet';
+    style.reset();
     const v = car.body.linvel();
     prevVel.x = v.x; prevVel.y = v.y; prevVel.z = v.z;
     hitCooldown = 0.6;
@@ -344,7 +358,29 @@ async function boot() {
   knockdown.addSource(streamer, lampDebris(streamer.lampGeo, mats.lampPole, mats.lampPole), 90);
   // Signs, bollards, bins, benches … from the street furniture layer.
   knockdown.addSource(propSource(props), propDebris(), 30);
+  // Parked cars: shoved away when rammed hard enough (heavy, so the car loses more speed than with a sign).
+  knockdown.addSource({
+    lookup: (c) => { const h = props.lookup(c); return h?.kind === Prop.parkedCar ? h : undefined; },
+    remove: (c) => { props.remove(c); },
+  }, (k) => props.parkedCarDebris(k as PropHit), 1100, { minSpeed: 7, loss: 0.22, fling: 0.5, spin: 0.25 });
+  props.roadWidthAt = (x, z) => graph.snap(x, z, 15, (e) => e.rank >= 2)?.edge.width;
+  // Style moves (near misses, slipstream, jumps …): nitro right away, points for the combo.
+  const style = new StyleTracker(graph);
+  const score = new StyleScore();
+  score.registerCommands();
+  const styleFeed = new StyleFeed($('hud'));
+  style.onNitro = (n) => { car.nitroGain += n; };
+  style.onEvent = (e) => {
+    car.nitroGain += e.nitro;
+    score.add(e);
+    styleFeed.push(e);
+    sfx.play(e.kind === 'nearMiss' ? 'whoosh' : e.kind === 'smash' || e.kind === 'takedown' ? 'smash' : e.kind === 'air' ? 'jump' : 'point', 0.8, e.side ?? 0);
+  };
+  score.onBank = (pts, moves) => { if (moves > 1) sfx.play('combo'); navHud.toast(`+${pts.toLocaleString('de-DE')} Stilpunkte`, 1.2); };
+  score.onLost = () => sfx.play('fail');
+  traffic.onWreck = (_, strength) => style.takedown(strength);
   knockdown.onKnock = (_, speed, dir) => {
+    style.smash();
     const strength = Math.min(0.6, speed / 40);
     sound?.impact(strength);
     worldAudio.impact(ip, car.heading(), strength);
@@ -373,9 +409,17 @@ async function boot() {
   const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
   registerGarageCommands(garage);
   void garage.probe();
+  // Fun-racer feel (feel fun|real): engine, landings, wall gliding, traffic punts, camera, speed lines …
+  const glide = new WallGlide();
+  glide.registerCommands();
+  const speedLines = new SpeedLines($('hud'));
+  speedLines.registerCommands();
+  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, damage: carView.damage, traffic, peds: peds.sim, props });
+  feel.registerCommands();
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
 
   let acc = 0;
+  let wasBursting = false;
   let last = performance.now();
   let fpsT = 0, frames = 0, fps = 0;
   const ip = new THREE.Vector3();
@@ -481,6 +525,7 @@ async function boot() {
       // Until the ground is there the car waits at road height (on a bridge: on the deck, not under it).
       h.wait ??= (graph.snap(h.x, h.z, 30)?.y ?? car.body.translation().y) + 1;
       car.reset({ x: h.x, y: h.y ?? h.wait, z: h.z }, h.heading);
+      style.reset();
       // While the world appears the camera waits behind the held car, not somewhere between old and new place.
       cam.snap();
       if (h.frames > 2 && h.y !== undefined) {
@@ -527,7 +572,10 @@ async function boot() {
       const dvx = lv.x - prevVel.x, dvy = lv.y - prevVel.y, dvz = lv.z - prevVel.z;
       const dv = Math.hypot(dvx, dvy, dvz);
       if (dv > 3.5 && dv > hit) { hit = dv; hitDir = { x: dvx / dv, y: dvy / dv, z: dvz / dv }; }
-      prevVel.x = lv.x; prevVel.y = lv.y; prevVel.z = lv.z;
+      // Glancing hits on walls and rails: glide along instead of bouncing off.
+      const glided = glide.apply(car.body, prevVel);
+      const nv = glided ? car.body.linvel() : lv;
+      prevVel.x = nv.x; prevVel.y = nv.y; prevVel.z = nv.z;
       acc -= STEP;
     }
     perf.end('physik');
@@ -567,6 +615,8 @@ async function boot() {
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {
       const strength = Math.min(1, (hit - 3.5) / 12);
+      // A real crash ends the running combo.
+      if (strength > 0.45) score.crash();
       effects.impact({ x: ip.x - hitDir.x * 2, y: ip.y - Math.max(0, hitDir.y) * 0.3, z: ip.z - hitDir.z * 2 }, strength);
       sound?.impact(strength);
       worldAudio.impact(ip, car.heading(), strength);
@@ -603,7 +653,17 @@ async function boot() {
     cam.motion.ax = motion.ax;
     cam.motion.az = motion.az;
     cam.motion.steer = rs ? rs.steer : car.steer;
+    cam.motion.yaw = car.body.angvel().y;
     if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    // Style moves and their combo, while really driving.
+    if (worldReady && !rs && !paused && !debugState.frozen) {
+      style.update({ dt: dt * debugState.timeScale, x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, heading: car.heading(), airborne: car.airborne, airTime: car.airTime, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x }, traffic.sim.agents);
+      score.update(dt * debugState.timeScale);
+    }
+    styleFeed.setCombo(score.bank, score.multiplier, score.timer / score.window);
+    speedLines.update(dt, Math.abs(rs ? rs.speed : car.speed) * 3.6, boostFx);
+    if (car.bursting > 0 && !wasBursting) { sfx.play('burst'); input.rumble(0.8, 220); }
+    wasBursting = car.bursting > 0;
     viewDist.afterCamera();
     carView.cockpit.group.visible = cam.mode === 'cockpit' && (!rs || replay.cam === 'chase');
     carView.cockpit.update({

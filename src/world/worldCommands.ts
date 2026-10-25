@@ -94,7 +94,7 @@ export function registerWorldCommands(g: WorldCommandContext) {
       Promise.all([get('deploy.json'), get('build.json')]).then(([d, b]) => {
         if (!d && !b) return g.print('Keine Bauinfo (lokal gebaute Kacheln?)');
         const lines: string[] = [];
-        if (d) lines.push(`Deploy: ${d.source === 'download' ? 'fertige Kacheln geladen' : 'Welt im Deploy gebaut'}${d.source === 'download' && d.events === 'build' ? ', Eventtest neu gefahren' : ''} · Schlüssel ${d.key} · ${d.at}`);
+        if (d) lines.push(`Deploy: ${d.source === 'download' ? 'fertige Kacheln geladen' : d.source === 'stale' ? 'ältere Kacheln geladen (Weltbau für diesen Stand lief noch, der nächste Deploy holt sie)' : 'Welt im Deploy gebaut'}${d.source !== 'build' && d.events === 'build' ? ', Eventtest neu gefahren' : ''} · Schlüssel ${d.key} · ${d.at}`);
         if (b) lines.push(`Weltbau: ${b.event} ${String(b.commit).slice(0, 7)} · ${b.at} · ${b.run}`);
         g.print(lines.join('\n'));
       });

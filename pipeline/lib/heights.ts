@@ -51,7 +51,7 @@ export const missing = (what: string, dir: string, regions: RegionConfig[]) =>
 
 /** Bridge decks from DOM1 (where available), then lifts for crossings that still lack headroom. */
 export function roadHeights(ways: Way[], regions: RegionConfig[], height: (e: number, n: number) => number, log = (_: string) => {}) {
-  const dom = regions.some((r) => r.laser?.dom1?.length) ? laserSampler(paths.dom1) : undefined;
+  const dom = regions.some((r) => r.laser?.dom1?.length) ? laserSampler(paths.dom1, 128) : undefined;
   if (dom && !dom.tiles) throw missing('DOM1', paths.dom1, regions);
   const d = bridgeDecks(ways, dom, height);
   if (dom) log(`Bridges: ${d.measured}/${d.bridges} decks measured from DOM1, max. ${d.maxRise.toFixed(1)} m above the straight span`);

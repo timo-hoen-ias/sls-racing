@@ -2,6 +2,7 @@
 //   node pipeline/build.ts            all regions listed in pipeline/world.json
 //   node pipeline/build.ts saarlouis  only the named regions
 //   node pipeline/build.ts fixture    synthetic test area (no download needed)
+//   node pipeline/build.ts --shard=1/3  only every third stripe of tiles, for parallel builds (lib/shard.ts)
 // Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.bin (gzipped binary container, see encodeTile in format.ts)
 import { districtList } from './lib/districts.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -40,6 +41,7 @@ import { planKerbs } from './lib/kerbs.ts';
 import { buildRoadside } from './lib/roadside.ts';
 import { terrariumSampler } from './lib/terrain.ts';
 import { MeshBuf, TileMap } from './lib/tilebuf.ts';
+import { parseShard } from './lib/shard.ts';
 import { WaterLines } from './lib/waterways.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
@@ -53,6 +55,16 @@ import { placeLidarTrees, type MeasuredTree } from './lib/lidarTrees.ts';
 import { LANDCOVER_ATTRIBUTION, loadLandcover, roofColour, tileCover } from './lib/landcover.ts';
 import { waterLevels, type TileGrid } from './lib/waterLevel.ts';
 
+// SLS_MEM=1 adds the memory in use to every log line, to find what fills the heap in large regions.
+const started = Date.now();
+if (process.env.SLS_MEM) {
+  const log = console.log.bind(console);
+  console.log = (...a: unknown[]) => {
+    const m = process.memoryUsage();
+    log(...a, `[${((Date.now() - started) / 1000).toFixed(0)} s, heap ${(m.heapUsed / 1e9).toFixed(2)} GB, external ${((m.external + m.arrayBuffers) / 1e9).toFixed(2)} GB, rss ${(m.rss / 1e9).toFixed(2)} GB]`);
+  };
+}
+
 function main() {
   const { cfg, info, project } = loadWorld();
   const ids = process.argv.slice(2).filter((a) => !a.startsWith('-'));
@@ -60,6 +72,11 @@ function main() {
   console.log(`Road profile: ${useRoadProfile({ regions })}`);
   const toLonLat = unproject(cfg.zone);
   const t0 = Date.now();
+  const shard = parseShard(process.argv);
+  const owns = (k: string) => !shard || shard.owns(...(k.split('_').map(Number) as [number, number]));
+  // Shard 0 writes the world-wide files; a whole build writes everything.
+  const lead = !shard || shard.index === 0;
+  if (shard) console.log(`Shard ${shard.index + 1} of ${shard.count}`);
 
   // Merge raw data of all regions; shared border elements appear once.
   const seen = new Set<string>();
@@ -85,7 +102,7 @@ function main() {
   if (smoothed) console.log(`Bends: ${smoothed} kinks rounded`);
   const curves = splineCurves(osm.ways);
   if (curves.ways) console.log(`Curves: ${curves.ways} ways as splines, ${curves.points} points added`);
-  const tiles = new TileMap(info.tileSize);
+  const tiles = new TileMap(info.tileSize, shard?.owns);
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
   const medians = separateCarriageways(osm.ways);
@@ -253,6 +270,7 @@ function main() {
   const bushesByTile = new Map<string, number[]>();
   const push = (m: Map<string, number[]>, e: number, n: number, ...v: number[]) => {
     const k = tileKey(Math.floor(e / T), Math.floor(n / T));
+    if (!owns(k)) return;
     if (!m.has(k)) m.set(k, []);
     m.get(k)!.push(...v);
   };
@@ -349,6 +367,7 @@ function main() {
   for (let i = 0; i < props.stallLines.length; i += 4) {
     const [e, n, de, dn] = props.stallLines.slice(i, i + 4);
     const k = tileKey(Math.floor(e / info.tileSize), Math.floor(n / info.tileSize));
+    if (!owns(k)) continue;
     if (!stallBufs.has(k)) stallBufs.set(k, new MeshBuf());
     const buf = stallBufs.get(k)!;
     const pt = (t: number, s: number) => {
@@ -412,7 +431,8 @@ function main() {
   }
   console.log(`Houses: ${clearedTrees} trees inside the designed houses removed`);
 
-  rmSync(`${paths.out}t`, { recursive: true, force: true });
+  // Shards write next to each other (into separate directories in CI, merged afterwards).
+  if (!shard) rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
   // Terrain and ground classes of all tiles first: water levels are smoothed across tile borders.
   const grids = new Map<string, TileGrid>();
@@ -437,8 +457,12 @@ function main() {
 
   let bytes = 0;
   const index: [number, number][] = [];
+  let written = 0;
   for (const k of [...want].sort()) {
     const [ix, iy] = k.split('_').map(Number);
+    index.push([ix, iy]);
+    if (!owns(k)) continue;
+    written++;
     const E0 = ix * T;
     const N0 = (iy + 1) * T;
     const { h, g } = grids.get(k)!;
@@ -516,7 +540,10 @@ function main() {
     const bin = gzipSync(encodeTile(tile), { level: 9 });
     bytes += bin.byteLength;
     writeFileSync(`${paths.out}t/${k}.bin`, bin);
-    index.push([ix, iy]);
+  }
+  if (!lead) {
+    console.log(`Tiles: ${written} of ${want.size} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out} (shard ${shard!.index + 1}/${shard!.count}; shard 1 writes the world-wide files)`);
+    return;
   }
 
   // Spawn on the road sample closest to the first region's spawn point, facing along the road.
@@ -588,7 +615,7 @@ function main() {
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
   console.log(`Vegetation: ${nTrees} trees (${lidar.trees.length} from LiDAR, ${lidar.merged.size} of them mapped in OSM), ${nBushes} bushes`);
   if (landcover) console.log(`Land cover: ${coverTiles} tiles with survey colours and textures`);
-  console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
+  console.log(`Tiles: ${shard ? `${written} of ` : ''}${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 
 try {

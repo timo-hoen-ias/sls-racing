@@ -173,7 +173,8 @@ async function main() {
     const g = await fetchLaserTiles(paths.dgm1, region.laser.dgm1, km);
     console.log(`  DOM1 ${d.have} km tiles (${d.fetched} new), DGM1 ${g.have} (${g.fetched} new)`);
   }
-  const dom = laserSampler(paths.dom1), dgm = laserSampler(paths.dgm1);
+  // One survey tile at a time: a few km tiles each are enough.
+  const dom = laserSampler(paths.dom1, 16), dgm = laserSampler(paths.dgm1, 16);
 
   const { uses, buildings, walls } = await alkisLayers();
   console.log(`  ALKIS: ${uses.length} use parcels, ${buildings.length} building outlines, ${walls.length} walls`);

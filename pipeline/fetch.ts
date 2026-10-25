@@ -181,6 +181,16 @@ async function main() {
       west = Math.min(west, el.lon); east = Math.max(east, el.lon);
       south = Math.min(south, el.lat); north = Math.max(north, el.lat);
     }
+    // The build's far view is a box around all tiles plus the margin; an administrative cut leaves its corners empty.
+    const near = { west: 180, south: 90, east: -180, north: -90 };
+    for (const el of JSON.parse(readFileSync(osmFile, 'utf8')).elements) {
+      if (el.type !== 'node') continue;
+      near.west = Math.min(near.west, el.lon); near.east = Math.max(near.east, el.lon);
+      near.south = Math.min(near.south, el.lat); near.north = Math.max(near.north, el.lat);
+    }
+    const dLat = (region.far.marginMeters + 2000) / 111_320, dLon = dLat / Math.cos((((near.south + near.north) / 2) * Math.PI) / 180);
+    west = Math.min(west, near.west - dLon); east = Math.max(east, near.east + dLon);
+    south = Math.min(south, near.south - dLat); north = Math.max(north, near.north + dLat);
     const tiles = tilesForBbox(west, south, east, north, region.far.zoom);
     const n = await fetchTerrarium(paths.terrain, tiles, region.far.zoom);
     console.log(`Far terrain: ${tiles.length} tiles (${n} new) at z${region.far.zoom}`);

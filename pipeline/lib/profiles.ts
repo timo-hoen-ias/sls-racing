@@ -17,6 +17,20 @@ export function profileSigma(highway: string) {
   const rank = ROAD_CLASSES[highway]?.rank ?? 0;
   return rank >= 8 ? 28 : rank >= 5 ? 16 : rank >= 2 ? 11 : 8;
 }
+/**
+ * Second pass against the long waves: deviations from a long straight-line fit (sigma by class, m) smaller
+ * than about BUMP_LIMIT are pressed flat, bigger ones (crests, dips, real hills) keep their shape less that
+ * amount. Steady grades are straight lines, so they pass unchanged.
+ */
+export const BUMP_LIMIT = 0.5;
+/** The bump pass fades in from this far to twice this far from another road's surface (m). */
+const CALM = 20;
+export function bumpSigma(highway: string) {
+  const rank = ROAD_CLASSES[highway]?.rank ?? 0;
+  return rank >= 8 ? 70 : rank >= 5 ? 45 : 32;
+}
+/** Smooth soft threshold: about dev³ / (3 T²) below T, dev ∓ T far above it. */
+export const shrinkBump = (dev: number, t = BUMP_LIMIT) => dev - t * Math.tanh(dev / t);
 /** Shortest reach (m) over which a node correction fades out along the road. */
 const PIN_REACH = 24;
 /** Dips narrower than about twice this (samples) are filled: culverts and stream beds the road crosses on fill. */
@@ -130,18 +144,35 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
 
   // Median (removes kerbs and ditch edges), then a Gaussian over a length by road class (removes the
   // measuring noise, keeps hills).
+  const uses = new Map<number, number>();
+  for (const w of roads) for (const id of w.ids) uses.set(id, (uses.get(id) ?? 0) + 1);
   const smoothed = new Map<Way, number[]>();
+  const neighbours = new RoadNeighbours(ways);
   for (const w of roads) {
     const { ys } = raw.get(w)!;
     const med = ys.map((_, k) => median(win(ys, k, MEDIAN)));
-    smoothed.set(w, gaussSmooth(med, dists.get(w)!, profileSigma(w.tags.highway)));
+    const d = dists.get(w)!;
+    const short = gaussSmooth(med, d, profileSigma(w.tags.highway));
+    const long = gaussSmooth(short, d, bumpSigma(w.tags.highway));
+    // Not where another road or bridge is close: their surfaces touch or overlap (junctions, forks, roads
+    // side by side, decks overhead), and pressed flat each on its own they would part by up to BUMP_LIMIT.
+    // The pass fades in from CALM to 2 × CALM metres away from such places.
+    const pos = pointsAlong(w, d);
+    const hw = roadWidth(w.tags)! / 2;
+    const busy: number[] = [];
+    pos.forEach(([e, n], k) => { if (neighbours.near(w, e, n, hw)) busy.push(d[k]); });
+    let bi = 0;
+    smoothed.set(w, short.map((y, k) => {
+      while (bi < busy.length - 1 && busy[bi + 1] <= d[k]) bi++;
+      const near = busy.length ? Math.min(Math.abs(d[k] - busy[bi]), bi + 1 < busy.length ? Math.abs(busy[bi + 1] - d[k]) : Infinity) : Infinity;
+      const t = Math.min(1, Math.max(0, (near - CALM) / CALM));
+      return y + (shrinkBump(y - long[k]) - (y - long[k])) * t * t * (3 - 2 * t);
+    }));
   }
 
   // One height per node shared by several roads (or by one road twice): the median of the smoothed profiles
   // near it along every road through it, or the deck. Nodes on one road only need no pin: the profile runs
   // smoothly through them.
-  const uses = new Map<number, number>();
-  for (const w of roads) for (const id of w.ids) uses.set(id, (uses.get(id) ?? 0) + 1);
   const near = new Map<number, number[]>();
   for (const w of roads) {
     const { nodeAt } = raw.get(w)!;
@@ -362,4 +393,47 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
     });
   }
   return { roads: roads.length, nodes: nodeH.size, maxCorrection, roughness: profileRoughness(roads) };
+}
+
+
+/** Positions (UTM) along a way at the given distances from its first node. */
+function pointsAlong(w: Way, ds: ArrayLike<number>): [number, number][] {
+  const out: [number, number][] = [];
+  let seg = 0, at = 0;
+  const len = (i: number) => Math.hypot(w.pts[i + 1][0] - w.pts[i][0], w.pts[i + 1][1] - w.pts[i][1]);
+  for (let k = 0; k < ds.length; k++) {
+    while (seg < w.pts.length - 2 && at + len(seg) < ds[k]) { at += len(seg); seg++; }
+    const a = w.pts[seg], b = w.pts[Math.min(seg + 1, w.pts.length - 1)];
+    const t = Math.min(1, Math.max(0, (ds[k] - at) / (len(Math.min(seg, w.pts.length - 2)) || 1)));
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  return out;
+}
+
+/** Centreline samples of every drivable way (bridges too), to find where another road's surface is close. */
+class RoadNeighbours {
+  private cells = new Map<string, { w: Way; e: number; n: number; hw: number }[]>();
+  private static CELL = 16;
+  /** Gap (m) between two surfaces' edges below which they count as close. */
+  private static GAP = 2;
+  constructor(ways: Way[]) {
+    for (const w of ways) {
+      if (!isDrivable(w.tags)) continue;
+      const hw = roadWidth(w.tags)! / 2;
+      for (const [e, n] of densify(w.pts, 4)) {
+        const k = `${Math.floor(e / RoadNeighbours.CELL)}_${Math.floor(n / RoadNeighbours.CELL)}`;
+        if (!this.cells.has(k)) this.cells.set(k, []);
+        this.cells.get(k)!.push({ w, e, n, hw });
+      }
+    }
+  }
+  /** Another way's surface comes within GAP of this road's edge at (e, n)? */
+  near(self: Way, e: number, n: number, hw: number): boolean {
+    const C = RoadNeighbours.CELL, r = hw + 20;
+    for (let cx = Math.floor((e - r) / C); cx <= Math.floor((e + r) / C); cx++)
+      for (let cy = Math.floor((n - r) / C); cy <= Math.floor((n + r) / C); cy++)
+        for (const o of this.cells.get(`${cx}_${cy}`) ?? [])
+          if (o.w !== self && Math.hypot(o.e - e, o.n - n) < hw + o.hw + RoadNeighbours.GAP + 2) return true;
+    return false;
+  }
 }

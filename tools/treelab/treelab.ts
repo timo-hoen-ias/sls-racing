@@ -43,10 +43,11 @@ SPECIES.forEach((sp, i) => {
   lods.forEach((l, row) => {
     if (l === 2 && sp.form === 'bush') return;
     const geo = l === 2 ? impostorGeometry(g) : g.lods[l];
-    const mat = l === 2 ? impostorMaterial(atlas, sp.id, g, far) : mats[l];
-    const im = new THREE.InstancedMesh(geo, mat, 1);
+    const m = l === 2 ? impostorMaterial(atlas, sp.id, g, far) : { mat: mats[l].mats, depth: mats[l].depth };
+    const im = new THREE.InstancedMesh(geo, m.mat, 1);
+    im.customDepthMaterial = m.depth;
     im.setMatrixAt(0, new THREE.Matrix4().makeTranslation((i - (SPECIES.length - 1) / 2) * spacing, 0, -row * 22));
-    im.castShadow = l < 2;
+    im.castShadow = true;
     im.receiveShadow = true;
     scene.add(im);
   });
@@ -63,6 +64,8 @@ addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); ca
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   vegUniforms.uVegTime.value += clock.getDelta();
+  vegUniforms.uVegCam.value.copy(camera.position);
+  vegUniforms.uVegLight.value.subVectors(sun.position, sun.target.position).normalize();
   controls.update();
   renderer.render(scene, camera);
 });

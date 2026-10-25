@@ -1,0 +1,7 @@
+Title:   Generic Sport Coupé Car
+Author:  Márcio Meireles (https://sketchfab.com/marciomeireles)
+License: CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+Source:  https://sketchfab.com/3d-models/generic-sport-coupe-car-820a13c4831c41959ce75e6c2014e882
+
+This work is based on "Generic Sport Coupé Car" by Márcio Meireles, licensed under CC-BY-4.0.
+Attribution is required when used (e.g. in game credits).

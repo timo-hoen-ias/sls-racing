@@ -5,10 +5,13 @@ import { registerSoundCommands } from './audio/soundCommands.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
 import { registerAddressCommands } from './nav/addressCommands.ts';
+import { type AddressBook, loadAddresses } from './nav/addresses.ts';
 import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
+import { applyLook, type Look } from './vehicle/looks.ts';
+import { PhotoMode } from './render/photoMode.ts';
 import { createMaterials } from './render/materials.ts';
 import { PbrTextures } from './render/pbr/pbrTextures.ts';
 import { registerTextureCommands } from './render/pbr/texCommands.ts';
@@ -42,7 +45,7 @@ import { Debris } from './render/debris.ts';
 import { registerRenderCommands } from './render/debugCommands.ts';
 import { Water } from './render/water.ts';
 import { registerWaterCommands } from './render/waterCommands.ts';
-import { localToUtm, type RoadGraphData, type WorldIndex } from './world/format.ts';
+import { localToUtm, type RoadGraphData, utmToLocal, type WorldIndex } from './world/format.ts';
 import { RoadGraph } from './world/roadGraph.ts';
 import { registerScaleCommands } from './world/scaleCommands.ts';
 import { registerPathCommands } from './world/pathCommands.ts';
@@ -60,6 +63,8 @@ import { loadVegetation } from './world/vegGlb.ts';
 import { loadProps } from './world/propGlb.ts';
 import { loadShops } from './world/shopGlb.ts';
 import { ShopLayer } from './world/shops.ts';
+import { loadHouses } from './world/houseGlb.ts';
+import { HouseLayer } from './world/houses.ts';
 import { Prop } from './world/propKinds.ts';
 import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
@@ -77,6 +82,7 @@ import { patchWorldMaterials } from './weather/weatherMaterials.ts';
 import { FacadeControl } from './render/facades.ts';
 import { WeatherSystem } from './weather/weatherSystem.ts';
 import { Mixer } from './audio/mixer.ts';
+import { Radio } from './audio/radio.ts';
 import { helpLine } from './input/bindings.ts';
 import { registerSettingsCommands } from './settings/commands.ts';
 import { registerGameSettings } from './settings/gameSettings.ts';
@@ -90,10 +96,12 @@ import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
 import { Game } from './game/game.ts';
-import { applyParts, carStats, type PartLevels } from './game/workshop.ts';
+import { applyParts, applySpec, carStats, type PartLevels, type Spec } from './game/workshop.ts';
 import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';
+import { distanceToPath } from './game/events/runner.ts';
 import { BarrierView } from './game/events/barriers.ts';
+import { JumpRampView, placeJumpRamps, registerJumpCommands } from './world/jumpRamps.ts';
 import type { PropHit } from './world/props.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -147,7 +155,11 @@ async function boot() {
   stalls.register();
   const shops = new ShopLayer(index.world);
   shops.register();
-  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod, impostor: quality.name === 'hoch' ? 256 : 128 });
+  // Freely designed houses, villas and administrative buildings with front gardens.
+  const houses = new HouseLayer({ shadows: quality.shadows > 0 });
+  houses.register();
+  view.scene.add(houses.root);
+  const vegetation = new Vegetation({ world: index.world, graph, mats, grass: quality.grass, lod: quality.lod, impostor: quality.name === 'hoch' ? 256 : 128, far: quality.radius * 0.9 });
   vegetation.register(quality.trees);
   view.scene.add(vegetation.root);
   view.scene.add(props.root);
@@ -215,6 +227,7 @@ async function boot() {
     if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
+  loadHouses().then((set) => houses.setHouseSet(set), (e) => console.warn('[houses] GLB nicht geladen, keine gestalteten Häuser', e));
   const worldAudio = new WorldAudio({
     R: RAPIER, world, graph, car: car.body, scene: view.scene,
     ignore: (c) => traffic.isSolid(c.parent()),
@@ -233,11 +246,15 @@ async function boot() {
   sfx.registerCommands();
   const startBtn = $('start') as HTMLButtonElement;
   let started = false;
+  // Generative music (T2), louder and busier in races and chases.
+  const radio = new Radio();
+  radio.registerCommands();
   const startAudio = async () => {
     if (started) return;
     started = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sfx.attach(sound.context, sound.world);
+    radio.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
@@ -343,6 +360,9 @@ async function boot() {
   const telemetry = new Telemetry(recorder);
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
+  const photo = new PhotoMode(view.camera, view.renderer.domElement);
+  photo.registerCommands(() => ip);
+  photo.onToggle = (on) => { if (!on) cam.snap(); };
   // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
   const rescue = new Rescue();
   const rewind = () => {
@@ -366,6 +386,11 @@ async function boot() {
     lookup: (c) => { const h = props.lookup(c); return h?.kind === Prop.parkedCar ? h : undefined; },
     remove: (c) => { props.remove(c); },
   }, (k) => props.parkedCarDebris(k as PropHit), 1100, { minSpeed: 7, loss: 0.22, fling: 0.5, spin: 0.25 });
+  // Recycling containers by the road (S5): heavy, but they slide away instead of stopping the car dead.
+  knockdown.addSource({
+    lookup: (c) => { const h = props.lookup(c); return h?.kind === Prop.recycling ? h : undefined; },
+    remove: (c) => { props.remove(c); },
+  }, propDebris(), 600, { minSpeed: 6, loss: 0.15, fling: 0.6, spin: 0.4 });
   props.roadWidthAt = (x, z) => graph.snap(x, z, 15, (e) => e.rank >= 2)?.edge.width;
   // Style moves (near misses, slipstream, jumps …): nitro right away, points for the combo.
   const style = new StyleTracker(graph);
@@ -404,14 +429,18 @@ async function boot() {
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
+  houses.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   stalls.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   // Fitted parts (game/workshop.ts) are written over each car's tuning; the game is built further down.
   let partsOf: (id: string) => PartLevels = () => ({});
+  let specOf: (id: string) => Spec = () => 'street';
+  let lookOf: (id: string) => Look | undefined = () => undefined;
   const garage = new Garage({
     car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm),
-    afterApply: (spec) => applyParts(partsOf(spec.id)),
+    afterApply: (spec) => { applySpec(specOf(spec.id)); applyParts(partsOf(spec.id)); },
+    onModel: (spec) => { const l = lookOf(spec.id); if (l) applyLook(carView, l); },
   });
   registerGarageCommands(garage);
   registerCommand({
@@ -477,10 +506,36 @@ async function boot() {
     feel: () => car.feel,
   });
   police.registerCommands();
+  let thinPath: number[] | undefined;
+  let addressBook: Promise<AddressBook | undefined> | undefined;
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
+  // Jump ramps (W3): placed from the graph; the traffic leaves their streets out.
+  const jumpRamps = new JumpRampView(RAPIER, world);
+  jumpRamps.set(placeJumpRamps(graph));
+  view.scene.add(jumpRamps.root);
+  for (const r of jumpRamps.ramps) traffic.sim.closed.add(r.edge);
+  registerJumpCommands(jumpRamps, () => ip, (x, z, h) => teleport(x, z, h));
   const game = new Game({
-    rivals, barriers, police,
+    rivals, barriers, police, ramps: jumpRamps.ramps,
+    destination: async (near, min, max) => {
+      addressBook ??= loadAddresses(`${import.meta.env.BASE_URL}data/addresses.json`);
+      const book = await addressBook;
+      if (!book?.list.length) return undefined;
+      for (let i = 0; i < 60; i++) {
+        const a = book.list[Math.floor(Math.random() * book.list.length)];
+        const [x, z] = utmToLocal(index.world, a.e, a.n);
+        const d = Math.hypot(x - near.x, z - near.z);
+        if (d >= min && d <= max) return { label: a.label, x, z };
+      }
+      return undefined;
+    },
+    viewpoints: landmarks.list.filter((l) => !l.info.bridge && !l.info.id.startsWith('bruecke-')).map(({ info }) => ({
+      id: info.id, x: info.x, z: info.z, radius: info.radius,
+      name: info.name ?? info.id.split('-').map((w) => ({ sw: 'SW', no: 'NO', nw: 'NW', so: 'SO', st: 'St.', am: 'am' })[w] ?? w[0].toUpperCase() + w.slice(1)).join(' '),
+    })),
+    pose: () => ({ x: ip.x, y: ip.y, z: ip.z, qx: iq.x, qy: iq.y, qz: iq.z, qw: iq.w }),
+    ghostModel: () => loadSportsCar('#7fd4ff', garage.current.url).then((m) => new CarView('#7fd4ff', m).root, () => undefined),
     graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
     toast: (t, sec) => navHud.toast(t, sec), rumble: (k, ms) => input.rumble(k, ms),
     teleport: (x, z, heading) => teleport(x, z, heading), ready: () => worldReady && !hold,
@@ -495,12 +550,21 @@ async function boot() {
     groundAt: (x, z) => graph.snap(x, z, 80)?.y,
   });
   partsOf = (id) => game.workshop?.parts(id) ?? {};
+  specOf = (id) => game.workshop?.spec(id) ?? 'street';
+  lookOf = (id) => game.workshop?.look(id);
+  if (game.workshop) {
+    const shop = game.workshop;
+    shop.onLook = () => applyLook(carView, shop.look());
+    shop.onLook();
+  }
   // The car from the save, with its parts.
   if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
   else garage.retune();
   game.registerCommands(() => ip);
   void game.load();
   minimap.markers = bigMap.markers = () => game.markers();
+  bigMap.areas = () => game.areas();
+  bigMap.stats = () => game.mapStats();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
@@ -554,6 +618,8 @@ async function boot() {
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
+      if (photo.active) { if (e === 'photo') photo.toggle(false); continue; }
+      if (e === 'photo' && !menu.open && !game.overlay && !replay.active) { photo.toggle(true, ip); continue; }
       // The open menu reads the gamepad itself and eats the keyboard.
       if (menu.open || game.overlay) { if (e === 'interact' && game.hud.cardOpen) game.interact(); continue; }
       if (e === 'menu' && !debug.open) menu.toggle(true);
@@ -579,7 +645,7 @@ async function boot() {
       if (e === 'time') view.daylight.nextPreset();
     }
     menu.poll(dt);
-    const paused = menu.open;
+    const paused = menu.open || photo.active;
 
     // Hold the car until the ground under it exists.
     perf.begin('stream');
@@ -729,11 +795,19 @@ async function boot() {
     effects.road.puddle = weather.puddle;
     const lvel = car.body.linvel();
     const simDt = debugState.frozen || paused ? 0 : dt * debugState.timeScale;
+    // Less traffic on the route of a running race (V1).
+    const racePath = game.racePath;
+    if (racePath !== thinPath) {
+      thinPath = racePath;
+      traffic.sim.thinOut = racePath ? (x, z) => distanceToPath(racePath, x, z) < 25 : undefined;
+      traffic.sim.thinRoute(ip);
+    }
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
-    vegetation.update(dt, view.camera, weather.weather);
+    houses.update(view.camera, view.daylight.daylight);
+    vegetation.update(dt, view.camera, weather.weather, view.sun);
     effects.surface = roadSurface.kinds;
     if (rs) effects.tick(dt, view.camera, view.renderer.domElement.height);
     else effects.update(car, ip, iq, dt, now / 1000, view.camera, view.renderer.domElement.height);
@@ -747,7 +821,8 @@ async function boot() {
     cam.motion.yaw = car.body.angvel().y;
     cam.stick.x = paused ? 0 : input.look.x;
     cam.stick.y = paused ? 0 : input.look.y;
-    if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    if (photo.active) photo.update(dt, ip);
+    else if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     // Style moves and their combo, while really driving.
     if (worldReady && !rs && !paused && !debugState.frozen) {
       style.update({ dt: dt * debugState.timeScale, x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, heading: car.heading(), airborne: car.airborne, airTime: car.airTime, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x }, traffic.sim.agents);
@@ -757,6 +832,7 @@ async function boot() {
     game.update({ x: ip.x, z: ip.z, speed: Math.hypot(lvel.x, lvel.z), dt: paused ? 0 : dt });
     styleFeed.setCombo(score.bank, score.multiplier, score.timer / score.window);
     speedLines.update(dt, Math.abs(rs ? rs.speed : car.speed) * 3.6, boostFx);
+    if (car.boosting) game.nitroUsed();
     if (car.bursting > 0 && !wasBursting) { sfx.play('burst'); input.rumble(0.8, 220); }
     wasBursting = car.bursting > 0;
     viewDist.afterCamera();
@@ -803,9 +879,12 @@ async function boot() {
     view.renderer.info.reset();
     water.update(dt);
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
+    photo.takeShot();
     perf.gpuEnd();
     perf.end('render');
 
+    radio.setIntensity(game.racing || police.heat ? 1 : 0.3 + Math.min(0.3, Math.abs(car.speed) / 150));
+    radio.update(dt, paused || !game.inGame);
     mixer.update({ engine: sound, traffic: traffic.sound, ambience: worldAudio.ambience, weather: weather.sound });
     const dtr = car.drivetrain;
     if (sound && soundCmds.view === 'auto') sound.view = cam.mode;

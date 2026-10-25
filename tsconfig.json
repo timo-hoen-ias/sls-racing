@@ -11,7 +11,8 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "resolveJsonModule": true
   },
   "include": ["src", "pipeline", "tests", "tools/treelab", "vite.config.ts"]
 }

@@ -17,6 +17,8 @@ export interface GarageContext {
   notify?(text: string): void;
   /** After a switch (rev counter range …). */
   onChange?(spec: CarSpec): void;
+  /** After a new body is in place: paint, rims … (vehicle/looks.ts). */
+  onModel?(spec: CarSpec): void;
   /** Right after applyCar, before the physics takes the tuning over: fitted parts (game/workshop.ts). */
   afterApply?(spec: CarSpec): void;
 }
@@ -27,7 +29,8 @@ export class Garage {
   readonly available = new Set<string>([DEFAULT_CAR]);
   private c: GarageContext;
   private pending = 0;
-  private geometry?: CarGeometry;
+  /** Dimensions (and source credit) of the loaded model. */
+  geometry?: CarGeometry;
 
   constructor(c: GarageContext) {
     this.c = c;
@@ -69,6 +72,7 @@ export class Garage {
     const p = car.body.translation();
     car.body.setTranslation({ x: p.x, y: p.y + 0.15, z: p.z }, true);
     view.setModel(model, 'glb');
+    this.c.onModel?.(spec);
     this.c.sound()?.setProfile(ENGINE_SOUND);
     this.current = spec;
     this.c.onChange?.(spec);
@@ -117,6 +121,19 @@ export function registerGarageCommands(g: Garage) {
     run: () => {
       void g.probe();
       return CARS.map((c) => `${c.id === g.current.id ? '▶' : ' '} ${c.id.padEnd(10)} ${c.label} · ${c.info}${g.available.has(c.id) ? '' : ' (Modell nicht gefunden)'}`).join('\n');
+    },
+  });
+  registerCommand({
+    name: 'car.source',
+    help: 'Herkunft und Lizenz des Automodells (importierte CC-BY-Modelle) und seine Maße',
+    run: () => {
+      const geo = g.geometry;
+      if (!geo) return `${g.current.label}: eigenes Modell, keine Maße im GLB`;
+      const w = geo.wheel;
+      return [
+        `${g.current.label}: ${geo.source ?? 'eigenes Modell (tools/blender)'}`,
+        `${geo.length} × ${geo.width} m, Radstand ${(w.front - w.rear).toFixed(2)} m, Rad ⌀ ${(w.radius * 2).toFixed(2)} m`,
+      ].join('\n');
     },
   });
   registerCommand({

@@ -1,0 +1,17 @@
+{
+  "name": "V12 Goblin",
+  "credit": "Fictional supercar - V12 Goblin von Olli Teittinen (ollitei), CC BY 4.0, sketchfab.com/3d-models/0a20e49ad5774d778567cb5c3f345786",
+  "forward": "-z",
+  "length": 4.55,
+  "drop": "car_shadow|/clearcoat/",
+  "wheels": "car_wheel_",
+  "calipers": "car_brake_",
+  "paint": {
+    "materials": [
+      "car_body"
+    ]
+  },
+  "tyre": [
+    "car_tire"
+  ]
+}

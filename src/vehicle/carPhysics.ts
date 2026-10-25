@@ -103,9 +103,10 @@ export class CarPhysics {
   /**
    * Arcade feel on top of the tuning (feel.* commands, src/game/feel.ts): engine torque and downforce factors,
    * air drag factor (higher top speed below 1), self-levelling in the air and a soft landing (0..1),
-   * and arcade brakes: extra deceleration in g on top of what the tyres can hold, at full pedal.
+   * arcade brakes: extra deceleration in g on top of what the tyres can hold, at full pedal,
+   * and road hold 0..1: bumps and crests do not throw the car into the air (feel.stick).
    */
-  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0 };
+  feel = { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0 };
   /** A short tap on nitro fires a burst instead of the steady boost (feel.burst). */
   burst = { enabled: true, tap: 0.22, kick: 5, cost: 0.14 };
   /** Nitro gained from style moves since the last frame (near misses, jumps …), added by the game. */
@@ -135,11 +136,21 @@ export class CarPhysics {
   private bumps = [0, 0, 0, 0];
   private k = chassisConstants();
   private world: RAPIER_NS.World;
+  private stickRay!: RAPIER_NS.Ray;
+  /**
+   * Road hold tuning (feel.stick scales it): normal speed left alone (m/s), damping rate (1/s), press-down with a
+   * wheel in the air (g), extra gravity in the air (g) for this long after take-off (s) while the road is within reach (m),
+   * unless the car came off a ramp: climbed more than rampRise (m) and left climbing faster than hopVy (m/s).
+   */
+  stick = { free: 0.25, damp: 18, press: 0.6, gravity: 1.5, window: 0.4, reach: 1.6, hopVy: 2.5, rampRise: 0.6 };
+  private climb = 0;
+  private launched = false;
   private chassis!: RAPIER_NS.Collider;
 
   constructor(R: R, world: RAPIER_NS.World, pos: V3, heading: number) {
     this.R = R;
     this.world = world;
+    this.stickRay = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
     const yaw = Math.PI - heading;
     const desc = R.RigidBodyDesc.dynamic()
       .setTranslation(pos.x, pos.y, pos.z)
@@ -221,6 +232,10 @@ export class CarPhysics {
     const wasAirborne = this.airborne;
     this.airborne = contacts === 0;
     this.airTime = this.airborne ? this.airTime + dt : 0;
+    // Height climbed on the ground just before take-off: a ramp is a long climb, a bump a short kick.
+    const vy0 = this.body.linvel().y;
+    if (!this.airborne) this.climb = vy0 > 0.5 ? this.climb + vy0 * dt : vy0 < 0.2 ? 0 : this.climb;
+    if (this.airborne && !wasAirborne) this.launched = vy0 > this.stick.hopVy && this.climb > this.stick.rampRise;
     if (wasAirborne && !this.airborne && this.feel.landing > 0) this.land();
 
     // Speed-sensitive steering: full lock when parking, only a few degrees at motorway speed,
@@ -312,6 +327,7 @@ export class CarPhysics {
         const p = { x: t.x + fwd.x * z, y: t.y + fwd.y * z, z: t.z + fwd.z * z };
         body.applyImpulseAtPoint({ x: -up.x * df * share, y: -up.y * df * share, z: -up.z * df * share }, p, true);
       }
+      if (this.feel.stick > 0) this.holdRoad(contacts, absV, mass, dt);
       // Drift assist: a little extra yaw while steering so the car feels eager, more with the handbrake.
       if (absV > 3 && as.drift > 0) {
         const fade = input.handbrake ? 1 : clamp(1.5 - absV / 40, 0.35, 1);
@@ -365,6 +381,7 @@ export class CarPhysics {
         body.applyTorqueImpulse({ x: fwd.x * k, y: fwd.y * k, z: fwd.z * k }, true);
       }
     } else {
+      if (this.feel.stick > 0) this.pullDown(mass, dt);
       // Air control: pitch with throttle/brake, yaw with steering.
       const right = rotate(rot, -1, 0, 0);
       const pitch = (input.brake - input.throttle) * CAR.airControl * dt;
@@ -567,6 +584,51 @@ export class CarPhysics {
     // Rear tyres give a little while the drift runs, so it does not grip up on its own.
     const target = this.driftDir && !input.handbrake ? dk.grip : 1;
     this.rearSide += (target - this.rearSide) * Math.min(1, dt * 6);
+  }
+
+  /**
+   * Road hold (feel.stick): on the ground the speed away from the road (along the mean contact normal) is
+   * taken out, so a bump or a crest does not launch the car; driving up a ramp is along the road and keeps
+   * its jump. With a wheel in the air the car is pressed down onto the others.
+   */
+  private holdRoad(contacts: number, absV: number, mass: number, dt: number) {
+    const vc = this.controller;
+    const body = this.body;
+    let nx = 0, ny = 0, nz = 0;
+    for (let i = 0; i < 4; i++) {
+      if (!vc.wheelIsInContact(i)) continue;
+      const n = vc.wheelContactNormal(i);
+      if (n) { nx += n.x; ny += n.y; nz += n.z; }
+    }
+    const nl = Math.hypot(nx, ny, nz);
+    if (nl < 1e-3) return;
+    nx /= nl; ny /= nl; nz /= nl;
+    const st = this.stick;
+    const lv = body.linvel();
+    const vn = lv.x * nx + lv.y * ny + lv.z * nz;
+    if (vn > st.free) {
+      const j = (vn - st.free) * (1 - Math.exp(-st.damp * this.feel.stick * dt)) * mass;
+      body.applyImpulse({ x: -nx * j, y: -ny * j, z: -nz * j }, true);
+    }
+    if (contacts < 4 && absV > 5 && lv.y < st.hopVy) {
+      const f = st.press * 9.81 * this.feel.stick * mass * clamp((absV - 5) / 10, 0, 1) * dt;
+      body.applyImpulse({ x: -nx * f, y: -ny * f, z: -nz * f }, true);
+    }
+  }
+
+  /**
+   * Road hold in the air: just after a hop with the road close below, extra gravity puts the car back on it.
+   * A ramp (a climb of more than rampRise ending faster than hopVy upwards) keeps its full jump.
+   */
+  private pullDown(mass: number, dt: number) {
+    const st = this.stick;
+    if (this.airTime > st.window || this.launched) return;
+    const t = this.body.worldCom();
+    this.stickRay.origin = { x: t.x, y: t.y, z: t.z };
+    const hit = this.world.castRay(this.stickRay, st.reach, true, undefined, undefined, undefined, this.body);
+    if (!hit) return;
+    const f = st.gravity * 9.81 * this.feel.stick * mass * dt;
+    this.body.applyImpulse({ x: 0, y: -f, z: 0 }, true);
   }
 
   /** Touch-down after a jump: takes out most of the bounce and the roll/pitch tumble (feel.landing). */

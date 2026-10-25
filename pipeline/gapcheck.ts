@@ -106,7 +106,12 @@ async function main() {
   for (const [ix, iy] of keys) {
     for (const [k, b] of bodies) {
       const [bx, by] = k.split('_').map(Number);
-      if (Math.abs(by - iy) > 1 || Math.abs(bx - ix) > 1) { world.removeRigidBody(b); bodies.delete(k); }
+      if (Math.abs(by - iy) > 1 || Math.abs(bx - ix) > 1) {
+        // Forget their kinds too: a Landkreis has more colliders than a Map holds.
+        for (let i = 0; i < b.numColliders(); i++) kinds.delete(b.collider(i).handle);
+        world.removeRigidBody(b);
+        bodies.delete(k);
+      }
     }
     for (let dx = -1; dx <= 1; dx++)
       for (let dy = -1; dy <= 1; dy++) {

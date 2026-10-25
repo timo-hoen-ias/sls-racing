@@ -16,7 +16,7 @@ function ring(cx: number, cy: number, r: number, seed: number): [number, number]
 
 describe('GroundIndex', () => {
   it('answers exactly like testing every polygon in priority order', () => {
-    const tags = [{ landuse: 'forest' }, { landuse: 'farmland' }, { landuse: 'meadow' }, { natural: 'water' }, { landuse: 'residential' }];
+    const tags: Record<string, string>[] = [{ landuse: 'forest' }, { landuse: 'farmland' }, { landuse: 'meadow' }, { natural: 'water' }, { landuse: 'residential' }];
     const polys: Polygon[] = [];
     for (let i = 0; i < 60; i++) {
       const cx = 336_000 + rand(i, 7) * 3000, cy = 5_464_000 + rand(i, 8) * 3000, r = 30 + rand(i, 9) * 900;

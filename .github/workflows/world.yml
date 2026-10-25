@@ -4,7 +4,7 @@
 # Cloudflare deploy downloads instead of building the world itself (pipeline/deploy-tiles.ts).
 # The Landkreis does not fit into one runner's memory in one go: SHARDS jobs build a stripe share of the
 # tiles each (pipeline/lib/shard.ts, byte-identical to a whole build), the check job merges them, runs the
-# event, drive, gap and surface tests and publishes.
+# event test and publishes, and the verify jobs run the drive, gap and surface checks side by side.
 name: World build
 on:
   workflow_dispatch:
@@ -122,21 +122,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - uses: actions/download-artifact@v4
-        with:
-          name: osm-extract
-          path: data/raw/extracts
-      - uses: actions/cache/restore@v4
-        with:
-          path: |
-            data/raw/dgm1
-            data/raw/dom1
-            data/raw/lod2
-          key: laser-${{ hashFiles('pipeline/regions/*.json') }}
-          restore-keys: laser-
-      # The drive and gap tests compare the tiles with the road heights from the raw data.
-      - name: Download OSM and terrain
-        run: npm run world:fetch
       - name: Merge the shards
         uses: actions/download-artifact@v4
         with:
@@ -162,13 +147,64 @@ jobs:
           gh api "repos/${{ github.repository }}/releases/tags/world-tiles" -q '.assets | sort_by(.created_at) | reverse | .[8:] | .[].name' |
             while read -r old; do gh release delete-asset world-tiles "$old" -y || true; done
           echo "Kacheln veröffentlicht: tiles-$key.tar.gz ($(du -h "tiles-$key.tar.gz" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
-      - name: Drive test (autopilot on 200 real roads)
-        run: npm run world:drivetest -- --routes=200
-      - name: Gap check (every road, every 2 m, no holes or steps)
-        run: npm run world:gaps -- --max=GAPS_MAX # ratchet
-      # Full coverage: every 0.5 m cell of every carriageway (junctions, ramps, bridges, tile borders), as wheel and chassis.
-      - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags)
-        run: npm run world:surface -- --max-critical=SURF_CRIT --max=SURF_MAX # ratchet
+      - name: Summary
+        run: |
+          echo "### Welt-Kacheln" >> $GITHUB_STEP_SUMMARY
+          echo "Dateien: $(ls public/tiles/t | wc -l), Größe: $(du -sh public/tiles | cut -f1)" >> $GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: world-tiles
+          path: public/tiles
+          retention-days: 7
+          compression-level: 0
+
+  # The slow checks side by side, each on the merged tiles. A failed one withdraws the published tiles.
+  verify:
+    needs: [key, check]
+    if: needs.key.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Drive test (autopilot on 200 real roads)
+            run: npm run world:drivetest -- --routes=200
+          - name: Gap check (every road, every 2 m, no holes or steps)
+            # ratchet (2026-10-25, Landkreis: 135; Saarlouis alone had 49): lower as fixes land
+            run: npm run world:gaps -- --max=145
+          - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags)
+            # ratchet (2026-10-25, Landkreis 16.7 km² carriageway: 349 critical, 6169 total; Saarlouis 6.2 km²: 132/1867): lower as fixes land
+            run: npm run world:surface -- --max-critical=370 --max=6400
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: osm-extract
+          path: data/raw/extracts
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/raw/dgm1
+            data/raw/dom1
+            data/raw/lod2
+          key: laser-${{ hashFiles('pipeline/regions/*.json') }}
+          restore-keys: laser-
+      # The drive and gap tests compare the tiles with the road heights from the raw data.
+      - name: Download OSM and terrain
+        run: npm run world:fetch
+      - uses: actions/download-artifact@v4
+        with:
+          name: world-tiles
+          path: public/tiles
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
       # Tiles that fail the checks must not count as tested: the next run with this key builds again.
       - name: Withdraw tiles after a failed check
         if: failure() && needs.key.outputs.publish == 'true'
@@ -176,12 +212,5 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### Welt-Kacheln" >> $GITHUB_STEP_SUMMARY
-          echo "Dateien: $(ls public/tiles/t | wc -l), Größe: $(du -sh public/tiles | cut -f1)" >> $GITHUB_STEP_SUMMARY
           [ -f public/tiles/surface.json ] && node -e "const s=require('./public/tiles/surface.json');console.log('Flächenprüfung: '+s.cells+' Zellen, '+s.issues.length+' Stellen, davon '+s.critical+' kritisch')" >> $GITHUB_STEP_SUMMARY || true
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: world-tiles
-          path: public/tiles
-          retention-days: 7
+          [ -f public/tiles/gaps.json ] && node -e "const s=require('./public/tiles/gaps.json');console.log('Lückenprüfung: '+s.issues.length+' Stellen')" >> $GITHUB_STEP_SUMMARY || true

@@ -23,7 +23,7 @@ describe('motorway junctions (RAA/RMS)', () => {
     const three = roadSection({ highway: 'motorway', oneway: 'yes', lanes: '3', placement: 'right_of:1', 'sls:aux': 'yes' })!;
     expect(three.dividers[0]).toBeCloseTo(two.dividers[0]);
     // The block marking lies where the two-lane road has its right lane edge (its edge line).
-    expect(three.block).toBeCloseTo(two.width / 2 - two.outer);
+    expect(three.block).toBeCloseTo(two.width / 2 + two.shift - two.outer);
     // Traffic stays in the right through lane, not on the auxiliary lane.
     expect(three.rightLane).toBeCloseTo(two.rightLane);
   });
@@ -44,7 +44,7 @@ describe('motorway junctions (RAA/RMS)', () => {
     const block = roadSection(j.b.tags)!.block!;
     const ls = roadSection(j.link.tags)!;
     // Ramp's left edge line (outer side) on the block marking: centre this far right of the motorway line.
-    const target = block + ls.width / 2 - ls.inner + 0.3;
+    const target = block + ls.width / 2 - ls.inner - ls.shift + 0.3;
     expect(j.link.pts[0][0]).toBeCloseTo(target, 1);
     expect(j.link.pts[0][1]).toBeCloseTo(1300, 1);
     // Runs parallel first, then follows the mapped course once that has left the motorway.

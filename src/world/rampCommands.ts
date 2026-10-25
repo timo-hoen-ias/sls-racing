@@ -21,13 +21,18 @@ const KIND = ['Ausfahrt', 'Einfahrt'];
 
 export function registerRampCommands(g: RampCommandContext) {
   let ramps: RampRow[] | null = null;
+  /** Carriageways moved apart for a real median: [x, z, move in m] every 50 m. */
+  let medians: [number, number, number][] = [];
+  let medianMarks: THREE.Group | null = null;
   let markers: THREE.Group | null = null;
   let cursor = -1;
   const load = async () => {
     if (ramps) return ramps;
     const res = await fetch(`${g.baseUrl}/ramps.json`);
     if (!res.ok) throw new Error(`ramps.json fehlt (HTTP ${res.status}), "npm run world:build" ausführen`);
-    ramps = ((await res.json()) as { ramps: RampRow[] }).ramps;
+    const data = (await res.json()) as { ramps: RampRow[]; medians?: [number, number, number][] };
+    medians = data.medians ?? [];
+    ramps = data.ramps;
     return ramps;
   };
   const later = (fn: () => string) => {
@@ -103,6 +108,39 @@ export function registerRampCommands(g: RampCommandContext) {
         return jump(best[0]);
       }
       throw new Error('erwartet: Nummer, next, prev, exit oder entry');
+    }),
+  });
+  registerCommand({
+    name: 'hw.median',
+    help: 'Mittelstreifen: wo die Richtungsfahrbahnen auseinandergerückt wurden, weil OSM sie zu eng zeichnet. list: Stellen in der Nähe, show/hide: Säulen (gelb bis rot je nach Verschiebung)',
+    args: '[list|show|hide]',
+    complete: () => ['list', 'show', 'hide'],
+    run: ([a = 'list']) => later(() => {
+      if (!medians.length) return 'Keine Fahrbahn verschoben.';
+      if (a === 'show' || a === 'hide') {
+        if (!medianMarks) {
+          medianMarks = new THREE.Group();
+          medianMarks.name = 'medians';
+          const geo = new THREE.CylinderGeometry(0.3, 0.3, 30, 5);
+          const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ depthTest: false, transparent: true, opacity: 0.7 }), medians.length);
+          const m = new THREE.Matrix4(), c = new THREE.Color();
+          medians.forEach(([x, z, s], i) => {
+            mesh.setMatrixAt(i, m.makeTranslation(x, 200, z).multiply(new THREE.Matrix4().makeScale(1, 30, 1)));
+            mesh.setColorAt(i, c.setHSL(0.16 * (1 - Math.min(1, s / 2)), 1, 0.5));
+          });
+          mesh.renderOrder = 998;
+          mesh.frustumCulled = false;
+          medianMarks.add(mesh);
+          g.scene.add(medianMarks);
+        }
+        medianMarks.visible = a === 'show';
+        return `${medians.length} Stellen ${a === 'show' ? 'markiert' : 'ausgeblendet'}`;
+      }
+      const p = g.pos();
+      const max = Math.max(...medians.map((m) => m[2]));
+      const near = medians.map((m) => [m, Math.hypot(m[0] - p.x, m[1] - p.z)] as const).sort((x, y) => x[1] - y[1]).slice(0, 5);
+      return [`${medians.length} Stellen (alle 50 m), bis ${max.toFixed(2)} m je Fahrbahn nach außen verschoben`,
+        ...near.map(([[, , s], d]) => `${d.toFixed(0)} m entfernt: ${s.toFixed(2)} m je Fahrbahn`)].join('\n');
     }),
   });
   registerToggle('hw.marks', 'Fahrbahnmarkierungen aus Geometrie anzeigen (Leitlinien, Blockmarkierung, Sperrflächen; Randlinien zeichnet der Straßen-Shader)', () => g.mats.marking.visible, (v) => {

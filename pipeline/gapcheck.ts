@@ -14,6 +14,7 @@ import { readOsm, type Way } from './lib/osm.ts';
 import { halfWidthAt, halfWidths } from './lib/overlap.ts';
 import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
 import { auxLoss, isDrivable, roadProfile } from './lib/roads.ts';
+import { separateCarriageways } from './lib/carriageways.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
 import { roadSection } from '../src/world/roadSpec.ts';
 
@@ -50,6 +51,7 @@ async function main() {
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
   const height = terrainHeight(regions, unproject(cfg.zone));
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
+  separateCarriageways(osm.ways);
   const ramps = planRamps(osm.ways);
   roadHeights(osm.ways, regions, height);
   matchRampHeights(ramps);

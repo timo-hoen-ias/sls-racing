@@ -29,6 +29,7 @@ import { buildGraph } from './lib/graph.ts';
 import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, type Railing } from './lib/roads.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
 import { KERB, noCars } from '../src/world/roadSpec.ts';
+import { separateCarriageways } from './lib/carriageways.ts';
 import { matchRampHeights, planRamps, rampList } from './lib/ramps.ts';
 import { planKerbs } from './lib/kerbs.ts';
 import { buildRoadside } from './lib/roadside.ts';
@@ -76,6 +77,8 @@ function main() {
   const tiles = new TileMap(info.tileSize);
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
+  const medians = separateCarriageways(osm.ways);
+  console.log(`Motorway medians: ${medians.ways} carriageways moved apart over ${medians.km} km (up to ${medians.maxMove} m each)`);
   const ramps = planRamps(osm.ways);
   console.log(`Motorway junctions: ${ramps.stats.runs} auxiliary lanes, ${ramps.stats.moved} ramps moved onto them, ${ramps.stats.plain} ramps as mapped`);
   roadHeights(osm.ways, regions, height, console.log);
@@ -471,7 +474,7 @@ function main() {
   console.log(`Landmarks: ${placed.length} models placed`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
-  writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info)));
+  writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info, medians.points)));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);

@@ -90,7 +90,6 @@ import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
 import { Game } from './game/game.ts';
-import { findCar } from './vehicle/cars.ts';
 import { applyParts, carStats, type PartLevels } from './game/workshop.ts';
 import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';

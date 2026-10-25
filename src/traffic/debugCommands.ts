@@ -5,6 +5,8 @@ import { loadVehicleParts, proceduralVehicleSet } from './vehicleGlb.ts';
 
 // Debug commands for AI traffic (traffic.*).
 
+const KINDS_ORDER: VehicleKind[] = ['car', 'van', 'bus', 'truck'];
+
 export function registerTrafficCommands(t: Traffic, player: () => { x: number; z: number; heading: number }) {
   const sim = t.sim;
   registerValue('traffic.density', 'Verkehrsdichte 0..1 (Anteil der maximalen Fahrzeugzahl)', () => sim.density, (v) => (sim.density = v), [0, 1]);
@@ -80,15 +82,18 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
   });
   registerCommand({
     name: 'traffic.models',
-    help: 'Fahrzeugmodelle: Blender-GLB (mehrere Varianten, 2 Detailstufen) oder prozedural',
-    args: '[glb|procedural]',
-    complete: () => ['glb', 'procedural'],
+    help: 'Fahrzeugmodelle: pack (Autos aus dem CC-BY-Paket, Bus/LKW/Transporter aus Blender), glb (nur Blender) oder prozedural; ohne Argument die Varianten',
+    args: '[pack|glb|procedural]',
+    complete: () => ['pack', 'glb', 'procedural'],
     run([m]) {
-      if (m === undefined) return `traffic.models = ${t.view.models}`;
+      if (m === undefined) {
+        const set = t.view.set;
+        return `traffic.models = ${t.view.models}\n${KINDS_ORDER.map((k) => `${k}: ${set[k].map((v) => v.name.slice(k.length + 1)).join(', ')}`).join('\n')}`;
+      }
       if (m === 'procedural') { t.view.setModels(proceduralVehicleSet(), 'procedural'); return 'prozedurale Fahrzeuge'; }
-      if (m !== 'glb') throw new Error('glb oder procedural');
-      loadVehicleParts().then((set) => t.view.setModels(set, 'glb'), (e) => console.warn('[traffic] GLB nicht geladen', e));
-      return 'lade GLB …';
+      if (m !== 'glb' && m !== 'pack') throw new Error('pack, glb oder procedural');
+      loadVehicleParts(m).then((set) => t.view.setModels(set, m), (e) => console.warn('[traffic] GLB nicht geladen', e));
+      return `lade ${m} …`;
     },
   });
   registerCommand({

@@ -195,7 +195,10 @@ export function generateEvents(graph: RoadGraph, opts: GenerateOptions = {}): Ga
     const v = c.rank >= 9 ? [200, 235, 265, 295] : c.rank >= 8 ? [170, 200, 230, 260] : [110, 135, 160, 185];
     if (count('speedtrap') < max.speedtrap) {
       const g = gate(c, rev ? a + 20 : b - 20, c.width / 2 + 1.5, rev);
-      add({ id: id('speedtrap', g), type: 'speedtrap', name: `Blitzer ${STREET(c.name)}`, where: STREET(c.name), start: g, gates: [], medals: v as GameEvent['medals'], higher: true, unit: 'km/h', level: c.rank >= 8 ? 3 : 1 });
+      // Run-up on the same straight: what a car needs to reach the gold speed at ~4.5 m/s², as far as the straight allows.
+      const need = Math.min(600, (v[2] / 3.6) ** 2 / 9 + 40);
+      const runup = gate(c, rev ? Math.min(b - 5, a + 20 + need) : Math.max(a + 5, b - 20 - need), c.width / 2, rev);
+      add({ id: id('speedtrap', g), type: 'speedtrap', name: `Blitzer ${STREET(c.name)}`, where: STREET(c.name), start: g, gates: [], medals: v as GameEvent['medals'], higher: true, unit: 'km/h', level: c.rank >= 8 ? 3 : 1, extra: { runup } });
     }
     if (count('speedzone') < max.speedzone && b - a > 350) {
       const len = Math.min(700, b - a);

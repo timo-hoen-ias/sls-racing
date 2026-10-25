@@ -9,7 +9,7 @@ beforeAll(async () => {
   await RAPIER.init();
 });
 
-function setup(feel: 'fun' | 'real', wall = false) {
+function setup(feel: 'fun' | 'real', wall = false, mesh?: { v: number[]; i: number[] }, step = 0) {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = 1 / 120;
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -17,6 +17,9 @@ function setup(feel: 'fun' | 'real', wall = false) {
   world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array([-s, 0, -s, s, 0, -s, -s, 0, s, s, 0, s]), new Uint32Array([0, 2, 1, 1, 2, 3])), ground);
   // A long wall along x = 4 (east of the car), for glancing hits.
   if (wall) world.createCollider(RAPIER.ColliderDesc.cuboid(0.5, 2, 1500).setTranslation(4.5, 2, 0), ground);
+  // A raised slab across the road from z = -20 on, `step` m high (a high kerb or terrain edge).
+  if (step) world.createCollider(RAPIER.ColliderDesc.cuboid(6, step / 2, 20).setTranslation(0, step / 2, -40), ground);
+  if (mesh) world.createCollider(RAPIER.ColliderDesc.trimesh(new Float32Array(mesh.v), new Uint32Array(mesh.i)), ground);
   const car = new CarPhysics(RAPIER, world, { x: 0, y: 1, z: 0 }, 0);
   Object.assign(car.feel, FEEL[feel].car);
   car.burst.enabled = FEEL[feel].burst;
@@ -41,6 +44,134 @@ describe('game feel', () => {
     const real = setup('real');
     for (const s of [fun, real]) { s.drive({}, 1); s.drive({ throttle: 1 }, 6); }
     expect(fun.car.speed).toBeGreaterThan(real.car.speed * 1.05);
+  });
+
+  it('fun brakes hard: 100 km/h to a stop in clearly less than the tyres alone, staying straight', () => {
+    const stop = (feel: 'fun' | 'real') => {
+      const { car, drive } = setup(feel);
+      drive({}, 1);
+      while (car.speed < 100 / 3.6) drive({ throttle: 1 }, 1 / 120);
+      const p0 = car.body.translation();
+      let t = 0;
+      while (car.speed > 0.5 && t < 10) { drive({ brake: 1 }, 1 / 120); t += 1 / 120; }
+      const p1 = car.body.translation();
+      return { d: Math.abs(p1.z - p0.z), side: Math.abs(p1.x - p0.x), t };
+    };
+    const fun = stop('fun');
+    const real = stop('real');
+    expect(fun.d).toBeLessThan(20);
+    expect(fun.d).toBeLessThan(real.d * 0.7);
+    expect(fun.t).toBeLessThan(1.6);
+    expect(fun.side).toBeLessThan(0.5);
+  });
+
+  // Heading 0 drives towards -z. A profile across the road (z, height) as a 12 m wide strip of triangles.
+  const strip = (profile: [number, number][]) => {
+    const v: number[] = [], i: number[] = [];
+    profile.forEach(([z, y]) => v.push(-6, y, z, 6, y, z));
+    for (let k = 0; k + 1 < profile.length; k++) { const a = k * 2; i.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    return { v, i };
+  };
+  // Coasts at 25 m/s over the strip; returns the longest time in the air and the jump length.
+  const coast = (feel: 'fun' | 'real', mesh: { v: number[]; i: number[] }) => {
+    const { car, drive } = setup(feel, false, mesh);
+    // Same speed at the hump or ramp for both: the coasting brake is not what is measured here.
+    car.feel.coast = 0;
+    drive({}, 1);
+    car.body.setLinvel({ x: 0, y: 0, z: -25 }, true);
+    let air = 0, longest = 0, from = 0, jump = 0;
+    for (let t = 0; t < 3; t += 1 / 120) {
+      drive({}, 1 / 120);
+      const z = car.body.translation().z;
+      if (car.airborne) { if (!air) from = z; air += 1 / 120; longest = Math.max(longest, air); }
+      else { if (air > 0.1) jump = Math.max(jump, from - z); air = 0; }
+    }
+    return { longest, jump };
+  };
+
+  it('fun keeps the car on the road over a 15 cm hump where real hops off', () => {
+    const hump = strip([[-25, 0.001], [-29, 0.001], [-30, 0.15], [-31, 0.001], [-120, 0.001]]);
+    const fun = coast('fun', hump);
+    const real = coast('real', hump);
+    expect(real.longest).toBeGreaterThan(0.1);
+    expect(fun.longest).toBeLessThan(0.05);
+  });
+
+  it('fun climbs a 30 cm edge that stops the real car, without flying', () => {
+    const run = (feel: 'fun' | 'real') => {
+      const { car, drive } = setup(feel, false, undefined, 0.3);
+      drive({}, 1);
+      car.body.setLinvel({ x: 0, y: 0, z: -12 }, true);
+      let air = 0, longest = 0, top = 0;
+      for (let t = 0; t < 3; t += 1 / 120) {
+        drive({ throttle: 0.3 }, 1 / 120);
+        air = car.airborne ? air + 1 / 120 : 0;
+        longest = Math.max(longest, air);
+        top = Math.max(top, car.body.translation().y);
+      }
+      return { z: car.body.translation().z, speed: car.speed, longest, top, steps: car.steps };
+    };
+    const fun = run('fun');
+    const real = run('real');
+    expect(real.z).toBeGreaterThan(-22);
+    expect(fun.z).toBeLessThan(-35);
+    expect(fun.speed).toBeGreaterThan(6);
+    expect(fun.longest).toBeLessThan(0.15);
+    expect(fun.top).toBeLessThan(1.2);
+  });
+
+  it('fun still jumps off a ramp', () => {
+    // 1.6 m ramp over 8 m, then flat ground (the base plane at 0).
+    const ramp = strip([[-20, 0.001], [-28, 1.6], [-28.2, 1.6]]);
+    const fun = coast('fun', ramp);
+    const real = coast('real', ramp);
+    expect(fun.jump).toBeGreaterThan(12);
+    expect(fun.jump).toBeGreaterThan(real.jump * 0.85);
+  });
+
+  it('fun brakes straight with the left wheels on a slippery strip, real pulls to one side', () => {
+    const run = (feel: 'fun' | 'real') => {
+      const { car, drive } = setup(feel);
+      drive({}, 1);
+      while (car.speed < 100 / 3.6) drive({ throttle: 1 }, 1 / 120);
+      car.wheelGrip[0] = car.wheelGrip[2] = 0.45;
+      let t = 0;
+      while (car.speed > 3 && t < 10) { drive({ brake: 1 }, 1 / 120); t += 1 / 120; }
+      const r = car.body.rotation();
+      // Heading change from straight ahead (rad).
+      return Math.abs(2 * Math.asin(Math.min(1, Math.abs(r.y))) - Math.PI);
+    };
+    const fun = run('fun');
+    const real = run('real');
+    expect(real).toBeGreaterThan(0.3);
+    expect(fun).toBeLessThan(0.05);
+  });
+
+  it('rolling backwards after a crash slows down by itself and never speeds up', () => {
+    for (const feel of ['fun', 'real'] as const) {
+      const { car, drive } = setup(feel);
+      drive({}, 1);
+      drive({ throttle: 1 }, 1);
+      // Bounced back off a wall: rolling backwards, still in a forward gear.
+      car.body.setLinvel({ x: 0, y: 0, z: 8 }, true);
+      drive({}, 1 / 120);
+      let fastest = Math.abs(car.speed);
+      const v0 = fastest;
+      for (let i = 0; i < 2 * 120; i++) { drive({}, 1 / 120); fastest = Math.max(fastest, Math.abs(car.speed)); }
+      expect(fastest).toBeLessThanOrEqual(v0 + 0.05);
+      if (feel === 'fun') expect(Math.abs(car.speed)).toBeLessThan(0.5);
+    }
+  });
+
+  it('fun slows down off the pedals more than real', () => {
+    const coast = (feel: 'fun' | 'real') => {
+      const { car, drive } = setup(feel);
+      drive({}, 1);
+      car.body.setLinvel({ x: 0, y: 0, z: -22 }, true);
+      drive({}, 3);
+      return car.speed;
+    };
+    expect(coast('fun')).toBeLessThan(coast('real') - 4);
   });
 
   it('a short nitro tap fires a burst forward', () => {

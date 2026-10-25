@@ -34,6 +34,7 @@ export const SECTIONS: MenuSection[] = [
       e('fx.shadows', 'Schatten'),
       e('fx.ao', 'Umgebungsverdeckung (AO)'),
       e('fx.bloom', 'Bloom'),
+      e('fx.look', 'Spiel-Look'),
       e('fx.godrays', 'Lichtstrahlen'),
       e('fx.flare', 'Lens Flare'),
       'Atmosphäre',
@@ -76,9 +77,6 @@ export const SECTIONS: MenuSection[] = [
       e('assist.steer', 'Lenkhilfe'),
       'Getriebe',
       e('gear.mode', 'Schaltung'),
-      'Schaden',
-      e('damage', 'Schaden am Auto'),
-      e('damage.power', 'Schaden kostet Leistung'),
     ],
   },
   {
@@ -90,7 +88,7 @@ export const SECTIONS: MenuSection[] = [
       e('input.deadzone', 'Totzone linker Stick'),
       e('input.curve', 'Lenkkurve Stick'),
       e('input.triggerdz', 'Totzone Trigger'),
-      e('input.stickshift', 'Schalten mit rechtem Stick'),
+      e('input.lookdz', 'Totzone rechter Stick (Umsehen)'),
       e('pad.rumble', 'Vibration'),
     ],
   },
@@ -100,6 +98,9 @@ export const SECTIONS: MenuSection[] = [
       e('cam.fov', 'Sichtfeld (± Grad)'),
       e('cam.speedfov', 'Sichtfeld-Weitung bei Tempo'),
       e('cam.shake', 'Kamerawackeln'),
+      e('cam.freelook', 'Umsehen mit rechtem Stick'),
+      e('cam.lookspeed', 'Umsehen: Tempo'),
+      e('cam.snapback', 'Umsehen: Zurückschnappen'),
       e('cam.headbob', 'Kopfbewegung im Cockpit'),
     ],
   },
@@ -125,8 +126,6 @@ export const SECTIONS: MenuSection[] = [
       'Leben in der Stadt',
       e('traffic', 'Verkehr'),
       e('traffic.density', 'Verkehrsdichte'),
-      e('peds', 'Fußgänger'),
-      e('peds.density', 'Fußgängerdichte'),
     ],
   },
   {
@@ -152,7 +151,7 @@ export const LISTED = new Set(SECTIONS.flatMap((s) => s.items.filter((i): i is M
 
 /** Namespace headings in "Erweitert". */
 export const NAMESPACES: Record<string, string> = {
-  fx: 'Effekte', fog: 'Dunst', quality: 'Qualität', stream: 'Kachel-Streaming', lod: 'Fernsicht', traffic: 'Verkehr', peds: 'Fußgänger', amb: 'Geräuschkulisse',
+  fx: 'Effekte', fog: 'Dunst', quality: 'Qualität', stream: 'Kachel-Streaming', lod: 'Fernsicht', traffic: 'Verkehr', amb: 'Geräuschkulisse',
   assist: 'Fahrhilfen', drive: 'Antrieb', damage: 'Schaden', hud: 'Anzeige', perf: 'Leistung', telemetry: 'Telemetrie', nitro: 'Nitro', bld: 'Gebäude',
   water: 'Wasser', weather: 'Wetter', time: 'Tageszeit', cam: 'Kamera', input: 'Eingabe', audio: 'Audio', surface: 'Untergrund', physics: 'Physik', pad: 'Gamepad',
 };

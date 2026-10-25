@@ -5,7 +5,6 @@ import { type WorldInfo, tileOriginLocal } from './format.ts';
 import type { ShopSet } from './shopGlb.ts';
 import { AWNING_COLORS, SHOP_KINDS, SHOP_STRIDE, ShopFlag } from './shopKinds.ts';
 import { registerTileLayer } from './tileHooks.ts';
-import type { PedShops } from '../peds/pedSim.ts';
 
 // Shop fronts (awnings, fascia boards and signs, café tables, pavement signs) as a tile layer, built from the
 // tile's "shops" records with the Blender parts of shops.glb. Each tile gets its own instanced meshes per part and
@@ -30,10 +29,7 @@ const DRAW_DISTANCE = 450;
 /** Emissive strength of the sign faces at full night. */
 const SIGN_GLOW = 0.9;
 
-/** Grid cell (m) of the front lookup for pedestrians. */
-const CELL = 25;
-
-export class ShopLayer implements PedShops {
+export class ShopLayer {
   visible = true;
   /** Lit signs: 'auto' follows the time of day, otherwise fixed 0..1. */
   night: 'auto' | number = 'auto';
@@ -41,9 +37,6 @@ export class ShopLayer implements PedShops {
   glow = 0;
   set?: ShopSet;
   private tiles = new Map<string, ShopTile>();
-  /** Front foot points per grid cell: [id, x, z, heading]. */
-  private grid = new Map<string, number[][]>();
-  private nextId = 1;
   private info: WorldInfo;
   private mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, metalness: 0.05 });
   private m = new THREE.Matrix4();
@@ -69,13 +62,8 @@ export class ShopLayer implements PedShops {
         const tile: ShopTile = { key: t.key, cx: ox + this.info.tileSize / 2, cz: oz + this.info.tileSize / 2, group: ctx.group, shadows: ctx.shadows, data: d.slice(), lods: [[], []], faces: [] };
         this.tiles.set(t.key, tile);
         this.build(tile);
-        this.index(tile, true);
       },
-      removed: (key) => {
-        const tile = this.tiles.get(key);
-        if (tile) this.index(tile, false);
-        this.tiles.delete(key);
-      },
+      removed: (key) => this.tiles.delete(key),
     });
   }
 
@@ -90,43 +78,6 @@ export class ShopLayer implements PedShops {
       set.signMaterial.needsUpdate = true;
     }
     for (const t of this.tiles.values()) this.build(t);
-  }
-
-  /** Adds or removes a tile's fronts in the pedestrian grid. */
-  private index(t: ShopTile, add: boolean) {
-    const d = t.data;
-    for (let o = 0; o + SHOP_STRIDE <= d.length; o += SHOP_STRIDE) {
-      const k = `${Math.floor(d[o + 1] / CELL)}_${Math.floor(d[o + 3] / CELL)}`;
-      if (add) {
-        if (!this.grid.has(k)) this.grid.set(k, []);
-        this.grid.get(k)!.push([this.nextId++, d[o + 1], d[o + 3], d[o + 4]]);
-      } else {
-        const list = this.grid.get(k)?.filter((f) => f[1] !== d[o + 1] || f[2] !== d[o + 3]);
-        if (list?.length) this.grid.set(k, list);
-        else this.grid.delete(k);
-      }
-    }
-  }
-
-  busy(x: number, z: number) {
-    // Fronts within about 50 m: a dozen make a busy shopping street.
-    const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
-    let n = 0;
-    for (let a = -2; a <= 2; a++) for (let b = -2; b <= 2; b++) n += this.grid.get(`${cx + a}_${cz + b}`)?.length ?? 0;
-    return this.visible ? Math.min(3, n / 4) : 0;
-  }
-
-  front(x: number, z: number, r: number) {
-    if (!this.visible) return undefined;
-    const cx = Math.floor(x / CELL), cz = Math.floor(z / CELL);
-    let best: number[] | undefined, bd = r;
-    for (let a = -1; a <= 1; a++)
-      for (let b = -1; b <= 1; b++)
-        for (const f of this.grid.get(`${cx + a}_${cz + b}`) ?? []) {
-          const d = Math.hypot(f[1] - x, f[2] - z);
-          if (d < bd) { bd = d; best = f; }
-        }
-    return best && { id: best[0], x: best[1], z: best[2], heading: best[3] };
   }
 
   private build(t: ShopTile) {

@@ -1,10 +1,13 @@
 import * as THREE from 'three';
+import { VEHICLE } from '../vehicle/tuning.ts';
 
 export type CamMode = 'chase' | 'far' | 'hood' | 'cockpit';
 const MODES: CamMode[] = ['chase', 'far', 'hood', 'cockpit'];
-/** Driver's eye in body space (left-hand drive: +x is left). */
+/** Driver's eye in body space at real size (left-hand drive: +x is left), times VEHICLE.scale. */
 const EYE = new THREE.Vector3(0.37, 0.69, -0.46);
 const UP = new THREE.Vector3(0, 1, 0);
+/** Angle into -π..π. */
+const wrap = (a: number) => a - Math.round(a / (2 * Math.PI)) * 2 * Math.PI;
 
 /** Third-person camera with speed feel: wider FOV and a little shake when fast or boosting. */
 export class ChaseCamera {
@@ -31,6 +34,14 @@ export class ChaseCamera {
    * under acceleration, how much it swings out and looks into corners, and its height above the road.
    */
   feel = { lag: 1, swing: 1, height: 1.8, dist: 5.8, speedFov: 0.06, boostFov: 9, maxKmh: 280 };
+  /** Right stick free look, set each frame (x = right, y = down, -1..1, 0 = released). */
+  stick = { x: 0, y: 0 };
+  /** Free look tuning (cam.freelook, cam.lookspeed, cam.snapback): how fast the view turns to the stick and back on release (1/s). */
+  freeLook = { on: true, speed: 12, snapBack: 8 };
+  /** Debug (cam.look): fixed look angle in rad (0 = ahead, + = left, π = back), or null for the stick. */
+  lookOverride: number | null = null;
+  /** Current free look angle around the car (rad, + = left), smoothed. */
+  lookAngle = 0;
   private lag = 0;
   private swingAngle = 0;
   private head = new THREE.Vector3();
@@ -60,6 +71,7 @@ export class ChaseCamera {
   snap() {
     this.initialised = false;
     this.yaw = 0;
+    this.lookAngle = 0;
     this.head.set(0, 0, 0);
     this.headVel.set(0, 0, 0);
   }
@@ -75,6 +87,7 @@ export class ChaseCamera {
   update(carPos: THREE.Vector3, carQuat: THREE.Quaternion, speed: number, boosting: boolean, dt: number, reversing = false, lookBack = false) {
     this.camera.near = this.mode === 'cockpit' ? 0.04 : 0.3;
     if (this.orbit !== null) { this.showroom(carPos, carQuat); return; }
+    this.updateLook(dt);
     if (this.mode === 'cockpit') { this.cockpit(carPos, carQuat, speed, dt, lookBack); return; }
     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuat);
     fwd.y *= 0.3;
@@ -92,7 +105,7 @@ export class ChaseCamera {
     let desired: THREE.Vector3;
     let target: THREE.Vector3;
     if (this.mode === 'hood') {
-      desired = carPos.clone().addScaledVector(fwd, 0.6).add(new THREE.Vector3(0, 1.25, 0));
+      desired = carPos.clone().addScaledVector(fwd, 0.6 * VEHICLE.scale).add(new THREE.Vector3(0, 1.25 * VEHICLE.scale, 0));
       target = carPos.clone().addScaledVector(fwd, 20).add(new THREE.Vector3(0, 1.0, 0));
     } else {
       const far = this.mode === 'far';
@@ -116,15 +129,33 @@ export class ChaseCamera {
     const k = this.mode === 'hood' ? 1 : 1 - Math.exp(-dt * 7);
     this.pos.lerp(desired, k);
     this.look.lerp(target, 1 - Math.exp(-dt * 12));
-    this.camera.position.copy(this.pos);
+    // Free look turns the whole view around the car, after the smoothing, so the camera never cuts through the car.
+    const off = this.pos.clone().sub(carPos);
+    const aim = this.look.clone().sub(carPos);
+    if (this.lookAngle !== 0) { off.applyAxisAngle(UP, this.lookAngle); aim.applyAxisAngle(UP, this.lookAngle); }
+    this.camera.position.copy(carPos).add(off);
     if (boosting || kmh > 150) {
       const s = ((boosting ? 0.05 : 0) + Math.max(0, kmh - 150) * 0.0004) * this.shake;
       this.camera.position.add(new THREE.Vector3((Math.random() - 0.5) * s, (Math.random() - 0.5) * s, 0));
     }
-    this.camera.lookAt(this.look);
+    this.camera.lookAt(aim.add(carPos));
     const fov = this.fov.chase + this.fovOffset + (Math.min(kmh, this.feel.maxKmh) * this.feel.speedFov + (boosting ? this.feel.boostFov : 0)) * this.speedFov;
     this.camera.fov += (fov - this.camera.fov) * (1 - Math.exp(-dt * 4));
     this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Right stick: up = ahead, down = back, sideways = that side; the stick direction is the view direction.
+   * Released, the view snaps back behind the car (shortest way round).
+   */
+  private updateLook(dt: number) {
+    const fl = this.freeLook;
+    const lx = this.stick.x, ly = this.stick.y;
+    const held = fl.on && Math.hypot(lx, ly) > 0.2;
+    const want = this.lookOverride ?? (held ? Math.atan2(-lx, -ly) : 0);
+    const rate = this.lookOverride !== null || held ? fl.speed : fl.snapBack;
+    const d = wrap(want - this.lookAngle);
+    this.lookAngle = Math.abs(d) < 1e-3 && want === 0 ? 0 : wrap(this.lookAngle + d * (1 - Math.exp(-dt * rate)));
   }
 
   /** Driver's view: the head sways against the g-forces on a soft spring and looks a little into corners. */
@@ -138,10 +169,10 @@ export class ChaseCamera {
     const h = Math.min(dt, 0.05);
     this.headVel.addScaledVector(new THREE.Vector3().subVectors(target, this.head), w * w * h).multiplyScalar(Math.max(0, 1 - 2 * z * w * h));
     this.head.addScaledVector(this.headVel, h);
-    const eye = EYE.clone().add(this.head).applyQuaternion(carQuat).add(carPos);
+    const eye = EYE.clone().multiplyScalar(VEHICLE.scale).add(this.head).applyQuaternion(carQuat).add(carPos);
     this.camera.position.copy(eye);
     // Camera looks down -z; the car's forward is +z: turn round, then look into the corner and tilt with the head.
-    const look = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI + (lookBack ? Math.PI : 0) + m.steer * 0.35 * k);
+    const look = new THREE.Quaternion().setFromAxisAngle(UP, Math.PI + (lookBack ? Math.PI : 0) + this.lookAngle + m.steer * 0.35 * k);
     const tilt = new THREE.Quaternion().setFromEuler(new THREE.Euler(-this.head.z * 0.6, 0, this.head.x * 1.2));
     this.camera.quaternion.copy(carQuat).multiply(look).multiply(tilt);
     const fov = this.fov.cockpit + this.fovOffset + Math.min(Math.abs(speed) * 3.6, 250) * 0.02 * this.speedFov;

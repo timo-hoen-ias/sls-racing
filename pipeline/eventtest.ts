@@ -4,7 +4,8 @@
 // than MAX_RESCUES of those fail the event. Uses the same physics and colliders as the game (drivetest.ts).
 //   node pipeline/eventtest.ts [region] [--only=<event id>] [--level=mittel] [--max=<n>] [--trace]
 //   --min=<share> events that must finish (default 0.85).
-//   --write: saves the failed events as "drop" in events.json, so the game leaves them out.
+//   --write: saves the failed events as "drop" in events.json, so the game leaves them out (and only fails
+//   below --min when that is given explicitly).
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -16,10 +17,14 @@ import { GUIDE_SIGN_NAMES, type SignsFile } from '../src/world/signSpec.ts';
 import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.ts';
 import { RoadGraph } from '../src/world/roadGraph.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
+import { scaleCar, VEHICLE } from '../src/vehicle/tuning.ts';
 import { generateEvents } from '../src/game/events/generate.ts';
 import { crossed, type GameEvent, RACE_TYPES } from '../src/game/events/types.ts';
 import { RaceLine, RIVAL_LEVELS, type RivalLevel, RivalDriver } from '../src/game/rivals.ts';
 import { paths } from './lib/region.ts';
+
+// The test car at the game's vehicle scale (smaller wheels meet the same road steps).
+scaleCar(VEHICLE.scale);
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const ONLY = arg('only', '');
@@ -160,8 +165,8 @@ async function main() {
     writeFileSync(file, JSON.stringify({ events: old.events ?? [], drop }));
     console.log(`${drop.length} events left out in ${file}`);
   }
-  // With --write the build goes on: the failed events are simply left out.
-  if (!WRITE && ok < list.length * MIN) process.exitCode = 1;
+  // With --write the build goes on (the failed events are simply left out), unless --min is given as well.
+  if ((!WRITE || process.argv.some((a) => a.startsWith('--min='))) && ok < list.length * MIN) process.exitCode = 1;
 }
 
 main();

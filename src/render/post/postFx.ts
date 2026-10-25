@@ -14,6 +14,7 @@ import { LensFlarePass } from './lensFlare.ts';
 import { MotionBlurPass } from './motionBlur.ts';
 import { SSRPass } from './ssr.ts';
 import { BeamPass } from './beams.ts';
+import { gradePass } from './grade.ts';
 import { weatherUniforms } from '../../weather/weatherMaterials.ts';
 
 /** Objects on this layer (the player car) are kept sharp by the motion blur. */
@@ -83,10 +84,12 @@ export interface FxSettings {
   godrays: number;
   flare: number;
   bloom: number;
+  /** Game look (G4): colour grade and extra bloom, 0 = neutral. */
+  look: number;
 }
 
 export class PostFX {
-  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, ssr: 1, beams: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1 };
+  readonly settings: FxSettings = { blur: 1, radial: 1, nitroBlur: 1, fog: 1, ssr: 1, beams: 1, heightFog: 1, fogHeight: 35, fogBase: 0, clouds: 0.4, godrays: 1, flare: 1, bloom: 1, look: 1 };
   readonly ao?: GTAOPass;
   readonly smaaPass?: SMAAPass;
   readonly clouds: CloudPass;
@@ -100,6 +103,7 @@ export class PostFX {
   readonly blur: MotionBlurPass;
   readonly flare: LensFlarePass;
   readonly bloom: UnrealBloomPass;
+  readonly grade: ReturnType<typeof gradePass>;
   private composer: EffectComposer;
   private grab = new DepthGrabPass();
   private mask = new THREE.WebGLRenderTarget(1, 1);
@@ -159,6 +163,9 @@ export class PostFX {
     this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.08, 0.25, 16);
     c.addPass(this.bloom);
     c.addPass(new OutputPass());
+    this.grade = gradePass();
+    this.grade.enabled = !off.has('grade');
+    c.addPass(this.grade);
     const depth = () => this.grab.depth;
     this.ssr.depth = this.beams.depth = this.clouds.depth = this.fog.depth = this.blur.depth = this.flare.depth = depth;
     this.cloudsOn = !off.has('clouds');
@@ -222,7 +229,8 @@ export class PostFX {
     // Light bloom: by day only glints, chrome and the sun's surroundings glow softly; at night
     // lamps and headlights get a gentle halo.
     this.bloom.threshold = THREE.MathUtils.lerp(2, 16, d.daylight);
-    this.bloom.strength = THREE.MathUtils.lerp(0.35, 0.08, d.daylight) * st.bloom;
+    this.bloom.strength = THREE.MathUtils.lerp(0.35, 0.08, d.daylight) * st.bloom * (1 + 0.6 * st.look);
+    this.grade.uniforms.uLook.value = st.look;
     this.bloom.radius = THREE.MathUtils.lerp(0.5, 0.25, d.daylight);
     // Nitro kicks in like in Need for Speed: longer shutter, heavy streaks towards the edges.
     const kick = boost * st.nitroBlur;

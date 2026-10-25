@@ -6,7 +6,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { readDerived } from './derived.ts';
 import type { Way } from './osm.ts';
-import { isDrivable, roadWidth, ROAD_CLASSES } from './roads.ts';
+import { isDrivable, ROAD_CLASSES } from './roads.ts';
+import { roadSection } from '../../src/world/roadSpec.ts';
 
 export const ALKIS_ATTRIBUTION = '© GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0';
 
@@ -37,7 +38,8 @@ export function streetSpace(way: Way, data: AlkisRoads | undefined): number | un
  */
 export function measuredWidth(way: Way, data: AlkisRoads | undefined): number | undefined {
   const cls = ROAD_CLASSES[way.tags.highway];
-  const osm = roadWidth(way.tags);
+  // Against the mapped (1:1) width: the game profile widens the result afterwards.
+  const osm = roadSection(way.tags, 'real')?.width;
   const street = streetSpace(way, data);
   if (!cls?.street || !osm || !street || way.tags.bridge || way.tags.tunnel) return undefined;
   const sidewalk = Math.min(3.5, Math.max(1.5, street * 0.2));
@@ -130,5 +132,11 @@ export function applyMeasuredWidths(ways: Way[], data: AlkisRoads | undefined): 
     return m ? [[w, m] as const] : [];
   });
   for (const [w, m] of measured) w.tags.width = String(m);
+  // Street space between the houses, for the game road profile (wider carriageways, narrower sidewalks).
+  for (const w of ways) {
+    if (!isDrivable(w.tags) || w.tags.bridge || w.tags.tunnel || !ROAD_CLASSES[w.tags.highway]?.street) continue;
+    const street = streetSpace(w, data);
+    if (street) w.tags['sls:street'] = String(Math.round(street * 10) / 10);
+  }
   return measured.length;
 }

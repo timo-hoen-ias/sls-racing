@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { EngineSound } from './audio/engineSound.ts';
+import { registerSoundCommands } from './audio/soundCommands.ts';
 import { DebugConsole } from './debug/debugConsole.ts';
 import { registerGameCommands, type DebugState } from './debug/gameCommands.ts';
 import { registerAddressCommands } from './nav/addressCommands.ts';
@@ -23,12 +24,14 @@ import { BigMap } from './ui/bigMap.ts';
 import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
-import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
-import { registerCommand, runCommand } from './debug/registry.ts';
+import { CAR, ENGINE, ENGINE_SOUND, VEHICLE } from './vehicle/tuning.ts';
+import { applyCar, DEFAULT_CAR, findCar } from './vehicle/cars.ts';
+import { applyVehicleScale } from './traffic/trafficSim.ts';
+import { parseNum, registerCommand, runCommand } from './debug/registry.ts';
 import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { Garage, registerGarageCommands } from './vehicle/garage.ts';
-import { loadAssists, registerDamageCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
+import { loadAssists, registerDebrisCommands, registerPhysicsCommands, registerSurfaceCommands } from './vehicle/physicsCommands.ts';
 import { RoadSurface } from './vehicle/roadSurface.ts';
 import { registerReplayCommands } from './replay/commands.ts';
 import { Recorder } from './replay/recorder.ts';
@@ -48,7 +51,6 @@ import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { BridgeJoints } from './audio/bridgeJoints.ts';
-import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
 import { StallLayer } from './world/stalls.ts';
@@ -90,7 +92,10 @@ import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
 import { Game } from './game/game.ts';
+import { applyParts, carStats, type PartLevels } from './game/workshop.ts';
 import { Rivals } from './game/rivals.ts';
+import { Police } from './game/police.ts';
+import { distanceToPath } from './game/events/runner.ts';
 import { BarrierView } from './game/events/barriers.ts';
 import type { PropHit } from './world/props.ts';
 
@@ -163,8 +168,11 @@ async function boot() {
   const joints = await BridgeJoints.fetch(TILES_URL, index.world);
 
   const spawn = index.spawn;
+  // The coupé's dimensions from its model, at the game's vehicle scale (car.scale).
+  const firstModel = await carModel;
+  applyCar(findCar(DEFAULT_CAR)!, firstModel?.geometry);
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
-  const carView = new CarView(undefined, await carModel);
+  const carView = new CarView(undefined, firstModel);
   view.scene.add(carView.root);
   if (view.post) markCar(carView.root);
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
@@ -175,15 +183,10 @@ async function boot() {
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
-  // Car damage: dents, dull paint, parts breaking off as debris, optional power loss.
+  // Loose parts of knocked-over street furniture.
   const debris = new Debris(RAPIER, world);
   view.scene.add(debris.root);
-  carView.damage.onDetach = (parts) => {
-    carView.model.updateMatrixWorld(true);
-    const lv = car.body.linvel();
-    const side = new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 2, (Math.random() - 0.5) * 4);
-    debris.spawn(parts, carView.model.matrixWorld, new THREE.Vector3(lv.x, lv.y, lv.z).multiplyScalar(0.8).add(side), new THREE.Vector3(Math.random() * 8 - 4, Math.random() * 8 - 4, Math.random() * 8 - 4));
-  };
+  registerDebrisCommands(debris);
   const tacho = new Tacho($('tacho'), ENGINE.maxRpm, ENGINE.shiftRpm);
   const cam = new ChaseCamera(view.camera);
   const input = new Input();
@@ -212,21 +215,14 @@ async function boot() {
     if (hedge) props.setModel(Prop.hedge, hedge.lod0);
   }, (e) => console.warn('[veg] GLB nicht geladen', e));
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
-  const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
-  view.scene.add(peds.view.root);
-  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root, guideSigns.root);
-  // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
+  water.hideInMirror.push(props.root, traffic.view.root, vegetation.root, guideSigns.root);
+  // Street furniture, signs, and traffic light heads from Blender (props.models).
   loadProps().then((set) => {
     props.setPropSet(set);
     if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
-    peds.view.setVariants(set.peds);
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
   loadHouses().then((set) => houses.setHouseSet(set), (e) => console.warn('[houses] GLB nicht geladen, keine gestalteten Häuser', e));
-  peds.sim.events.knocked = (_, v) => {
-    sound?.impact(Math.min(0.5, v / 30));
-    input.rumble(0.5, 150);
-  };
   const worldAudio = new WorldAudio({
     R: RAPIER, world, graph, car: car.body, scene: view.scene,
     ignore: (c) => traffic.isSolid(c.parent()),
@@ -290,6 +286,10 @@ async function boot() {
   let hit = 0;
   let hitDir = { x: 0, y: 0, z: 0 };
   let hitCooldown = 0;
+  // Glancing hits that glide along a wall (speed along it), for the scrape sound.
+  let scraped = 0;
+  // Suspension travel per wheel last frame, for bump thumps.
+  const lastComp = [0, 0, 0, 0];
 
   const setManual = (on: boolean) => {
     car.drivetrain.manual = on;
@@ -351,7 +351,6 @@ async function boot() {
   const telemetry = new Telemetry(recorder);
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
-  registerDamageCommands(carView.damage, debris);
   // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
   const rescue = new Rescue();
   const rewind = () => {
@@ -399,7 +398,6 @@ async function boot() {
     worldAudio.impact(ip, car.heading(), strength);
     input.rumble(0.5 + strength * 0.5, 160);
     effects.impact({ x: ip.x + dir.x * 2, y: ip.y, z: ip.z + dir.z * 2 }, strength);
-    carView.damage.hit(new THREE.Vector3(dir.x, 0, dir.z).applyQuaternion(iq.clone().invert()), strength * 0.6);
   };
   registerKnockCommands(knockdown, streamer, () => ip);
   window.addEventListener('keydown', (e) => {
@@ -412,25 +410,43 @@ async function boot() {
   registerRenderCommands(view);
   registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
-  peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
-  peds.sim.shops = shops;
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   houses.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
   stalls.registerCommands();
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
-  const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
+  // Fitted parts (game/workshop.ts) are written over each car's tuning; the game is built further down.
+  let partsOf: (id: string) => PartLevels = () => ({});
+  const garage = new Garage({
+    car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm),
+    afterApply: (spec) => applyParts(partsOf(spec.id)),
+  });
   registerGarageCommands(garage);
+  registerCommand({
+    name: 'car.scale',
+    help: 'Größe aller Fahrzeuge gegenüber echt (0,8 = Standard): eigenes Auto, Rivalen, Verkehr, Parker. Kollisionen von Parkern gelten ab neu geladenen Kacheln',
+    args: '[faktor]',
+    run: ([v]) => {
+      if (v === undefined) return `Fahrzeuge ×${VEHICLE.scale} · Auto ${(2 * CAR.halfExtents.z).toFixed(2)} × ${(2 * CAR.halfExtents.x).toFixed(2)} m · Rad ${(2 * CAR.wheel.radius).toFixed(2)} m`;
+      VEHICLE.scale = parseNum(v, 'Faktor', 0.4, 1.5);
+      applyVehicleScale();
+      props.refresh();
+      // Reloads the current car: dimensions, physics and body at the new scale.
+      garage.select(garage.current.id).then((m) => console.info(`[car] ${m}`), (e) => console.warn('[car]', e));
+      return `Fahrzeuge ×${VEHICLE.scale} (Auto wird neu geladen)`;
+    },
+  });
   void garage.probe();
   // Fun-racer feel (feel fun|real): engine, landings, wall gliding, traffic punts, camera, speed lines …
   const glide = new WallGlide();
   glide.registerCommands();
   const speedLines = new SpeedLines($('hud'));
   speedLines.registerCommands();
-  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, damage: carView.damage, traffic, peds: peds.sim, props });
+  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, traffic, props });
   feel.registerCommands();
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
+  const soundCmds = registerSoundCommands(() => sound);
 
   let acc = 0;
   let wasBursting = false;
@@ -461,18 +477,47 @@ async function boot() {
     loaded: (x, z) => streamer.isLoadedAround(x, z),
     feel: () => car.feel,
   });
+  // Police patrols and chases in free roam (V4): the same car with a light bar.
+  const police = new Police({
+    R: RAPIER, world, scene: view.scene, graph,
+    makeView: (color) => loadSportsCar(color, garage.current.url).then((m) => new CarView(color, m), () => undefined),
+    groundAt: (x, z) => groundAt(x, z) ?? graph.snap(x, z, 40)?.y,
+    loaded: (x, z) => streamer.isLoadedAround(x, z),
+    feel: () => car.feel,
+  });
+  police.registerCommands();
+  let thinPath: number[] | undefined;
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
   const game = new Game({
-    rivals, barriers,
+    rivals, barriers, police,
+    viewpoints: landmarks.list.filter((l) => !l.info.bridge && !l.info.id.startsWith('bruecke-')).map(({ info }) => ({
+      id: info.id, x: info.x, z: info.z, radius: info.radius,
+      name: info.name ?? info.id.split('-').map((w) => ({ sw: 'SW', no: 'NO', nw: 'NW', so: 'SO', st: 'St.', am: 'am' })[w] ?? w[0].toUpperCase() + w.slice(1)).join(' '),
+    })),
+    pose: () => ({ x: ip.x, y: ip.y, z: ip.z, qx: iq.x, qy: iq.y, qz: iq.z, qw: iq.w }),
+    ghostModel: () => loadSportsCar('#7fd4ff', garage.current.url).then((m) => new CarView('#7fd4ff', m).root, () => undefined),
     graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
     toast: (t, sec) => navHud.toast(t, sec), rumble: (k, ms) => input.rumble(k, ms),
     teleport: (x, z, heading) => teleport(x, z, heading), ready: () => worldReady && !hold,
     onPlay: () => void startAudio(), openOptions: () => menu.toggle(true),
+    cars: {
+      current: () => garage.current.id,
+      select: (id) => garage.select(id),
+      retune: () => garage.retune(),
+      stats: (id) => garage.measure(findCar(id)!, carStats),
+    },
+    home: { x: spawn.x, z: spawn.z },
+    groundAt: (x, z) => graph.snap(x, z, 80)?.y,
   });
+  partsOf = (id) => game.workshop?.parts(id) ?? {};
+  // The car from the save, with its parts.
+  if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
+  else garage.retune();
   game.registerCommands(() => ip);
   void game.load();
   minimap.markers = bigMap.markers = () => game.markers();
+  bigMap.areas = () => game.areas();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
@@ -488,6 +533,7 @@ async function boot() {
   const viewDist = createViewDistance(view, quality, far);
   registerWorldCommands({
     R: RAPIER, world, scene: view.scene, mats, index, baseUrl: TILES_URL, pos: () => (hold ?? ip),
+    heading: () => car.heading(),
     teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
     print: (t) => debug.print(t, 'info'),
     tiles: (fn) => streamer.forEachContent(fn),
@@ -612,16 +658,22 @@ async function boot() {
       }
       car.update(drive, STEP);
       game.stepRivals(STEP, curr.p);
+      if (worldReady && !hold) {
+        const v = car.body.linvel();
+        game.stepPolice(STEP, { x: curr.p.x, z: curr.p.z, vx: v.x, vz: v.z, speed: Math.hypot(v.x, v.z), heading: car.heading() }, car);
+      }
       knockdown.step(STEP);
       world.step();
       capture(curr);
       rivals.capture();
+      police.capture();
       const lv = car.body.linvel();
       const dvx = lv.x - prevVel.x, dvy = lv.y - prevVel.y, dvz = lv.z - prevVel.z;
       const dv = Math.hypot(dvx, dvy, dvz);
       if (dv > 3.5 && dv > hit) { hit = dv; hitDir = { x: dvx / dv, y: dvy / dv, z: dvz / dv }; }
       // Glancing hits on walls and rails: glide along instead of bouncing off.
       const glided = glide.apply(car.body, prevVel);
+      if (glided) scraped = Math.max(scraped, Math.hypot(prevVel.x, prevVel.z));
       const nv = glided ? car.body.linvel() : lv;
       prevVel.x = nv.x; prevVel.y = nv.y; prevVel.z = nv.z;
       acc -= STEP;
@@ -660,6 +712,11 @@ async function boot() {
       carView.pose(car, replay.pos, replay.quat, rs.steer, replayLengths, replayRot, rs.brake > 0 && rs.speed > 1, rs.boost > 0.5, now / 1000);
     } else carView.sync(car, ip, iq, braking, now / 1000);
     rivals.render(alpha, now / 1000, night);
+    police.render(alpha, now / 1000, night);
+    {
+      const n = police.heat ? police.nearest({ x: ip.x, z: ip.z, vx: 0, vz: 0, speed: 0, heading: car.heading() }) : undefined;
+      sfx.siren(n && !paused ? Math.max(0, 1 - n.d / 250) : 0, n?.side ?? 0, dt);
+    }
     carLights.update(night, rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {
@@ -667,27 +724,36 @@ async function boot() {
       // A real crash ends the running combo.
       if (strength > 0.45) score.crash();
       effects.impact({ x: ip.x - hitDir.x * 2, y: ip.y - Math.max(0, hitDir.y) * 0.3, z: ip.z - hitDir.z * 2 }, strength);
-      sound?.impact(strength);
+      // Straight up is a hard landing; gliding along a wall scrapes; everything else is a crash.
+      if (hitDir.y > 0.8) sound?.landing(0.4 + 0.6 * strength);
+      else {
+        if (scraped > 0) sound?.scrape(Math.min(1, scraped / 35));
+        sound?.impact(scraped > 0 ? strength * 0.4 : strength);
+      }
       worldAudio.impact(ip, car.heading(), strength);
       input.rumble(0.4 + 0.6 * strength, 120 + 200 * strength);
-      // Mostly sideways/longitudinal hits dent the body; hard landings do not.
-      if (Math.abs(hitDir.y) < 0.75) {
-        const from = new THREE.Vector3(-hitDir.x, 0, -hitDir.z).applyQuaternion(iq.clone().invert());
-        carView.damage.hit(from, strength);
-      }
+      hitCooldown = 0.25;
+    }
+    else if (scraped > 0 && worldReady && hitCooldown <= 0) {
+      sound?.scrape(Math.min(1, scraped / 35));
       hitCooldown = 0.25;
     }
     hit = 0;
-    car.power = carView.damage.power;
-    car.steerPull = carView.damage.steerPull;
+    scraped = 0;
     debris.update(dt);
     effects.road.wet = weather.weather.wet;
     effects.road.snow = weather.weather.snowCover;
     effects.road.puddle = weather.puddle;
     const lvel = car.body.linvel();
     const simDt = debugState.frozen || paused ? 0 : dt * debugState.timeScale;
+    // Less traffic on the route of a running race (V1).
+    const racePath = game.racePath;
+    if (racePath !== thinPath) {
+      thinPath = racePath;
+      traffic.sim.thinOut = racePath ? (x, z) => distanceToPath(racePath, x, z) < 25 : undefined;
+      traffic.sim.thinRoute(ip);
+    }
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
-    peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
@@ -704,6 +770,8 @@ async function boot() {
     cam.motion.az = motion.az;
     cam.motion.steer = rs ? rs.steer : car.steer;
     cam.motion.yaw = car.body.angvel().y;
+    cam.stick.x = paused ? 0 : input.look.x;
+    cam.stick.y = paused ? 0 : input.look.y;
     if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     // Style moves and their combo, while really driving.
     if (worldReady && !rs && !paused && !debugState.frozen) {
@@ -765,6 +833,13 @@ async function boot() {
 
     mixer.update({ engine: sound, traffic: traffic.sound, ambience: worldAudio.ambience, weather: weather.sound });
     const dtr = car.drivetrain;
+    if (sound && soundCmds.view === 'auto') sound.view = cam.mode;
+    let susp = 0;
+    for (let i = 0; i < 4; i++) {
+      const c = car.wheels[i].compression;
+      if (dt > 0) susp = Math.max(susp, (c - lastComp[i]) / dt);
+      lastComp[i] = c;
+    }
     if (rs) {
       sound?.update({
         rpm: rs.rpm, load: rs.load, cut: false, blip: false, limiter: false, shifted: null,
@@ -773,7 +848,7 @@ async function boot() {
     } else sound?.update({
       rpm: dtr.rpm, load: dtr.load, cut: dtr.cut, blip: dtr.blip, limiter: dtr.limiter, shifted: shiftedSince(dtr),
       speed: Math.abs(car.speed), boosting: car.boosting, slip: car.slip, airborne: car.airborne,
-      rumble: roadSurface.rumble, crunch: roadSurface.crunch, squeal: roadSurface.squeal,
+      rumble: roadSurface.rumble, crunch: roadSurface.crunch, squeal: roadSurface.squeal, gear: dtr.gear, susp: paused ? 0 : susp,
     });
     for (const k of roadSurface.kerbs) { sound?.kerb(k); input.rumble(0.35 + 0.4 * k, 90); }
     if (car.boosting) input.rumble(0.25, 60);
@@ -796,7 +871,6 @@ async function boot() {
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,
-      peds: peds.sim,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),

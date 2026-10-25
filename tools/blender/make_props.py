@@ -1,4 +1,4 @@
-# Builds street furniture, traffic lights, traffic signs and pedestrians for instancing; exports public/models/props.glb.
+# Builds street furniture, traffic lights and traffic signs for instancing; exports public/models/props.glb.
 # Run: blender --background --factory-startup --python tools/blender/make_props.py -- [out.glb]
 # Then compress: npm run models:build (see package.json).
 #
@@ -8,7 +8,6 @@
 #   <prop>_lod0 / <prop>_lod1        vertex-coloured, names as PROP_NAMES in src/world/propKinds.ts
 #   ampel_lod0/1 + ampel_lamp_red|yellow|green   lamps white (tinted per instance), as in signalView
 #   schild_mast_lod0/1 + schild-<typ>_face        faces carry uv into the sign atlas embedded in the GLB
-#   fussgaenger-<n>_torso|head|leg|arm           parts with the pivots of src/peds/pedView.ts
 # No brands or logos. Sign faces follow the German StVO designs (drawn here, no external artwork).
 import bpy, bmesh, math, os, sys
 from mathutils import Matrix, Vector
@@ -446,71 +445,6 @@ def sign_face(sid, kind, size, cell, parent):
     return ob
 
 
-# ---------------------------------------------------------------- pedestrians
-# Light greyscale only: the game multiplies by per-person shirt, trouser, skin and hair colours (instanceColor).
-
-GREY = {'cloth': 0xe6e6e6, 'fold': 0xc4c4c4, 'skin': 0xeeeeee, 'shoe': 0x6a6a6a, 'hair': 0xdedede, 'bag': 0x9a9a9a}
-PAL.update({f'g-{k}': v for k, v in GREY.items()})
-COLORS[:] = list(PAL)
-
-PEDS = [
-    # name, extras: a long coat, a skirt, a backpack, or a child (drawn at adult pivots, shown at scale 0.67)
-    dict(name='mantel', coat=True),
-    dict(name='rock', skirt=True),
-    dict(name='rucksack', bag=True),
-    dict(name='kind', child=True),
-]
-
-
-def ped_parts(i, p, parent):
-    """Feet space (y = 0 at the feet, +z forward). Torso and head as placed; the leg hangs 0.92 m down from the hip
-    pivot at its origin (the game puts it at x ±0.1, y 0.93), the arm 0.6 m from the shoulder (x ±0.27, y 1.52)."""
-    node = bpy.data.objects.new(f'fussgaenger-{i}', None)
-    bpy.context.scene.collection.objects.link(node)
-    node.parent = parent
-    node['variant'] = p['name']
-    node['scale'] = 0.67 if p.get('child') else 1.0
-    out = []
-    t = B()
-    shoulders = 0.4 if not p.get('child') else 0.36
-    t.box('g-cloth', (shoulders, 0.32, 0.23), at=(0, 1.39, 0), bevel=0.04, seg=1)          # chest
-    t.box('g-cloth', (0.34, 0.3, 0.21), at=(0, 1.1, 0))                                    # belly
-    if not p.get('skirt'):
-        t.box('g-fold', (0.35, 0.05, 0.22), at=(0, 0.96, 0))                               # belt line
-    if p.get('coat'):
-        t.box('g-cloth', (0.42, 0.5, 0.27), at=(0, 0.78, 0))                               # coat skirt to the knees
-        t.box('g-fold', (0.02, 0.85, 0.01), at=(0, 1.0, 0.136))                            # front opening
-        t.box('g-cloth', (0.3, 0.08, 0.16), at=(0, 1.58, -0.02))                           # collar
-    if p.get('skirt'):
-        t.cyl('g-cloth', 0.26, 0.17, 0.42, at=(0, 0.78, 0), seg=8)
-    if p.get('bag'):
-        t.box('g-bag', (0.3, 0.38, 0.15), at=(0, 1.3, -0.19))
-        for x in (-0.12, 0.12):
-            t.box('g-bag', (0.04, 0.32, 0.03), at=(x, 1.38, 0.12))
-    t.box('g-skin', (0.09, 0.07, 0.09), at=(0, 1.57, 0))                                   # neck
-    out.append(finish(t, f'fussgaenger-{i}_torso', node))
-    hs = 1.18 if p.get('child') else 1.0                                                   # children: bigger head
-    h = B()
-    h.sphere('g-skin', 0.115 * hs, at=(0, 1.7, 0.01), scale=(0.9, 1.1, 1.0), seg=8, rings=6)
-    out.append(finish(h, f'fussgaenger-{i}_head', node))
-    hr = B()
-    hr.sphere('g-hair', 0.123 * hs, at=(0, 1.745, -0.012), scale=(0.95, 0.82, 1.02), seg=8, rings=4)
-    if p.get('skirt'):
-        hr.sphere('g-hair', 0.07, at=(0, 1.66, -0.12), scale=(1, 1.6, 0.8), seg=6, rings=3)   # ponytail
-    out.append(finish(hr, f'fussgaenger-{i}_hair', node))
-    l = B()
-    l.box('g-cloth', (0.15, 0.84, 0.17), at=(0, -0.42, 0))
-    l.box('g-fold', (0.155, 0.04, 0.175), at=(0, -0.45, 0))                                # knee crease
-    l.box('g-shoe', (0.13, 0.08, 0.27), at=(0, -0.88, 0.05))
-    out.append(finish(l, f'fussgaenger-{i}_leg', node))
-    a = B()
-    a.box('g-cloth', (0.1, 0.5, 0.12), at=(0, -0.25, 0))
-    a.box('g-fold', (0.105, 0.03, 0.125), at=(0, -0.27, 0))                                # elbow
-    a.box('g-skin', (0.08, 0.1, 0.09), at=(0, -0.55, 0))
-    out.append(finish(a, f'fussgaenger-{i}_arm', node))
-    return out
-
-
 # ---------------------------------------------------------------- build
 
 PROPS = {
@@ -545,8 +479,6 @@ def build():
     nt.links.new(tex.outputs['Color'], nt.nodes['Principled BSDF'].inputs['Base Color'])
     for sid, kind, size in SIGNS:
         obs.append(sign_face(sid, kind, size, cells[sid], root))
-    for i, p in enumerate(PEDS, 1):
-        obs += ped_parts(i, p, root)
     for ob in obs:
         print(f'  {ob.name:26s} {tris(ob):5d} Dreiecke')
     return root

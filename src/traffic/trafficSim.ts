@@ -4,6 +4,7 @@
 // Pure simulation without three.js, so it runs in tests.
 
 import { type Edge, type RoadGraph, pointAt, project } from '../world/roadGraph.ts';
+import { VEHICLE } from '../vehicle/tuning.ts';
 import { Signals } from './signals.ts';
 
 export type VehicleKind = 'car' | 'van' | 'bus' | 'truck';
@@ -19,12 +20,27 @@ export interface KindSpec {
   speed: number;
 }
 
-export const KINDS: Record<VehicleKind, KindSpec> = {
+/** Real dimensions; the procedural models are built at this size and drawn at VEHICLE.scale. */
+export const REAL_KINDS: Readonly<Record<VehicleKind, Readonly<KindSpec>>> = {
   car: { length: 4.4, width: 1.8, height: 1.45, accel: 2.2, decel: 3, speed: 1 },
   van: { length: 5.3, width: 2, height: 2.25, accel: 1.6, decel: 2.6, speed: 0.95 },
   bus: { length: 12, width: 2.55, height: 3.1, accel: 1, decel: 2.2, speed: 0.85 },
   truck: { length: 10.5, width: 2.5, height: 3.6, accel: 0.8, decel: 2.2, speed: 0.75 },
 };
+
+/** Vehicle kinds at the game's vehicle scale (spacing, colliders, parked cars); applyVehicleScale updates them in place. */
+export const KINDS = structuredClone(REAL_KINDS) as Record<VehicleKind, KindSpec>;
+
+/** Sizes KINDS to VEHICLE.scale (after car.scale changed it); running vehicles share the specs, so they follow. */
+export function applyVehicleScale() {
+  for (const k of Object.keys(KINDS) as VehicleKind[]) {
+    const r = REAL_KINDS[k];
+    KINDS[k].length = r.length * VEHICLE.scale;
+    KINDS[k].width = r.width * VEHICLE.scale;
+    KINDS[k].height = r.height * VEHICLE.scale;
+  }
+}
+applyVehicleScale();
 
 /** German car park: lots of grey, black, white and silver, a few colours (parked cars use the same). */
 export const CAR_PALETTE = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0xf0f0ee, 0x4a4e54, 0x5d6168, 0x23365e, 0x6e1a1a, 0x30492f, 0xa8a090, 0x8a5a2b, 0x2a6f9b];
@@ -120,16 +136,18 @@ export function laneOffset(e: Edge) {
 
 export class TrafficSim {
   readonly agents: Agent[] = [];
-  /** 0..1, scales the number of vehicles around the player. */
-  density = 0.6;
+  /** 0..1, scales the number of vehicles around the player (a little dense in free roam, for near misses). */
+  density = 0.7;
+  /** Event route (V1): traffic there is thinned to this share, and the whole field to eventDensity. */
+  thinOut?: (x: number, z: number) => boolean;
+  thinKeep = 0.2;
+  eventDensity = 0.7;
   maxAgents: number;
   /** Vehicles appear and vanish between these distances from the player. */
   spawnMin = 90;
   spawnMax = 420;
   frozen = false;
   events: TrafficEvents = {};
-  /** Extra things in the road that vehicles stop for (pedestrians crossing). Same shape as the player. */
-  obstacles: PlayerState[] = [];
   /** Wrecks the player knocked out of traffic, lying in the road (set by traffic.ts each frame). */
   wrecks: PlayerState[] = [];
   /** Traffic lights at signalised junctions. */
@@ -154,7 +172,19 @@ export class TrafficSim {
   }
 
   get target() {
-    return Math.round(this.density * this.maxAgents);
+    return Math.round(this.density * this.maxAgents * (this.thinOut ? this.eventDensity : 1));
+  }
+
+  /** Clears most vehicles off the event route, except those near the player (they would vanish in sight). */
+  thinRoute(p: { x: number; z: number }, keepNear = 120) {
+    if (!this.thinOut) return 0;
+    const before = this.agents.length;
+    for (let i = this.agents.length - 1; i >= 0; i--) {
+      const a = this.agents[i];
+      if (a.state === 'player' || Math.hypot(a.x - p.x, a.z - p.z) < keepNear) continue;
+      if (this.thinOut(a.x, a.z) && this.rng() > this.thinKeep) this.agents.splice(i, 1);
+    }
+    return before - this.agents.length;
   }
 
   clear() {
@@ -246,6 +276,7 @@ export class TrafficSim {
       const [x, , z] = pointAt(e.p, e.cum, along);
       const d = Math.hypot(x - p.x, z - p.z);
       if (d < (burst ? 40 : this.spawnMin) || d > this.spawnMax) continue;
+      if (this.thinOut?.(x, z) && this.rng() > this.thinKeep) continue;
       // Do not pop up in plain sight.
       if (!burst && view && d < 250) {
         const dx = (x - view.x) / d, dz = (z - view.z) / d;
@@ -334,16 +365,16 @@ export class TrafficSim {
       const stop = rem - this.stopOffset(a);
       if (stop < gap) { gap = Math.max(0.1, stop); vLead = 0; a.state = 'yield'; a.reason = why; }
     }
-    // Other obstacles in the lane, e.g. pedestrians crossing.
-    if (this.obstacles.length || this.wrecks.length) {
+    // Wrecks lying in the lane.
+    if (this.wrecks.length) {
       const fx = Math.sin(a.yaw), fz = Math.cos(a.yaw);
-      for (const o of [...this.obstacles, ...this.wrecks]) {
+      for (const o of this.wrecks) {
         const rx = o.x - a.x, rz = o.z - a.z;
         const f = rx * fx + rz * fz;
         if (f < 0 || f > 30) continue;
         if (Math.abs(-rx * fz + rz * fx) > a.spec.width / 2 + o.halfWidth + 0.5) continue;
         const d = f - a.spec.length / 2 - o.halfLength - 1.5;
-        if (d < gap) { gap = Math.max(0.05, d); vLead = 0; a.state = 'yield'; a.reason = 'Fußgänger'; }
+        if (d < gap) { gap = Math.max(0.05, d); vLead = 0; a.state = 'yield'; a.reason = 'Wrack'; }
       }
     }
     if (p) {

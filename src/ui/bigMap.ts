@@ -12,6 +12,8 @@ export class BigMap {
   private nav: Navigation;
   /** Event markers (U2), set by the game. */
   markers?: () => MapMarker[];
+  /** Districts (W5): name at their centre, "?" until found. */
+  areas?: () => { name: string; x: number; z: number; found: boolean }[];
   private cx = 0;
   private cz = 0;
   private pxPerM = 0.4;
@@ -138,7 +140,29 @@ export class BigMap {
     if (this.nav.destination) drawFlag(ctx, this.nav.destination.x, this.nav.destination.z, k);
     drawCar(ctx, this.car.x, this.car.z, this.car.heading, k);
     ctx.restore();
+    this.areaLabels(w, h);
     this.labels(w, h, radius);
+  }
+
+  private areaLabels(w: number, h: number) {
+    if (!this.areas) return;
+    const ctx = this.ctx;
+    const k = this.pxPerM;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `800 ${Math.round(Math.min(30, Math.max(15, k * 60)))}px system-ui, sans-serif`;
+    for (const a of this.areas()) {
+      const sx = w / 2 + (a.x - this.cx) * k, sy = h / 2 + (a.z - this.cz) * k;
+      if (sx < -200 || sy < -40 || sx > w + 200 || sy > h + 40) continue;
+      const text = a.found ? a.name.toUpperCase() : '? ? ?';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = MAP_COLORS.bg;
+      ctx.globalAlpha = a.found ? 0.75 : 0.5;
+      ctx.strokeText(text, sx, sy);
+      ctx.fillStyle = a.found ? '#e8f1ff' : '#8b97a6';
+      ctx.fillText(text, sx, sy);
+      ctx.globalAlpha = 1;
+    }
   }
 
   /** Street names along their longest visible edge, skipping overlaps. */

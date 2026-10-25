@@ -8,6 +8,8 @@ import { loadVehicleParts, proceduralVehicleSet } from './vehicleGlb.ts';
 export function registerTrafficCommands(t: Traffic, player: () => { x: number; z: number; heading: number }) {
   const sim = t.sim;
   registerValue('traffic.density', 'Verkehrsdichte 0..1 (Anteil der maximalen Fahrzeugzahl)', () => sim.density, (v) => (sim.density = v), [0, 1]);
+  registerValue('traffic.eventdensity', 'Faktor auf die Verkehrsdichte während eines Rennens', () => sim.eventDensity, (v) => (sim.eventDensity = v), [0, 1]);
+  registerValue('traffic.eventkeep', 'Anteil des Verkehrs, der auf der Rennstrecke bleibt 0..1', () => sim.thinKeep, (v) => (sim.thinKeep = v), [0, 1]);
   registerValue('traffic.max', 'Maximale Zahl der KI-Fahrzeuge um den Spieler', () => sim.maxAgents, (v) => (sim.maxAgents = Math.round(v)), [0, 300]);
   registerValue('traffic.radius', 'Radius in m, in dem KI-Fahrzeuge erscheinen und verschwinden', () => sim.spawnMax, (v) => (sim.spawnMax = v), [150, 1500]);
   registerCommand({
@@ -49,6 +51,15 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
   registerToggle('traffic.sound', 'Motor- und Hupgeräusche des Verkehrs', () => t.sound?.enabled ?? true, (v) => {
     if (!t.sound) throw new Error('Ton startet erst nach dem Klick auf Start');
     t.sound.enabled = v;
+  });
+  registerCommand({
+    name: 'traffic.voices',
+    help: 'Welche Fahrzeuge gerade zu hören sind und mit welcher Motorstimme (Benziner, Diesel, Lkw/Bus, Elektro)',
+    run: () => {
+      if (!t.sound) throw new Error('Ton startet erst nach dem Klick auf Start');
+      const v = t.sound.active;
+      return v.length ? v.map((x) => `#${x.id}: ${x.kind ?? '…'}`).join('\n') : 'kein Fahrzeug in Hörweite';
+    },
   });
   registerCommand({
     name: 'traffic.info',

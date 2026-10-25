@@ -1,6 +1,6 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { KINDS } from '../traffic/trafficSim.ts';
-import { PROP_STRIDE, Prop, type PropKind } from './propKinds.ts';
+import { PROP_STRIDE, Prop, type PropKind, linearLength } from './propKinds.ts';
 
 // Colliders for a tile's props, shared by the game (props.ts) and the drive test.
 
@@ -36,7 +36,7 @@ export function addPropColliders(
       const sh = SHAPES[kind];
       if (!sh) continue;
       if ('r' in sh) desc = R.ColliderDesc.cylinder(sh.h / 2, sh.r).setTranslation(x, y + sh.h / 2, z);
-      else desc = R.ColliderDesc.cuboid(sh.w / 2, sh.h / 2, (LINEAR.has(kind) ? Math.max(0.2, size) : sh.d) / 2).setTranslation(x, y + sh.h / 2, z).setRotation(rot);
+      else desc = R.ColliderDesc.cuboid(sh.w / 2, sh.h / 2, (LINEAR.has(kind) ? linearLength(size) : sh.d) / 2).setTranslation(x, y + sh.h / 2, z).setRotation(rot);
     }
     onCollider?.(world.createCollider(desc.setFriction(0.6), body), i);
   }

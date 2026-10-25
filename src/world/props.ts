@@ -6,7 +6,7 @@ import { CAR_PALETTE } from '../traffic/trafficSim.ts';
 import { VEHICLE_LOD_DISTANCE, type VehicleSet, proceduralVehicleSet } from '../traffic/vehicleGlb.ts';
 import { patchPaintedMetal } from '../render/pbr/surfaces.ts';
 import { patchMaterial } from '../weather/weatherMaterials.ts';
-import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, isDetected, signTypeOf } from './propKinds.ts';
+import { PROP_GROUPS, PROP_NAMES, PROP_STRIDE, Prop, type PropKind, isDetected, isMeasured, linearLength, signTypeOf } from './propKinds.ts';
 import { PROP_LOD_DISTANCE, type PropSet } from './propGlb.ts';
 import { LINEAR, addPropColliders } from './propColliders.ts';
 import { buildPropGeometries, buildReflectorGeometries } from './propModels.ts';
@@ -51,6 +51,7 @@ export class PropLayer {
   readonly hiddenKinds = new Set<PropKind>();
   /** Props found on Mapillary photos (props.mapillary). */
   showDetected = true;
+  showMeasured = true;
   private tiles = new Map<string, TileProps>();
   private removedProps = new Set<string>();
   private byCollider = new Map<number, PropHit>();
@@ -250,7 +251,7 @@ export class PropLayer {
         const kind = t.data[i * PROP_STRIDE] as PropKind;
         if (this.hiddenKinds.has(kind) || this.removedProps.has(`${t.key}:${i}`)) continue;
         const size = t.data[i * PROP_STRIDE + 5];
-        if (!this.showDetected && isDetected(kind, size)) continue;
+        if ((!this.showDetected && isDetected(kind, size)) || (!this.showMeasured && isMeasured(kind, size))) continue;
         let model: ModelKey = kind === Prop.busStop && size ? 'busShelter' : kind;
         const o = i * PROP_STRIDE;
         const dist = Math.hypot(t.data[o + 1] - cam.x, t.data[o + 3] - cam.z);
@@ -287,7 +288,7 @@ export class PropLayer {
         const o = i * PROP_STRIDE;
         const kind = t.data[o] as PropKind;
         this.q.setFromAxisAngle(this.up, t.data[o + 4]);
-        this.s.set(1, 1, LINEAR.has(kind) ? Math.max(0.2, t.data[o + 5]) : 1);
+        this.s.set(1, 1, LINEAR.has(kind) ? linearLength(t.data[o + 5]) : 1);
         this.m.compose(this.p.set(t.data[o + 1], t.data[o + 2], t.data[o + 3]), this.q, this.s);
         for (const im of meshes) im.setMatrixAt(n, this.m);
         if (typeof model === 'string' && /^(car|van)/.test(model)) meshes[0].setColorAt(n, this.c.setHex(CAR_PALETTE[Math.floor(t.data[o + 5] / 2) % CAR_PALETTE.length]));
@@ -378,6 +379,7 @@ export class PropLayer {
 
   registerCommands(player: () => { x: number; z: number }) {
     registerToggle('props', 'Straßenmöbel und parkende Autos anzeigen', () => this.visible, (v) => (this.visible = v));
+    registerToggle('props.laserhecken', 'Hecken aus den Laserhöhen (DOM1 − DGM1 mit Luftbild-NDVI) zeigen (sonst nur OSM-Hecken)', () => this.showMeasured, (v) => { this.showMeasured = v; this.dirty = true; });
     registerToggle('props.mapillary', 'Schilder, Bänke und Hydranten aus Mapillary-Fotos zeigen (sonst nur OSM)', () => this.showDetected, (v) => { this.showDetected = v; this.dirty = true; });
     registerValue('props.carbox', 'Parkende Autos ab dieser Entfernung (m) als einfache Kästen ohne Schatten', () => this.carBoxDistance, (v) => { this.carBoxDistance = v; this.dirty = true; }, [0, 1500]);
     registerValue('props.radius', 'Sichtweite der Straßenmöbel und Parker in Metern', () => this.radius, (v) => { this.radius = v; this.dirty = true; }, [30, 1500]);
@@ -407,7 +409,7 @@ export class PropLayer {
       run: ([r = '30']) => {
         const p = player();
         const list = this.near(p.x, p.z, parseNum(r, 'Radius', 1, 500)).slice(0, 12);
-        return list.length ? list.map((e) => `${e.name} ${e.d.toFixed(1)} m${LINEAR.has(e.kind) ? ` (${e.size.toFixed(1)} m lang)` : isDetected(e.kind, e.size) ? ' (Mapillary)' : ''}`).join('\n') : 'keine Requisiten in der Nähe';
+        return list.length ? list.map((e) => `${e.name} ${e.d.toFixed(1)} m${LINEAR.has(e.kind) ? ` (${linearLength(e.size).toFixed(1)} m lang${isMeasured(e.kind, e.size) ? ', aus Laserhöhen' : ''})` : isDetected(e.kind, e.size) ? ' (Mapillary)' : ''}`).join('\n') : 'keine Requisiten in der Nähe';
       },
     });
     registerCommand({

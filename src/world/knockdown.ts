@@ -4,7 +4,7 @@ import { parseNum, registerCommand, registerToggle, registerValue } from '../deb
 import type { Debris } from '../render/debris.ts';
 import type { CarPhysics } from '../vehicle/carPhysics.ts';
 import { LINEAR } from './propColliders.ts';
-import type { PropKind } from './propKinds.ts';
+import { linearLength, type PropKind } from './propKinds.ts';
 import { buildPropGeometries } from './propModels.ts';
 import type { PropHit } from './props.ts';
 import type { Knockable, KnockableSource } from './streamer.ts';
@@ -141,7 +141,7 @@ export function propDebris(): DebrisFactory {
     const m = new THREE.Mesh(g, mat);
     m.position.set(k.x, k.y, k.z);
     m.rotation.y = k.heading;
-    if (LINEAR.has(k.kind as PropKind)) m.scale.z = Math.max(0.2, k.size);
+    if (LINEAR.has(k.kind as PropKind)) m.scale.z = linearLength(k.size);
     m.castShadow = true;
     m.userData.sharedGeometry = true;
     return [m];

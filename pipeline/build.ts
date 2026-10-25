@@ -216,7 +216,22 @@ function main() {
         for (const [te, tn, cr] of measuredGrid.get(`${ce + a}_${cn + b}`) ?? []) if (Math.hypot(te - e, tn - n) < cr + gap) return true;
     return false;
   };
-  for (const [e, n, s] of lidar.bushes) addBush(e, n, s, Bush.round);
+  // Low crowns along a measured hedge are the hedge itself (props): no bush on top of it.
+  const hedgeCells = new Set<string>();
+  for (const h of landcover?.hedges ?? [])
+    for (let i = 1; i < h.length; i++) {
+      const l = Math.hypot(h[i][0] - h[i - 1][0], h[i][1] - h[i - 1][1]);
+      for (let d = 0; d <= l; d += 1) hedgeCells.add(`${Math.round(h[i - 1][0] + ((h[i][0] - h[i - 1][0]) * d) / (l || 1))}_${Math.round(h[i - 1][1] + ((h[i][1] - h[i - 1][1]) * d) / (l || 1))}`);
+    }
+  const onHedge = (e: number, n: number) => {
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (hedgeCells.has(`${Math.round(e) + a}_${Math.round(n) + b}`)) return true;
+    return false;
+  };
+  let hedgeBushes = 0;
+  for (const [e, n, s] of lidar.bushes) {
+    if (onHedge(e, n)) { hedgeBushes++; continue; }
+    addBush(e, n, s, Bush.round);
+  }
   mapped.forEach((t, i) => { if (!lidar.merged.has(i) && !treeLanes.has(t.e, t.n)) addTree(t.e, t.n, 0.8 + rand(t.e, t.n) * 0.5, t.kind); });
   // Street furniture and traffic lights seen on Mapillary's street-level photos, on top of OSM.
   const DETECTED: Partial<Record<string, PropKind>> = { sign: Prop.sign, stopSign: Prop.stopSign, giveWay: Prop.giveWay, bench: Prop.bench, hydrant: Prop.hydrant };
@@ -244,8 +259,12 @@ function main() {
   console.log(`Guide signs: ${Object.entries(guide.counts).map(([k, c]) => `${k} ${c}`).join(', ')} (${farPlaces.length} places beyond the region) · skipped: ${Object.entries(guide.skipped).map(([k, c]) => `${k} ${c}`).join(', ')}`);
   // Mapped place-name signs replace the generic ones where roads cross the postal boundary.
   const cityLimits = guide.counts.ort === 0;
-  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings });
+  // Survey hedges and ALKIS walls reach beyond the OSM extract (the ALKIS walls cover the whole district):
+  // only the ones on tiles with OSM content, where the terrain is fetched.
+  const inData = (l: [number, number][]) => l.every(([e, n]) => used.has(`${Math.floor(e / T0)}_${Math.floor(n / T0)}`));
+  const props = buildProps(osm, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), nearLanes: (e, n) => nearLanes.has(e, n), junctions, boundary: osm.boundary, detected, cityLimits, railings, hedges: landcover?.hedges.filter(inData), walls: landcover?.walls.filter(inData) });
   console.log(`Mapillary: ${detected.length} features, ${props.detected} new as props, ${detectedLights.length} traffic lights`);
+  if (landcover) console.log(`Hedges: ${landcover.hedges.length} measured from the laser heights, ${props.measuredHedges} pieces placed, ${hedgeBushes} bushes on them dropped; ${props.alkisWalls} wall pieces from ALKIS`);
   const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   // Guard rails, delineators and chevron boards outside town (roadside.ts).

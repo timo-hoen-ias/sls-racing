@@ -175,4 +175,5 @@ export function patchWorldMaterials(m: Materials) {
   patchMaterial(m.building, { wet: 0.5, snow: 0.9 });
   patchMaterial(m.crown, { wet: 0.3, snow: 0.7, upFrom: 0.05 });
   patchMaterial(m.lampPole, { wet: 0.4, snow: 0.6 });
+  patchMaterial(m.detail, { wet: 0.5, snow: 0.8, upFrom: 0.6 });
 }

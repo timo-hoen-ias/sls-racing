@@ -48,6 +48,8 @@ export interface TileBuild {
   sidewalks: MeshBuf;
   /** Footpaths, cycle paths and steps (pipeline/lib/paths.ts). */
   paths: MeshBuf;
+  /** Visual OSM details, vertex-coloured with normals (pipeline/lib/details.ts). */
+  details: MeshBuf;
   trees: number[];
   lamps: number[];
 }
@@ -66,7 +68,7 @@ export class TileMap {
     const key = `${ix}_${iy}`;
     let t = this.tiles.get(key);
     if (!t) {
-      t = { ix, iy, roads: new MeshBuf(), markings: new MeshBuf(), buildings: new MeshBuf(), collide: new MeshBuf(), sidewalks: new MeshBuf(), paths: new MeshBuf(), trees: [], lamps: [] };
+      t = { ix, iy, roads: new MeshBuf(), markings: new MeshBuf(), buildings: new MeshBuf(), collide: new MeshBuf(), sidewalks: new MeshBuf(), paths: new MeshBuf(), details: new MeshBuf(), trees: [], lamps: [] };
       this.tiles.set(key, t);
     }
     return t;

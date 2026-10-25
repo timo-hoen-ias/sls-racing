@@ -91,6 +91,52 @@ export interface PropOptions {
 /** Detected and mapped features of one kind closer than this (m) are the same object. */
 const DEDUPE = 8;
 
+/** Footprint (width across, depth towards the road, m) of the bigger point props: they keep it clear of the lanes. */
+const FOOTPRINT: Partial<Record<PropKind, [number, number]>> = {
+  [Prop.billboard]: [3.8, 0.4], [Prop.shelter]: [3.4, 2.6], [Prop.huntingStand]: [1.9, 2.4], [Prop.bunker]: [5.3, 4.3],
+  [Prop.parcelLocker]: [3.0, 0.7], [Prop.fountain]: [3.6, 3.6], [Prop.picnicTable]: [1.8, 1.6], [Prop.cycleBarrier]: [2.2, 1.4],
+  [Prop.memorial]: [2.2, 2.2], [Prop.artwork]: [1.2, 1.2], [Prop.infoBoard]: [1.5, 0.5], [Prop.streetCabinet]: [0.9, 0.4],
+  [Prop.chargingStation]: [0.6, 0.3], [Prop.recycling]: [3.5, 1.1], [Prop.gate]: [3.2, 3.2],
+};
+
+/** Prop for an OSM point (beyond the classic street furniture) and its variant, or undefined. */
+export function detailPropOf(t: Record<string, string>): { kind: PropKind; size?: number } | undefined {
+  if (t.barrier === 'gate' || t.barrier === 'swing_gate') return { kind: Prop.gate };
+  if (t.barrier === 'lift_gate') return { kind: Prop.liftGate };
+  if (t.barrier === 'cycle_barrier') return { kind: Prop.cycleBarrier };
+  if (t.highway === 'speed_camera') return { kind: Prop.speedCamera };
+  if (t.highway === 'traffic_mirror') return { kind: Prop.trafficMirror };
+  if (t.man_made === 'street_cabinet') return { kind: Prop.streetCabinet };
+  if (t.man_made === 'surveillance') return /^(wall|ceiling|building)$/.test(t.support ?? '') || t.surveillance === 'indoor' ? undefined : { kind: Prop.camera };
+  if (t.man_made === 'flagpole') return { kind: Prop.flagpole };
+  if (t.tourism === 'information') {
+    if (t.information === 'guidepost') return { kind: Prop.guidepost };
+    if (t.information === 'board') return { kind: Prop.infoBoard };
+    if (t.information === 'map') return { kind: Prop.infoBoard, size: 1 };
+    return undefined;
+  }
+  if (t.tourism === 'artwork') return /^(mural|graffiti|painting)$/.test(t.artwork_type ?? '') ? undefined : { kind: Prop.artwork };
+  if (t.leisure === 'picnic_table' || t.tourism === 'picnic_site') return { kind: Prop.picnicTable };
+  if (t.amenity === 'charging_station') return { kind: Prop.chargingStation };
+  if (t.amenity === 'vending_machine') return { kind: Prop.vending, size: t.vending === 'parking_tickets' ? 1 : 0 };
+  if (t.amenity === 'parcel_locker') return { kind: Prop.parcelLocker };
+  if (t.amenity === 'hunting_stand') return { kind: Prop.huntingStand };
+  if (t.amenity === 'shelter') return t.shelter_type === 'public_transport' ? undefined : { kind: Prop.shelter };
+  if (t.amenity === 'fountain') return { kind: Prop.fountain };
+  if (t.emergency === 'phone') return { kind: Prop.emergencyPhone };
+  if (t.advertising === 'billboard') return { kind: Prop.billboard };
+  if (t.advertising === 'poster_box') return { kind: Prop.posterBox };
+  if (t.historic === 'wayside_cross' || t.historic === 'wayside_shrine') return { kind: Prop.waysideCross };
+  if (t.historic === 'boundary_stone') return { kind: Prop.boundaryStone };
+  if (t.historic === 'memorial' || t.historic === 'monument') {
+    if (t.memorial === 'stolperstein') return undefined;
+    const m = t.memorial ?? '';
+    return { kind: Prop.memorial, size: t.historic === 'monument' || m === 'war_memorial' || m === 'statue' ? 3 : m === 'stele' || m === 'obelisk' ? 1 : m === 'plaque' || m === 'blue_plaque' ? 2 : 0 };
+  }
+  if (t.military === 'bunker') return { kind: Prop.bunker };
+  return undefined;
+}
+
 export function buildProps(osm: OsmData, o: PropOptions) {
   const T = o.world.tileSize;
   const out = new Map<string, number[]>();
@@ -117,7 +163,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     let heading = rand(e, n, 5) * Math.PI * 2;
     if (road) {
       const onRoad = o.onLanes(e, n);
-      if (kind === Prop.bollard || kind === Prop.block) {
+      if (kind === Prop.bollard || kind === Prop.block || kind === Prop.cycleBarrier) {
         // Bollards and blocks on a road open to cars would close it: drop them. In pedestrian zones and on
         // roads closed to cars they stay where they are mapped, on the carriageway.
         if (onRoad && (o.onMotorLanes ?? o.onLanes)(e, n)) return;
@@ -130,7 +176,7 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       const side = onRoad ? (kind === Prop.stopSign || kind === Prop.giveWay || kind === Prop.busStop || rand(e, n, 2) < 0.5 ? 1 : -1) : road.side;
       if (onRoad) {
         // Right of the way's direction: normal (dn, -de).
-        const off = road.seg.width / 2 + (kind === Prop.busStop ? 1.4 : 0.7);
+        const off = road.seg.width / 2 + (kind === Prop.busStop ? 1.4 : 0.7) + (FOOTPRINT[kind]?.[1] ?? 0) / 2;
         e = road.pe + road.dn * off * side;
         n = road.pn - road.de * off * side;
         if (o.onLanes(e, n)) return;
@@ -138,6 +184,14 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       // Face the road; signs face the traffic coming towards them on their side.
       if (kind === Prop.sign || kind === Prop.stopSign || kind === Prop.giveWay) heading = side > 0 ? headingOf(-road.de, -road.dn) : headingOf(road.de, road.dn);
       else heading = headingOf(-road.dn * side, road.de * side);
+    }
+    // Bigger props keep their whole footprint off the lanes (heading = direction they face, local frame).
+    const fp = FOOTPRINT[kind];
+    if (fp) {
+      const clear = o.nearLanes ?? o.onLanes;
+      const fe = Math.sin(heading), fn = -Math.cos(heading); // facing direction in UTM
+      for (const [a, b] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5], [0, 0]])
+        if (clear(e + fn * fp[0] * a + fe * fp[1] * b, n - fe * fp[0] * a + fn * fp[1] * b)) return;
     }
     add(kind, e, n, heading, size);
     remember(kind, e, n);
@@ -175,6 +229,15 @@ export function buildProps(osm: OsmData, o: PropOptions) {
     else if (t.emergency === 'fire_hydrant') kind = Prop.hydrant;
     else if (t.amenity === 'bicycle_parking') kind = Prop.bikeStand;
     else if (t.advertising === 'column') kind = Prop.column;
+    else {
+      const d = detailPropOf(t);
+      if (d) {
+        kind = d.kind;
+        size = d.size ?? 0;
+        // A gate mapped on a road stands open beside it.
+        if (kind === Prop.gate && o.onLanes(p.e, p.n)) size = 1;
+      }
+    }
     if (kind) placePoint(kind, p.e, p.n, size);
   }
   // A row of bollards where a pedestrian zone or a road closed to motor vehicles leaves a road open to cars,
@@ -233,15 +296,47 @@ export function buildProps(osm: OsmData, o: PropOptions) {
   const offLanes = (e: number, n: number, de: number, dn: number, len: number) => [-0.5, -0.25, 0, 0.25, 0.5].every((f) => !clear(e + de * len * f, n + dn * len * f));
   const mappedHedges = new Set<string>(), mappedBarriers = new Set<string>();
   const HEDGE_CELL = 3;
+  // Off the carriageway by this much at every sample, a chain-link piece squeezed between two roads mapped too
+  // close together may stand inside the car clearance.
+  const SQUEEZE = 0.6;
+  const roadClear = (e: number, n: number) => {
+    const r = roads.nearest(e, n, 15);
+    return r ? r.d - r.seg.width / 2 : Infinity;
+  };
+  /** Chain-link pieces in the clearance: moved up to 2.5 m sideways to where they keep SQUEEZE off the roads. A
+   * piece across a road (a way in) has no such place and stays out. */
+  const squeeze = (e: number, n: number, de: number, dn: number, len: number): [number, number] | undefined => {
+    for (let k = 0; k <= 20; k++) {
+      const off = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.25;
+      const ce = e + dn * off, cn = n - de * off;
+      if ([-0.5, -0.25, 0, 0.25, 0.5].every((f) => roadClear(ce + de * len * f, cn + dn * len * f) >= SQUEEZE)) return [ce, cn];
+    }
+    return undefined;
+  };
+  let squeezed = 0;
   for (const w of osm.ways) {
     const b = w.tags.barrier;
-    const kind = b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : undefined;
+    const chain = b === 'fence' && /chain_link/.test(w.tags.fence_type ?? '');
+    const kind = chain ? Prop.chainLink : b === 'fence' ? Prop.fence : b === 'wall' ? Prop.wall : b === 'hedge' ? Prop.hedge : undefined;
     if (!kind) continue;
-    pieces(w.pts, 4, (e, n, de, dn, len) => {
+    pieces(w.pts, chain ? 2.5 : 4, (e, n, de, dn, len) => {
       const cell = `${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`;
-      if (kind !== Prop.fence) mappedHedges.add(cell);
+      if (kind !== Prop.fence && kind !== Prop.chainLink) mappedHedges.add(cell);
       mappedBarriers.add(cell);
       if (offLanes(e, n, de, dn, len)) add(kind, e, n, headingOf(de, dn), len);
+      else if (chain) {
+        const at = squeeze(e, n, de, dn, len);
+        if (at) { add(kind, at[0], at[1], headingOf(de, dn), len); squeezed++; }
+      }
+    });
+  }
+  if (squeezed) console.log(`Props: ${squeezed} chain-link pieces moved off the roads beside them`);
+  // Retaining walls (extra features, osmTags.ts).
+  for (const w of osm.extra?.ways ?? []) {
+    if (w.tags.barrier !== 'retaining_wall') continue;
+    pieces(w.pts, 4, (e, n, de, dn, len) => {
+      mappedBarriers.add(`${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`);
+      if (offLanes(e, n, de, dn, len)) add(Prop.retainingWall, e, n, headingOf(de, dn), len);
     });
   }
   // Measured hedges have a negative length (see isMeasured in propKinds.ts); none beside a mapped hedge or wall.
@@ -333,7 +428,18 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }, 3);
     }
   }
-  return { tiles: out, counts, detected, entries, measuredHedges, alkisWalls, stallLines };
+  // Mapped street lamps (highway=street_lamp): local x, y, z and the heading of the arm towards the road.
+  const lamps: { e: number; n: number; x: number; y: number; z: number; heading: number }[] = [];
+  for (const p of osm.points) {
+    if (p.tags.highway !== 'street_lamp' || o.onLanes(p.e, p.n)) continue;
+    const road = roads.nearest(p.e, p.n, 15);
+    if (!road) continue;
+    const [x, z] = utmToLocal(o.world, p.e, p.n);
+    const y = road.d < road.seg.width / 2 + 3 ? Math.max(o.height(p.e, p.n), road.y - ROAD_LIFT) + ROAD_LIFT + KERB.height : o.height(p.e, p.n);
+    lamps.push({ e: p.e, n: p.n, x: r2(x), y: r2(y), z: r2(z), heading: r3(headingOf(road.pe - p.e, road.pn - p.n)) });
+  }
+
+  return { tiles: out, counts, detected, entries, measuredHedges, alkisWalls, stallLines, lamps };
 }
 
 /** Variant number for a parked car: colour index × 2 + 1 for a van. */

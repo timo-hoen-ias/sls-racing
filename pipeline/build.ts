@@ -26,6 +26,7 @@ import { GroundIndex, rand } from './lib/ground.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { missing, roadHeights, terrainHeight } from './lib/heights.ts';
 import { readOsm, pointInRing, type OsmJson } from './lib/osm.ts';
+import { applyOsmFixes } from './lib/osmFixes.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
@@ -78,6 +79,7 @@ function main() {
     }
   }
 
+  for (const line of applyOsmFixes(merged)) console.log(`OSM fix: ${line}`);
   const osm = readOsm(merged, project);
   const height = terrainHeight(regions, toLonLat, console.log, osm.polygons);
   // Game road profile: kinks in the mapped lines become short arcs, before anything reads the geometry.
@@ -435,6 +437,13 @@ function main() {
   const levels = waterLevels(grids, TERRAIN_N, Ground.water);
   console.log(`Water: smooth levels in ${levels.size} tiles`);
 
+  const osmLamps = new Map<string, typeof props.lamps>();
+  for (const l of props.lamps) {
+    const k = tileKey(Math.floor(l.e / T), Math.floor(l.n / T));
+    if (!osmLamps.has(k)) osmLamps.set(k, []);
+    osmLamps.get(k)!.push(l);
+  }
+  let mappedLamps = 0;
   let bytes = 0;
   const index: [number, number][] = [];
   for (const k of [...want].sort()) {
@@ -473,7 +482,7 @@ function main() {
     const tile: TileData = {
       v: 1, ix, iy, terrain: encode(h), ground: encode(g),
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
-      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(), paths: b?.paths.pack(),
+      sidewalks: b?.sidewalks.pack(), stalls: stallBufs.get(k)?.pack(), paths: b?.paths.pack(), details: b?.details.pack(),
     };
     const cover = landcover && tileCover(landcover, E0, N0, g);
     if (cover) {
@@ -483,6 +492,12 @@ function main() {
       coverTiles++;
     }
     const lamps = offLanes(b?.lamps ?? []);
+    // Mapped lamps where the generated ones have none within 12 m.
+    for (const l of osmLamps.get(k) ?? []) {
+      let near = false;
+      for (let i = 0; i < lamps.length && !near; i += 4) near = Math.hypot(lamps[i] - l.x, lamps[i + 2] - l.z) < 12;
+      if (!near) { lamps.push(l.x, l.y, l.z, l.heading); mappedLamps++; }
+    }
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const ri = roofInfo.get(k);
     if (ri) tile.roofInfo = encode(new Float32Array(ri));
@@ -588,6 +603,7 @@ function main() {
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
   console.log(`Vegetation: ${nTrees} trees (${lidar.trees.length} from LiDAR, ${lidar.merged.size} of them mapped in OSM), ${nBushes} bushes`);
   if (landcover) console.log(`Land cover: ${coverTiles} tiles with survey colours and textures`);
+  console.log(`Street lamps: ${mappedLamps} of ${props.lamps.length} mapped ones added where the generated rows have none`);
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 

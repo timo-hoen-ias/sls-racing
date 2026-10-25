@@ -1,3 +1,4 @@
+import { CALIPERS, FINISH_LABELS, FINISHES, GLOWS, type Look, PAINTS, RIMS } from '../vehicle/looks.ts';
 import { PadNav } from './padNav.ts';
 
 // Home garage and car dealer (P4, P3, A3): one panel over the game. The garage shows the owned cars with
@@ -28,9 +29,24 @@ export interface SlotRow {
   spares: { level: number; name: string; count: number }[];
 }
 
+/** A build of the car in use (A2): street, drift, off-road. */
+export interface SpecRow {
+  id: string;
+  label: string;
+  info: string;
+  owned: boolean;
+  current: boolean;
+  price: number;
+  level: number;
+  locked: boolean;
+}
+
 export interface GarageData {
   mode: 'home' | 'dealer';
   cars: CarRow[];
+  specs: SpecRow[];
+  /** Look of the car in use (P5). */
+  look: Look;
   slots: SlotRow[];
   ls: number;
   credits: number;
@@ -41,6 +57,9 @@ export interface GarageActions {
   buy(id: string): void;
   fit(slot: string, level: number): void;
   fitBest(): void;
+  /** Uses a build, or buys it first. */
+  spec(id: string): void;
+  look(patch: Partial<Look>): void;
   close(): void;
 }
 
@@ -126,6 +145,19 @@ export class GarageMenu {
     }
     const parts = el('section', 'gm-parts');
     if (d.mode === 'home') {
+      // Builds of the car in use (A2); each has its own parts below.
+      const sh = el('h3', '', 'Version');
+      parts.append(sh);
+      const specs = el('div', 'gm-specs');
+      for (const sp of d.specs) {
+        const label = sp.current ? `${sp.label} ✓` : sp.owned ? sp.label : sp.locked ? `${sp.label} · ab Stufe ${sp.level}` : `${sp.label} · ${sp.price.toLocaleString('de-DE')} Cr`;
+        const b = btn(label, () => this.a.spec(sp.id), sp.current ? 'primary' : '');
+        b.title = sp.info;
+        b.dataset.key = `spec:${sp.id}`;
+        b.disabled = sp.current || (!sp.owned && (sp.locked || d.credits < sp.price));
+        specs.append(b);
+      }
+      parts.append(specs, el('p', 'gm-hint', d.specs.find((x) => x.current)?.info ?? ''));
       const h = el('h3', '', 'Teile');
       const best = btn('Beste einbauen', () => this.a.fitBest());
       best.dataset.key = 'best';
@@ -146,6 +178,32 @@ export class GarageMenu {
         row.append(opts);
         parts.append(row);
       }
+      // Look (P5): swatches for paint, rims, calipers and underglow; finish and wing as buttons.
+      const look = el('section', 'gm-look');
+      look.append(el('h3', '', 'Optik'));
+      const row = (label: string, items: HTMLElement[]) => {
+        const r = el('div', 'gm-slot');
+        const o = el('div', 'gm-spares');
+        o.append(...items);
+        r.append(el('b', '', label), o);
+        look.append(r);
+      };
+      const swatches = (key: keyof Look, list: [string, string][]) => list.map(([hex, name]) => {
+        const b = btn(hex ? '' : name, () => this.a.look({ [key]: hex }), `gm-swatch${d.look[key] === hex ? ' on' : ''}`);
+        if (hex) b.style.setProperty('--c', hex);
+        b.title = name;
+        b.dataset.key = `look:${key}:${hex || 'off'}`;
+        return b;
+      });
+      row('Lack', swatches('color', PAINTS));
+      row('Lackart', FINISHES.map((f) => { const b = btn(FINISH_LABELS[f], () => this.a.look({ finish: f }), d.look.finish === f ? 'primary' : ''); b.dataset.key = `look:finish:${f}`; return b; }));
+      row('Felgen', swatches('rim', RIMS));
+      row('Bremssättel', swatches('caliper', CALIPERS));
+      const wing = btn(d.look.wing ? 'Heckflügel an' : 'Heckflügel ab', () => this.a.look({ wing: !d.look.wing }));
+      wing.dataset.key = 'look:wing';
+      row('Karosserie', [wing]);
+      row('Unterboden', swatches('glow', GLOWS));
+      parts.append(look);
       parts.append(el('p', 'gm-hint', 'Medaillen in Events gewinnen Teile. Je besser die Medaille und je schwerer das Event, desto besser das Teil.'));
     }
     this.body.replaceChildren(cars, parts);

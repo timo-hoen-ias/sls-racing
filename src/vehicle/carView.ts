@@ -160,6 +160,11 @@ export class CarView {
     return this.paint.color;
   }
 
+  /** Body paint (looks.ts sets its finish). */
+  get paintMaterial() {
+    return this.paint;
+  }
+
   setColor(color: string) {
     this.paint.color.set(color);
   }

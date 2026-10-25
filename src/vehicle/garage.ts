@@ -17,6 +17,8 @@ export interface GarageContext {
   notify?(text: string): void;
   /** After a switch (rev counter range …). */
   onChange?(spec: CarSpec): void;
+  /** After a new body is in place: paint, rims … (vehicle/looks.ts). */
+  onModel?(spec: CarSpec): void;
   /** Right after applyCar, before the physics takes the tuning over: fitted parts (game/workshop.ts). */
   afterApply?(spec: CarSpec): void;
 }
@@ -70,6 +72,7 @@ export class Garage {
     const p = car.body.translation();
     car.body.setTranslation({ x: p.x, y: p.y + 0.15, z: p.z }, true);
     view.setModel(model, 'glb');
+    this.c.onModel?.(spec);
     this.c.sound()?.setProfile(ENGINE_SOUND);
     this.current = spec;
     this.c.onChange?.(spec);

@@ -8,6 +8,7 @@ import { EventList, ProgressBadge, TitleMenu } from '../ui/gameMenus.ts';
 import { type CarRow, type GarageData, GarageMenu } from '../ui/garageMenu.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
 import { type BarrierView, findBarriers } from './events/barriers.ts';
+import type { JumpRamp } from '../world/jumpRamps.ts';
 import { generateEvents, mergeEvents } from './events/generate.ts';
 import { GateView, TYPE_COLORS } from './events/gates.ts';
 import { distanceToPath, EventRunner } from './events/runner.ts';
@@ -17,7 +18,7 @@ import { MEDAL_NAMES, SaveGame } from './save.ts';
 import { LineTracker, RIVAL_LEVELS, type RivalLevel, type Rivals } from './rivals.ts';
 import type { StyleEvent } from './style.ts';
 import { PlaceView } from './placeView.ts';
-import { CAR_SHOP, findPlaces, PART_NAMES, type Place, ratingOf, recommendedLs, SLOT_LABELS, SLOTS, Workshop } from './workshop.ts';
+import { CAR_SHOP, findPlaces, PART_NAMES, type Place, ratingOf, recommendedLs, SLOT_LABELS, SLOTS, SPEC_INFO, SPEC_LABELS, SPEC_SHOP, SPECS, type Spec, Workshop } from './workshop.ts';
 import { CARS } from '../vehicle/cars.ts';
 import type { CarPhysics } from '../vehicle/carPhysics.ts';
 import { BUST, type PlayerNow, type Police } from './police.ts';
@@ -55,6 +56,8 @@ export interface GameDeps {
   rivals?: Rivals;
   /** Fences across side streets during races (S6). */
   barriers?: BarrierView;
+  /** Jump ramps in the world (W3): one jump event each. */
+  ramps?: JumpRamp[];
   /** The player car's garage (vehicle/garage.ts): parts, dealer and home garage need it (P3, P4). */
   cars?: CarControl;
   /** Where the home garage goes (beside the start). */
@@ -161,6 +164,8 @@ export class Game {
         buy: (id) => act(() => { const m = shop.buy(id); if (shop.owned(id)) void shop.use(id).then(after); return m; }),
         fit: (slot, level) => act(() => shop.fit(slot as (typeof SLOTS)[number], level)),
         fitBest: () => act(() => `${shop.fitBest()} Teile eingebaut`),
+        spec: (id) => act(() => shop.buySpec(id as Spec)),
+        look: (patch) => { shop.setLook(patch); this.garageMenu?.render(); },
         close: () => this.garageMenu?.hide(),
       });
       d.scene.add(this.placeView.root);
@@ -186,7 +191,7 @@ export class Game {
   /** Builds the events from the road graph, plus hand-made ones from events.json. */
   async load() {
     const t = performance.now();
-    const generated = generateEvents(this.d.graph);
+    const generated = generateEvents(this.d.graph, { ramps: this.d.ramps });
     // events.json: hand-made events, and generated ones the event test (pipeline/eventtest.ts) left out.
     let file: { events?: GameEvent[]; drop?: string[] } = {};
     try {
@@ -265,10 +270,16 @@ export class Game {
         cars: CARS.map((c) => {
           const sale = CAR_SHOP[c.id] ?? { price: 0, level: 1, ls: 120 };
           // Figures of the car in use change with its parts; the others are measured once per opening.
-          const key = `${c.id}:${c.id === cur ? JSON.stringify(parts) : ''}`;
+          const key = `${c.id}:${c.id === cur ? shop.spec() + JSON.stringify(parts) : ''}`;
           if (!statCache.has(key)) statCache.set(key, cars.stats(c.id));
           return { id: c.id, label: c.label, info: c.info, owned: shop.owned(c.id), current: c.id === cur, ls: ratingOf(c.id, shop.parts(c.id)),
             price: sale.price, level: sale.level, locked: this.progress.level < sale.level, stats: statCache.get(key)! };
+        }),
+        look: shop.look(),
+        specs: SPECS.map((sp) => {
+          const sale = sp === 'street' ? { price: 0, level: 1 } : SPEC_SHOP[sp];
+          return { id: sp, label: SPEC_LABELS[sp], info: SPEC_INFO[sp], owned: shop.hasSpec(cur, sp), current: shop.spec() === sp,
+            price: sale.price, level: sale.level, locked: this.progress.level < sale.level };
         }),
         slots: SLOTS.map((s) => ({ slot: s, label: SLOT_LABELS[s], level: parts[s] ?? 0, name: PART_NAMES[parts[s] ?? 0],
           spares: inv.filter(([slot]) => slot === s).map(([, l, n]) => ({ level: l, name: PART_NAMES[l], count: n })) })),
@@ -714,7 +725,7 @@ export class Game {
       return `${r.event.name} (${r.event.id}) · ${r.state} · ${r.time.toFixed(1)} s · Tor ${r.next + 1}/${r.event.gates.length} · Runde ${r.lap} · Wert ${formatValue(r.event, r.value())}`;
     } });
     registerCommand({ name: 'event.regen', help: 'Events neu erzeugen (anderer Zufallswert)', args: '[seed]', run: ([s]) => {
-      this.events = generateEvents(this.d.graph, { seed: Number(s ?? Date.now() % 1e6) });
+      this.events = generateEvents(this.d.graph, { seed: Number(s ?? Date.now() % 1e6), ramps: this.d.ramps });
       return `${this.events.length} Events`;
     } });
     registerToggle('events', 'Events in der freien Fahrt (Tore, Marker, Start-Hinweise)', () => this.enabled, (v) => (this.enabled = v));

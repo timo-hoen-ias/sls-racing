@@ -191,6 +191,7 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 #garage-menu .gm-bar i { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--accent) calc(var(--v) * 100%), #ffffff1a 0); }
 #garage-menu .gm-slot { display: grid; grid-template-columns: 90px 70px 1fr; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 6px; background: #ffffff0c; margin-bottom: 5px; font-size: 14px; }
 #garage-menu .gm-spares { display: flex; gap: 5px; flex-wrap: wrap; }
+#garage-menu .gm-specs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 #garage-menu .gm-none, #garage-menu .gm-hint { font-size: 12px; opacity: .55; }
 #garage-menu .p1 { color: #9be37a; } #garage-menu .p2 { color: #59b8ff; } #garage-menu .p3 { color: #c58bff; } #garage-menu .p4 { color: #ffb000; } #garage-menu .p5 { color: #ff5e5e; }
 #garage-menu button.p1, #garage-menu button.p2, #garage-menu button.p3, #garage-menu button.p4, #garage-menu button.p5 { background: #1d2736; }
@@ -214,3 +215,15 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 #map-bar .map-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 #map-bar .map-chip { font: 600 13px system-ui, sans-serif; padding: 5px 10px; border-radius: 14px; border: 1px solid #3d4a5c; background: transparent; color: #8b97a6; cursor: pointer; }
 #map-bar .map-chip.on { background: #1f6feb33; border-color: #3d8bff; color: #e8f1ff; }
+
+/* Photo mode (K3): only the picture and the hint bar. */
+body.photo > :not(#game):not(#photo-bar):not(#console) { visibility: hidden !important; }
+#photo-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 60;
+  max-width: calc(100vw - 32px); font: 12px/1.4 system-ui, sans-serif; color: #fff;
+  background: #000a; padding: 6px 12px; border-radius: 6px; text-align: center; pointer-events: none;
+}
+#garage-menu .gm-swatch { width: 26px; height: 26px; min-width: 26px; padding: 0; border-radius: 50%; background: var(--c, #333); border: 2px solid #fff3; }
+#garage-menu .gm-swatch:not([style]) { width: auto; border-radius: 13px; padding: 0 10px; }
+#garage-menu .gm-swatch.on { border-color: #fff; box-shadow: 0 0 0 2px #3aa0ff; }
+#garage-menu .gm-look .gm-slot { grid-template-columns: 100px 1fr; }

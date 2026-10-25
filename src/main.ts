@@ -10,6 +10,8 @@ import { Input } from './input/input.ts';
 import { isTouchDevice, pickQuality } from './quality.ts';
 import { CarEffects } from './render/carEffects.ts';
 import { ChaseCamera } from './render/chaseCamera.ts';
+import { applyLook, type Look } from './vehicle/looks.ts';
+import { PhotoMode } from './render/photoMode.ts';
 import { createMaterials } from './render/materials.ts';
 import { PbrTextures } from './render/pbr/pbrTextures.ts';
 import { registerTextureCommands } from './render/pbr/texCommands.ts';
@@ -92,11 +94,12 @@ import { StyleScore } from './game/score.ts';
 import { StyleTracker } from './game/style.ts';
 import { StyleFeed } from './ui/styleFeed.ts';
 import { Game } from './game/game.ts';
-import { applyParts, carStats, type PartLevels } from './game/workshop.ts';
+import { applyParts, applySpec, carStats, type PartLevels, type Spec } from './game/workshop.ts';
 import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';
 import { distanceToPath } from './game/events/runner.ts';
 import { BarrierView } from './game/events/barriers.ts';
+import { JumpRampView, placeJumpRamps, registerJumpCommands } from './world/jumpRamps.ts';
 import type { PropHit } from './world/props.ts';
 
 const TILES_URL: string = import.meta.env.VITE_TILES_URL ?? '/tiles';
@@ -350,6 +353,9 @@ async function boot() {
   const telemetry = new Telemetry(recorder);
   const replay = new ReplayPlayer(recorder, view.camera, cam, view.renderer.domElement);
   registerReplayCommands(recorder, replay, telemetry);
+  const photo = new PhotoMode(view.camera, view.renderer.domElement);
+  photo.registerCommands(() => ip);
+  photo.onToggle = (on) => { if (!on) cam.snap(); };
   // Out of trouble: automatic reset when flipped or wedged, and a rewind of a few seconds.
   const rescue = new Rescue();
   const rewind = () => {
@@ -421,9 +427,12 @@ async function boot() {
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   // Fitted parts (game/workshop.ts) are written over each car's tuning; the game is built further down.
   let partsOf: (id: string) => PartLevels = () => ({});
+  let specOf: (id: string) => Spec = () => 'street';
+  let lookOf: (id: string) => Look | undefined = () => undefined;
   const garage = new Garage({
     car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm),
-    afterApply: (spec) => applyParts(partsOf(spec.id)),
+    afterApply: (spec) => { applySpec(specOf(spec.id)); applyParts(partsOf(spec.id)); },
+    onModel: (spec) => { const l = lookOf(spec.id); if (l) applyLook(carView, l); },
   });
   registerGarageCommands(garage);
   registerCommand({
@@ -493,8 +502,14 @@ async function boot() {
   let addressBook: Promise<AddressBook | undefined> | undefined;
   const barriers = new BarrierView(RAPIER, world);
   view.scene.add(barriers.root);
+  // Jump ramps (W3): placed from the graph; the traffic leaves their streets out.
+  const jumpRamps = new JumpRampView(RAPIER, world);
+  jumpRamps.set(placeJumpRamps(graph));
+  view.scene.add(jumpRamps.root);
+  for (const r of jumpRamps.ramps) traffic.sim.closed.add(r.edge);
+  registerJumpCommands(jumpRamps, () => ip, (x, z, h) => teleport(x, z, h));
   const game = new Game({
-    rivals, barriers, police,
+    rivals, barriers, police, ramps: jumpRamps.ramps,
     destination: async (near, min, max) => {
       addressBook ??= loadAddresses(`${import.meta.env.BASE_URL}data/addresses.json`);
       const book = await addressBook;
@@ -527,6 +542,13 @@ async function boot() {
     groundAt: (x, z) => graph.snap(x, z, 80)?.y,
   });
   partsOf = (id) => game.workshop?.parts(id) ?? {};
+  specOf = (id) => game.workshop?.spec(id) ?? 'street';
+  lookOf = (id) => game.workshop?.look(id);
+  if (game.workshop) {
+    const shop = game.workshop;
+    shop.onLook = () => applyLook(carView, shop.look());
+    shop.onLook();
+  }
   // The car from the save, with its parts.
   if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
   else garage.retune();
@@ -588,6 +610,8 @@ async function boot() {
     last = now;
     input.update(dt);
     for (const e of input.takeEvents()) {
+      if (photo.active) { if (e === 'photo') photo.toggle(false); continue; }
+      if (e === 'photo' && !menu.open && !game.overlay && !replay.active) { photo.toggle(true, ip); continue; }
       // The open menu reads the gamepad itself and eats the keyboard.
       if (menu.open || game.overlay) { if (e === 'interact' && game.hud.cardOpen) game.interact(); continue; }
       if (e === 'menu' && !debug.open) menu.toggle(true);
@@ -613,7 +637,7 @@ async function boot() {
       if (e === 'time') view.daylight.nextPreset();
     }
     menu.poll(dt);
-    const paused = menu.open;
+    const paused = menu.open || photo.active;
 
     // Hold the car until the ground under it exists.
     perf.begin('stream');
@@ -788,7 +812,8 @@ async function boot() {
     cam.motion.yaw = car.body.angvel().y;
     cam.stick.x = paused ? 0 : input.look.x;
     cam.stick.y = paused ? 0 : input.look.y;
-    if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
+    if (photo.active) photo.update(dt, ip);
+    else if (!rs) cam.update(ip, iq, car.speed, car.boosting, dt, car.gear === -1 && car.speed < -1, drive.lookBack);
     // Style moves and their combo, while really driving.
     if (worldReady && !rs && !paused && !debugState.frozen) {
       style.update({ dt: dt * debugState.timeScale, x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, heading: car.heading(), airborne: car.airborne, airTime: car.airTime, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x }, traffic.sim.agents);
@@ -845,6 +870,7 @@ async function boot() {
     view.renderer.info.reset();
     water.update(dt);
     view.render(dt, Math.min(1, Math.abs(car.speed) / 70), boostFx);
+    photo.takeShot();
     perf.gpuEnd();
     perf.end('render');
 

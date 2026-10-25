@@ -140,6 +140,8 @@ export class TrafficSim {
   density = 0.7;
   /** Event route (V1): traffic there is thinned to this share, and the whole field to eventDensity. */
   thinOut?: (x: number, z: number) => boolean;
+  /** Edges the traffic leaves out (jump ramps on them). */
+  readonly closed = new Set<number>();
   thinKeep = 0.2;
   eventDensity = 0.7;
   maxAgents: number;
@@ -261,7 +263,7 @@ export class TrafficSim {
     const candidates: Edge[] = [];
     let total = 0;
     this.graph.forEachEdgeNear(p.x, p.z, this.spawnMax, (e) => {
-      if (!carries(e) || e.length < 15) return;
+      if (!carries(e) || e.length < 15 || this.closed.has(e.id)) return;
       candidates.push(e);
       total += e.length * (e.rank >= 5 ? 2 : 1);
     });
@@ -446,7 +448,7 @@ export class TrafficSim {
     const options: { lane: Lane; w: number }[] = [];
     for (const id of this.adj[n]) {
       const e = this.graph.edges[id];
-      if (e === a.edge || !carries(e)) continue;
+      if (e === a.edge || !carries(e) || this.closed.has(e.id)) continue;
       const dir: 1 | -1 = e.a === n ? 1 : -1;
       if (e.oneway && dir < 0) continue;
       const lane = { edge: e, dir };

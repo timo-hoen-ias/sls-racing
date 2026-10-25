@@ -6,7 +6,7 @@ import type { CarPhysics } from './carPhysics.ts';
 // Decided from the road graph (on a carriageway or not, road class) and the tile ground class.
 // Sets the per-wheel grip and rolling drag on the car, and reports rumble, dust and kerb strikes.
 
-export type SurfaceKind = 'asphalt' | 'pflaster' | 'gehweg' | 'fussweg' | 'schotter' | 'gras' | 'acker' | 'waldboden' | 'wasser';
+export type SurfaceKind = 'asphalt' | 'pflaster' | 'gehweg' | 'fussweg' | 'feldweg' | 'schotter' | 'gras' | 'acker' | 'waldboden' | 'wasser';
 
 export interface SurfaceSpec {
   label: string;
@@ -22,6 +22,8 @@ export interface SurfaceSpec {
   squeal: number;
   /** Colour of the dust/spray thrown up, if any. */
   dust?: string;
+  /** Side grip of the rear wheels relative to `grip` (below 1: the tail steps out under power, rally style). */
+  rearSide?: number;
 }
 
 export const SURFACES: Record<SurfaceKind, SurfaceSpec> = {
@@ -30,6 +32,9 @@ export const SURFACES: Record<SurfaceKind, SurfaceSpec> = {
   gehweg: { label: 'Gehweg', grip: 0.95, rolling: 0.004, rumble: 0.12, crunch: 0, squeal: 0.9 },
   // Paved footpath away from the street: like a pavement, but no kerb on the way there.
   fussweg: { label: 'Fußweg', grip: 0.95, rolling: 0.004, rumble: 0.14, crunch: 0, squeal: 0.9 },
+  // Feldweg (track with wheel ruts): loose but predictable, the tail steps out under power and comes back
+  // (rally); little rolling drag so the car keeps its speed. feldweg.* commands.
+  feldweg: { label: 'Feldweg', grip: 0.8, rolling: 0.012, rumble: 0.28, crunch: 0.9, squeal: 0, dust: '#a89272', rearSide: 0.86 },
   schotter: { label: 'Schotter', grip: 0.62, rolling: 0.035, rumble: 0.4, crunch: 1, squeal: 0, dust: '#b8a888' },
   gras: { label: 'Gras', grip: 0.5, rolling: 0.1, rumble: 0.3, crunch: 0.45, squeal: 0, dust: '#6f7f43' },
   acker: { label: 'Acker', grip: 0.5, rolling: 0.14, rumble: 0.55, crunch: 0.6, squeal: 0, dust: '#8a6f4e' },
@@ -41,7 +46,9 @@ export const SURFACES: Record<SurfaceKind, SurfaceSpec> = {
 const PATH_SURFACE: SurfaceKind[] = ['asphalt', 'asphalt', 'asphalt', 'pflaster', 'fussweg', 'fussweg', 'schotter', 'fussweg'];
 
 /** Carriageway half width of an edge, with a little margin. */
-const halfWidth = (e: Edge) => e.width / 2 + 0.3;
+const halfWidth = (e: Edge) => e.width / 2 + (e.field ? FIELD_VERGE : 0.3);
+/** A Feldweg's grassy edge still drives like the way (no sudden drag when a wheel runs wide), metres. */
+const FIELD_VERGE = 0.8;
 /** Urban streets with a raised kerb along them (graphs without pavement sides: by class). */
 const KERBED = (rank: number) => rank >= 2 && rank <= 7;
 /** Whether the edge has a kerb and pavement on the side of (x, z) (graph field k, see pipeline kerbs.ts). */
@@ -59,8 +66,8 @@ export function classify(graph: RoadGraph, groundAt: (x: number, z: number) => n
   const s = graph.snap(x, z, 8);
   if (s && s.dist <= halfWidth(s.edge)) {
     const rank = s.edge.rank;
-    // Pedestrian zones and living streets in Saarlouis are paved with setts; tracks are gravel.
-    return { kind: rank === 0 ? 'schotter' : rank === 2 ? 'pflaster' : 'asphalt', rank };
+    // Pedestrian zones and living streets in Saarlouis are paved with setts; unpaved tracks are Feldwege.
+    return { kind: s.edge.field ? 'feldweg' : rank === 2 ? 'pflaster' : 'asphalt', rank };
   }
   // Footpaths, cycle paths and steps (not part of the network), by their surface.
   const path = graph.pathNear(x, z, 6);
@@ -124,6 +131,7 @@ export class RoadSurface {
       }
       const s = SURFACES[this.kinds[i]];
       car.wheelGrip[i] = s.grip * (extraGrip[i] ?? 1);
+      car.wheelSide[i] = i >= 2 ? s.rearSide ?? 1 : 1;
       car.wheelRolling[i] = s.rolling;
       car.wheelRumble[i] = s.rumble;
       if (w.contact) { rumble = Math.max(rumble, s.rumble); crunch = Math.max(crunch, s.crunch); squeal += s.squeal; n++; }

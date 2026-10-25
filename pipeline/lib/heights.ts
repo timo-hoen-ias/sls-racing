@@ -1,5 +1,7 @@
 // Terrain height and road heights shared by the build and the drive test, so both see the same world.
 import { bridgeDecks } from './decks.ts';
+import { demoteRoughFieldPaths } from './fieldWays.ts';
+import { isDrivable } from './roads.ts';
 import { roadProfiles } from './profiles.ts';
 import { laserSampler } from './laser.ts';
 import type { Polygon, Way } from './osm.ts';
@@ -53,6 +55,8 @@ export const missing = (what: string, dir: string, regions: RegionConfig[]) =>
 export function roadHeights(ways: Way[], regions: RegionConfig[], height: (e: number, n: number) => number, log = (_: string) => {}) {
   const dom = regions.some((r) => r.laser?.dom1?.length) ? laserSampler(paths.dom1) : undefined;
   if (dom && !dom.tiles) throw missing('DOM1', paths.dom1, regions);
+  const rough = demoteRoughFieldPaths(ways, height, (w) => isDrivable(w.tags));
+  log(`Feldwege: ${rough.steep + rough.slope + rough.crossing} unpaved paths left as paths (${rough.steep} steep, ${rough.slope} on a steep slope, ${rough.crossing} crossing a road without a junction)`);
   const d = bridgeDecks(ways, dom, height);
   if (dom) log(`Bridges: ${d.measured}/${d.bridges} decks measured from DOM1, max. ${d.maxRise.toFixed(1)} m above the straight span`);
   const p = roadProfiles(ways, height, d.anchors);

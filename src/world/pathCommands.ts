@@ -10,15 +10,15 @@ export interface PathCommandContext {
   graph: RoadGraph;
   scene: THREE.Scene;
   pos: () => { x: number; z: number };
-  /** Heading in degrees, as the tp command takes it. */
-  teleport: (x: number, z: number, heading?: number) => void;
+  /** Heading in radians (game heading); road (default) moves the car onto the nearest street. */
+  teleport: (x: number, z: number, heading?: number, road?: boolean) => void;
 }
 
 const KIND_DE: Record<PathKind, string> = { footway: 'Fußweg', path: 'Pfad', cycleway: 'Radweg', bridleway: 'Reitweg', steps: 'Treppe' };
 const KIND_COLOR: Record<PathKind, number> = { footway: 0x33ddff, path: 0x99cc33, cycleway: 0xff66cc, bridleway: 0xcc9933, steps: 0xffffff };
 /** Roads closed to cars in the overlay. */
 const CLOSED_COLOR = 0xff3322;
-const SURFACE_DE = Object.fromEntries(Object.entries({ asphalt: 'Asphalt', asphalt_worn: 'Asphalt', asphalt_cracked: 'Asphalt (rissig)', sett: 'Kopfsteinpflaster', gravel: 'Kies/Schotter', plaza: 'Pflaster' }).map(([k, v]) => [SURFACE[k as keyof typeof SURFACE], v]));
+const SURFACE_DE = Object.fromEntries(Object.entries({ asphalt: 'Asphalt', asphalt_worn: 'Asphalt', asphalt_cracked: 'Asphalt (rissig)', sett: 'Kopfsteinpflaster', field: 'Feldweg', gravel: 'Kies/Schotter', plaza: 'Pflaster' }).map(([k, v]) => [SURFACE[k as keyof typeof SURFACE], v]));
 
 const km = (m: number) => `${(m / 1000).toFixed(1).replace('.', ',')} km`;
 
@@ -47,6 +47,47 @@ export function registerPathCommands(c: PathCommandContext) {
         near ? `Nächster Weg: ${describePath(near.path, near.dist)}` : 'Kein Weg im Umkreis von 40 m',
         road ? `Nächste Straße: ${road.edge.name || 'ohne Namen'}, ${road.edge.noCars ? 'für Autos gesperrt' : 'frei für Autos'}, ${road.dist.toFixed(1)} m entfernt` : 'Keine Straße im Umkreis von 30 m',
       ].join('\n');
+    },
+  });
+
+  // Feldwege: unpaved tracks (and unpaved paths outside town built as tracks, pipeline/lib/fieldWays.ts).
+  const fields = () => g.edges.filter((e) => e.field);
+  registerCommand({
+    name: 'feldweg.info',
+    help: 'Feldwege (unbefestigte Wege mit Reifenspuren): Anzahl, Länge und der nächste',
+    run: () => {
+      const f = fields();
+      const pos = c.pos();
+      const near = g.snap(pos.x, pos.z, 60);
+      const widths = f.map((e) => e.width).sort((a, b) => a - b);
+      return [
+        `Feldwege: ${f.length} Abschnitte, ${km(f.reduce((s, e) => s + e.length, 0))}, Breite ${widths.length ? `${widths[0].toFixed(1)}–${widths[widths.length - 1].toFixed(1)} m` : '–'}${f.length ? '' : ' (Welt neu bauen)'}`,
+        near ? `Hier: ${near.edge.field ? 'Feldweg' : 'Straße'} ${near.edge.name || 'ohne Namen'}, ${near.edge.width.toFixed(1)} m breit, ${near.dist.toFixed(1)} m entfernt` : 'Keine Straße im Umkreis von 60 m',
+        'Grip/Heck: feldweg.grip, feldweg.heck · Look: feldweg.ruts, feldweg.grass, tex.road field',
+      ].join('\n');
+    },
+  });
+  registerCommand({
+    name: 'feldweg.tp',
+    help: 'Zum nächsten Feldweg teleportieren (weit = zu einem langen Feldweg in mindestens 300 m)',
+    args: '[weit]',
+    complete: () => ['weit'],
+    run: ([far]) => {
+      const pos = c.pos();
+      let best: { x: number; z: number; dx: number; dz: number; d: number; e: Edge } | undefined;
+      for (const e of fields()) {
+        if (far && e.length < 250) continue;
+        const p = e.p;
+        for (let i = 0; i + 1 < p.length / 3; i++) {
+          const x = (p[i * 3] + p[i * 3 + 3]) / 2, z = (p[i * 3 + 2] + p[i * 3 + 5]) / 2;
+          const d = Math.hypot(x - pos.x, z - pos.z);
+          if (d > (far ? 300 : 3) && (!best || d < best.d)) best = { x, z, dx: p[i * 3 + 3] - p[i * 3], dz: p[i * 3 + 5] - p[i * 3 + 2], d, e };
+        }
+      }
+      if (!best) return 'Kein Feldweg in der Welt (Welt neu bauen)';
+      // Exactly onto the way (a road teleport would snap to the nearest street).
+      c.teleport(best.x, best.z, Math.atan2(best.dx, -best.dz), false);
+      return `Teleport zum Feldweg ${best.e.name || 'ohne Namen'} (${best.e.width.toFixed(1)} m breit, ${best.e.length.toFixed(0)} m lang), ${best.d.toFixed(0)} m entfernt`;
     },
   });
 
@@ -104,8 +145,8 @@ export function registerPathCommands(c: PathCommandContext) {
       }
       const b = best as { x: number; z: number; dx: number; dz: number; d: number; text: string } | undefined;
       if (!b) return `Keine ${kind === 'closed' ? 'gesperrte Straße' : KIND_DE[kind as PathKind]} in der Welt`;
-      // Facing along the path (game heading: atan2(dx, -dz)), in degrees as tp takes it.
-      c.teleport(b.x, b.z, (Math.atan2(b.dx, -b.dz) * 180) / Math.PI);
+      // Facing along the path (game heading: atan2(dx, -dz), radians).
+      c.teleport(b.x, b.z, Math.atan2(b.dx, -b.dz));
       return `Teleport zu ${b.text}, ${b.d.toFixed(0)} m entfernt`;
     },
   });

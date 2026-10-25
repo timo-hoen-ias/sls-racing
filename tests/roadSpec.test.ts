@@ -53,7 +53,8 @@ describe('game road profile (S1)', () => {
       expect(roadSection({ highway: 'residential', 'sls:street': '9' })!.width).toBeCloseTo(6.6);
       // Never narrower than the real road, however tight the street.
       expect(roadSection({ highway: 'residential', 'sls:street': '7' })!.width).toBeCloseTo(6);
-      expect(roadSection({ highway: 'track' })!.width).toBeCloseTo(3);
+      // Feldwege are 4 m in both profiles (FIELD_WAY), not widened further.
+      expect(roadSection({ highway: 'track' })!.width).toBeCloseTo(4);
     } finally {
       setRoadProfile('real');
     }

@@ -22,9 +22,15 @@ describe('road surface', () => {
     expect(classify(g, () => undefined, 50, 30).kind).toBe('gras');
   });
 
-  it('paves pedestrian zones with setts and tracks with gravel', () => {
+  it('paves pedestrian zones with setts; unpaved tracks are Feldwege', () => {
     expect(classify(graph(2), () => Ground.urban, 50, 1).kind).toBe('pflaster');
-    expect(classify(graph(0), () => Ground.grass, 50, 0.5).kind).toBe('schotter');
+    const field = new RoadGraph({ v: 1, names: [''], nodes: [0, 0, 0, 100, 0, 0], edges: [{ a: 0, b: 1, n: 0, c: 0, w: 4, f: 1, p: [0, 0, 0, 100, 0, 0] }] });
+    expect(classify(field, () => Ground.forest, 50, 0.5).kind).toBe('feldweg');
+    // The grassy edge still drives like the way, beyond it the forest floor.
+    expect(classify(field, () => Ground.forest, 50, 2.6).kind).toBe('feldweg');
+    expect(classify(field, () => Ground.forest, 50, 4).kind).toBe('waldboden');
+    // A paved farm road (no f flag) is asphalt.
+    expect(classify(graph(0), () => Ground.grass, 50, 0.5).kind).toBe('asphalt');
   });
 
   it('slows the car and costs grip on grass', () => {

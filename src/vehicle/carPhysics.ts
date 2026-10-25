@@ -92,6 +92,8 @@ export class CarPhysics {
   wheelGrip = [1, 1, 1, 1];
   /** Extra rolling resistance per wheel as a share of its load (grass, gravel …). */
   wheelRolling = [0, 0, 0, 0];
+  /** Side grip factor per wheel on top of wheelGrip (loose rear on Feldwege, roadSurface.ts rearSide). */
+  wheelSide = [1, 1, 1, 1];
   /** Surface roughness per wheel 0..1: shakes the car at speed (cobbles, fields). */
   wheelRumble = [0, 0, 0, 0];
   /** Driving aids; see ASSIST_PRESETS. */
@@ -506,7 +508,7 @@ export class CarPhysics {
       const mu = loadedMu(spec, loads[i], this.k.refLoad) * this.wheelGrip[i] * (i >= 2 ? ty.rearMu : 1);
       // The weather's grip, traction and side factors describe the same road, so they do not stack.
       capX[i] = mu * loads[i] * Math.min(sf.grip, sf.traction) * tractionBoost;
-      capY[i] = mu * loads[i] * Math.min(sf.grip, sf.side) * (i >= 2 ? this.rearSide : 1);
+      capY[i] = mu * loads[i] * Math.min(sf.grip, sf.side) * (i >= 2 ? this.rearSide : 1) * this.wheelSide[i];
     }
 
     // Centre split, then a limited-slip diff per axle.

@@ -52,6 +52,8 @@ export function registerTextureCommands(tex: PbrTextures) {
   registerValue('tex.macro', 'Großflächige Variation (Helligkeit, Abnutzung, Flicken) 0..2', () => u.uPbrMacro.value, (v) => (u.uPbrMacro.value = v), [0, 2]);
   registerValue('tex.groundtint', 'Gelände: 0 = Scanfarben, 1 = Scan-Details in der Kartenfarbe (Wiese grün, Acker gelblich)', () => u.uPbrGroundTint.value, (v) => (u.uPbrGroundTint.value = v), [0, 1]);
   registerValue('tex.wear', 'Straßenabnutzung: 0 = alles neu, 1 = wie gebaut, 2 = alles verschlissen', () => u.uPbrWear.value, (v) => (u.uPbrWear.value = v), [0, 2]);
+  registerValue('feldweg.ruts', 'Feldweg: Tiefe der Reifenspuren in der Schattierung (0 = flach, 1 = normal, 2 = tief)', () => u.uPbrFieldRuts.value, (v) => (u.uPbrFieldRuts.value = v), [0, 2]);
+  registerValue('feldweg.grass', 'Feldweg: Gras auf dem Mittelstreifen und am Rand (0 = blanke Erde, 1 = aus der Karte, 2 = zugewachsen)', () => u.uPbrFieldGrass.value, (v) => (u.uPbrFieldGrass.value = v), [0, 2]);
   const surfaces = Object.keys(SURFACE);
   registerCommand({
     name: 'tex.road',
@@ -65,7 +67,7 @@ export function registerTextureCommands(tex: PbrTextures) {
         u.uPbrRoadForce.value = SURFACE[v as keyof typeof SURFACE];
       }
       const f = u.uPbrRoadForce.value;
-      return `Straßenbelag: ${f < 0 ? 'auto' : STREET.sets[f].name}`;
+      return `Straßenbelag: ${f < 0 ? 'auto' : f === SURFACE.field ? 'field (Feldweg)' : STREET.sets[f].name}`;
     },
   });
   registerCommand({

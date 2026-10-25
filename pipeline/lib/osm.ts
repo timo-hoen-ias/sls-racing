@@ -1,4 +1,5 @@
 // Minimal reader for Overpass JSON ("out body" with nodes, ways and relations).
+import { promoteFieldPaths } from './fieldWays.ts';
 
 export interface OsmJson {
   elements: (
@@ -65,6 +66,8 @@ export interface OsmData {
   /** Other tagged point features (street furniture, signals, bus stops), projected. */
   points: { id: number; tags: Record<string, string>; e: number; n: number }[];
   boundary?: [number, number][][];
+  /** Unpaved paths outside town built as Feldwege (highway=track, fieldWays.ts). */
+  fieldPaths?: number;
 }
 
 export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [number, number]): OsmData {
@@ -108,7 +111,8 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
     const inners = rings('inner');
     for (const outer of outers) polygons.push({ id: el.id, tags, outer, holes: inners });
   }
-  return { ways, polygons, trees, points, boundary };
+  const fieldPaths = promoteFieldPaths(ways, polygons);
+  return { ways, polygons, trees, points, boundary, fieldPaths };
 }
 
 function isArea(tags: Record<string, string>) {

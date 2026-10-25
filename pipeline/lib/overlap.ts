@@ -15,8 +15,12 @@ const APART = 3;
 /** Narrowest half width a road keeps. */
 const MIN_HALF = 1.2;
 const CELL = 16;
+/** Width of the collision bevel beyond a road's edge (roads.ts), which must not reach onto a road at another height. */
+const BEVEL = 1;
+/** Along-way distance from which a way's own stretch is another leg (hairpin), not the road itself (m). */
+const SELF_APART = 6;
 
-interface Seg { way: Way; e0: number; n0: number; y0: number; e1: number; n1: number; y1: number; hw: number }
+interface Seg { way: Way; e0: number; n0: number; y0: number; e1: number; n1: number; y1: number; hw: number; d: number }
 
 export interface HalfWidths { dist: Float32Array; left: Float32Array; right: Float32Array }
 
@@ -29,7 +33,7 @@ export function halfWidths(ways: Way[], height: (e: number, n: number) => number
     const hw = roadWidth(way.tags)! / 2;
     for (let i = 1; i < ring.length; i++) {
       const [a, b] = [ring[i - 1], ring[i]];
-      const s: Seg = { way, e0: a.e, n0: a.n, y0: a.y, e1: b.e, n1: b.n, y1: b.y, hw };
+      const s: Seg = { way, e0: a.e, n0: a.n, y0: a.y, e1: b.e, n1: b.n, y1: b.y, hw, d: a.dist };
       for (let cx = Math.floor((Math.min(a.e, b.e) - hw) / CELL); cx <= Math.floor((Math.max(a.e, b.e) + hw) / CELL); cx++)
         for (let cy = Math.floor((Math.min(a.n, b.n) - hw) / CELL); cy <= Math.floor((Math.max(a.n, b.n) + hw) / CELL); cy++) {
           const k = `${cx}_${cy}`;
@@ -50,16 +54,21 @@ export function halfWidths(ways: Way[], height: (e: number, n: number) => number
       for (let cx = Math.floor((p.e - reach) / CELL); cx <= Math.floor((p.e + reach) / CELL); cx++)
         for (let cy = Math.floor((p.n - reach) / CELL); cy <= Math.floor((p.n + reach) / CELL); cy++)
           for (const s of cells.get(`${cx}_${cy}`) ?? []) {
-            if (s.way === way) continue;
+            // A way meets itself again in a hairpin or a loop: a stretch further along that lies beside this
+            // point (not ahead of it) is the other leg and counts like another road.
+            const self = s.way === way;
+            if (self && Math.abs(s.d - p.dist) < SELF_APART) continue;
             const dx = s.e1 - s.e0, dy = s.n1 - s.n0;
             const t = Math.min(1, Math.max(0, ((p.e - s.e0) * dx + (p.n - s.n0) * dy) / (dx * dx + dy * dy || 1)));
             const qe = s.e0 + dx * t - p.e, qn = s.n0 + dy * t - p.n;
-            if (Math.hypot(qe, qn) > hw + s.hw + 0.3) continue;
+            if (Math.hypot(qe, qn) > hw + s.hw + BEVEL + 0.3) continue;
             const dyH = Math.abs(s.y0 + (s.y1 - s.y0) * t - p.y);
             if (dyH > APART || dyH < (linked(way, s.way) ? LEVEL : LEVEL_APART)) continue;
             // Across the road (left positive), as the road geometry offsets.
             const lateral = -qe * p.dy + qn * p.dx;
-            const share = Math.max(MIN_HALF, Math.abs(lateral) * (hw / (hw + s.hw)) - 0.1);
+            if (self && Math.abs(lateral) < hw) continue;
+            // The upper road's collision bevel (roads.ts) reaches BEVEL beyond its edge: leave room for it.
+            const share = Math.max(MIN_HALF, Math.max(0, Math.abs(lateral) - BEVEL) * (hw / (hw + s.hw)) - 0.1);
             if (lateral >= 0) left[i] = Math.min(left[i], share);
             else right[i] = Math.min(right[i], share);
           }

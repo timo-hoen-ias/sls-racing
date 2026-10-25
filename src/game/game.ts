@@ -23,6 +23,7 @@ import type { CarPhysics } from '../vehicle/carPhysics.ts';
 import { BUST, type PlayerNow, type Police } from './police.ts';
 import { WantedHud } from '../ui/wantedHud.ts';
 import { applySignal, type DailySignal, describeTask, drawDaily, taskGoal, today } from './daily.ts';
+import { Collectibles, DISTRICT_BONUS, placeTokens, TOKEN_REWARD } from './collectibles.ts';
 import { Discovery, DISTRICT_REWARD, type District, type Viewpoint, VIEWPOINT_REWARD } from './discovery.ts';
 import { GhostRecorder, type GhostRun, ghostStore, GhostView, type Pose } from './ghost.ts';
 
@@ -192,6 +193,7 @@ export class Game {
       const r = await fetch(`${this.d.tilesUrl}/districts.json`);
       if (r.ok && r.headers.get('content-type')?.includes('json')) this.discovery.districts = ((await r.json()) as { districts?: District[] }).districts ?? [];
     } catch { /* optional file (older worlds) */ }
+    this.collectibles.set(placeTokens(this.d.graph, this.discovery.districts));
     console.info(`[events] ${this.events.length} Events in ${Math.round(performance.now() - t)} ms`);
   }
 
@@ -340,6 +342,7 @@ export class Game {
       this.trackPlace(car);
       this.updateGhost();
       if (!this.runner.busy) this.discovery.update(car.x, car.z, car.speed);
+      this.collectibles.update(this.runner.busy ? 0 : dt, this.runner.busy ? Infinity : car.x, car.z);
       if (car.speed * 3.6 > 200 && (this.speedTick -= dt) <= 0) { this.speedTick = 0.5; this.signal({ kind: 'speed', kmh: car.speed * 3.6 }); }
       if (this.runner.racing && this.runner.state === 'running' && this.runner.event?.path && distanceToPath(this.runner.event.path, car.x, car.z) > 150) this.runner.abort('Strecke verlassen');
       this.prev = { x: car.x, z: car.z };
@@ -398,6 +401,8 @@ export class Game {
   private speedTick = 0;
   /** Districts and viewpoints to find (W5). */
   readonly discovery = new Discovery();
+  /** Hidden tokens in every district (E7). */
+  readonly collectibles = new Collectibles();
 
   private wireDiscovery() {
     const { toast, sfx } = this.d;
@@ -410,6 +415,20 @@ export class Game {
       toast(`Stadtteil entdeckt: ${dd.name} (${n}/${total})`, 2.5);
       sfx.play('discover', 0.8);
       this.progress.reward(DISTRICT_REWARD.xp, DISTRICT_REWARD.credits, dd.name);
+    };
+    const col = this.collectibles;
+    col.found = new Set(this.save.data.collected);
+    this.d.scene.add(col.root);
+    col.onPick = (t, n, total, districtDone) => {
+      this.save.data.collected = [...col.found];
+      this.save.touch();
+      sfx.play('point', 0.9);
+      this.progress.reward(TOKEN_REWARD.xp, TOKEN_REWARD.credits, 'Sammelstück');
+      if (districtDone) {
+        toast(`Alle Sammelstücke in ${t.district}! (${n}/${total})`, 2.5);
+        this.progress.reward(DISTRICT_BONUS.xp, DISTRICT_BONUS.credits, t.district);
+        sfx.play('medal', 0.7);
+      } else toast(`Sammelstück ${n}/${total}`, 1.5);
     };
     disc.onViewpoint = (v, n, total) => {
       keep();
@@ -644,6 +663,20 @@ export class Game {
       return [`Stadtteile ${disc.districtsFound}/${disc.districts.length} · Aussichtspunkte ${disc.viewpointsFound}/${disc.viewpoints.length}`,
         ...disc.districts.map((dd) => row(`district:${dd.name}`, dd.name)), ...disc.viewpoints.map((v) => row(`view:${v.id}`, v.name))].join('\n');
     } });
+    registerCommand({ name: 'collect.list', help: 'Sammelstücke je Stadtteil: gefunden/alle', run: () => {
+      const col = this.collectibles;
+      const per = new Map<string, [number, number]>();
+      for (const t of col.tokens) { const v = per.get(t.district) ?? [0, 0]; v[1]++; if (col.found.has(t.id)) v[0]++; per.set(t.district, v); }
+      return [`Sammelstücke ${col.count}/${col.tokens.length}`, ...[...per].map(([k, [a, b]]) => `${k}: ${a}/${b}`)].join('\n');
+    } });
+    registerCommand({ name: 'collect.next', help: 'Navi zum nächsten nicht gefundenen Sammelstück (Debug)', run: () => {
+      const p = pos();
+      const t = this.collectibles.tokens.filter((x) => !this.collectibles.found.has(x.id)).sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z))[0];
+      if (!t) return 'alle gefunden';
+      this.d.nav.setDestination(t.x, t.z, p.x, p.z);
+      return `${t.district}: ${Math.round(Math.hypot(t.x - p.x, t.z - p.z))} m`;
+    } });
+    registerCommand({ name: 'collect.reset', help: 'Gefundene Sammelstücke vergessen', run: () => { this.collectibles.found.clear(); this.save.data.collected = []; this.save.touch(); return 'alle wieder versteckt'; } });
     registerCommand({ name: 'discover.reset', help: 'Entdeckte Stadtteile und Aussichtspunkte vergessen', run: () => { this.discovery.found.clear(); this.save.data.discovered = []; this.save.touch(); return 'alles wieder unentdeckt'; } });
     registerToggle('ghost', 'Geist der eigenen Bestfahrt in Sprints und Rundkursen', () => this.ghosts, (v) => (this.ghosts = v));
     registerCommand({ name: 'ghost.clear', help: 'Gespeicherte Geister löschen (alle oder eines)', args: '[event-id]', run: ([id]) => { ghostStore.clear(id); return id ? `Geist ${id} gelöscht` : 'alle Geister gelöscht'; } });

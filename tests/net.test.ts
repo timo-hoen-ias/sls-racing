@@ -290,3 +290,54 @@ describe('server list and Worker routes (O2)', () => {
     expect((await handleNet(new Request('https://x/api/net/servers/saarlouis-1/ws'), net, { key: 'k', name: 'n' })).status).toBe(426);
   });
 });
+
+describe('public online play (O2)', () => {
+  it('filters names and lets anyone in with their own id', async () => {
+    const { cleanName } = await import('../src/net/names.ts');
+    expect(cleanName('  Timo   S. ')).toBe('Timo S.');
+    expect(cleanName('Jürgen_77')).toBe('Jürgen_77');
+    expect(cleanName('x')).toBeUndefined();
+    expect(cleanName('N4Z1 Fahrer')).toBeUndefined();
+    expect(cleanName('<b>hi</b>')).toBeUndefined();
+    expect(cleanName('Heiligenwald')).toBe('Heiligenwald');
+    let seen: Request | undefined;
+    const ns = (fetcher: (req: Request) => Promise<Response>) => ({ idFromName: (n: string) => n, get: () => ({ fetch: (i: Request | string, init?: RequestInit) => fetcher(typeof i === 'string' ? new Request(i, init) : i) }) });
+    const env = {
+      ASSETS: { fetch: async () => new Response('x') }, ACCESS_TEAM: '', ACCESS_AUD: '', ONLINE_PUBLIC: '1',
+      DIRECTORY: ns(async () => Response.json({ id: 'saarlouis-1', name: 'Saarlouis 1' })),
+      LOBBY: ns(async (req) => { seen = req; return new Response('ok'); }),
+    };
+    const ws = (q: string) => new Request(`https://x/api/net/servers/saarlouis-1/ws?${q}`, { headers: { upgrade: 'websocket' } });
+    await worker.fetch(ws('pid=abcdefghijklmnop1234&name=Anna'), env);
+    const k1 = seen!.headers.get('x-sls-key');
+    expect(decodeURIComponent(seen!.headers.get('x-sls-name')!)).toBe('Anna');
+    await worker.fetch(ws('pid=abcdefghijklmnop1234&name=fuck'), env);
+    expect(seen!.headers.get('x-sls-key')).toBe(k1);
+    expect(decodeURIComponent(seen!.headers.get('x-sls-name')!)).toBe('Fahrer');
+    await worker.fetch(ws('pid=zzzzzzzzzzzzzzzz9999&name=Ben'), env);
+    expect(seen!.headers.get('x-sls-key')).not.toBe(k1);
+    // The leaderboards stay shut.
+    expect((await worker.fetch(new Request('https://x/api/me'), env)).status).toBe(503);
+  });
+
+  it('limits floods, chat spam, race spam and opening servers', async () => {
+    const r = room();
+    const a = r.join('a')!, b = r.join('b')!;
+    for (let i = 0; i < 100; i++) r.core.message(a, { t: 's', p: pose(i, 0) });
+    // The hello counted in the same second.
+    expect(r.inbox.get(b)!.filter((m) => m.t === 's').length).toBe(59);
+    r.advance(1000);
+    r.core.message(a, { t: 'chat', text: 'hallo' });
+    r.core.message(a, { t: 'chat', text: 'hallo' });
+    expect(r.inbox.get(b)!.filter((m) => m.t === 'chat').length).toBe(1);
+    r.core.message(a, { t: 'race', event: 'e', name: 'E' });
+    r.core.message(a, { t: 'quit' });
+    r.core.message(a, { t: 'race', event: 'e', name: 'E' });
+    expect(r.core.race).toBeNull();
+    const dir = new Directory({ storage: storage(), acceptWebSocket() {}, getWebSockets: () => [], blockConcurrencyWhile: (f) => f() });
+    const make = (n: string) => dir.fetch(new Request('https://d/create', { method: 'POST', body: JSON.stringify({ name: n }), headers: { 'x-sls-ip': 'ip1' } }));
+    for (const n of ['Eins', 'Zwei', 'Drei']) expect((await make(n)).status).toBe(200);
+    expect((await make('Vier')).status).toBe(429);
+    expect((await dir.fetch(new Request('https://d/create', { method: 'POST', body: JSON.stringify({ name: 'Hitler Rennen' }) }))).status).toBe(400);
+  });
+});

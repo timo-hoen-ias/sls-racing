@@ -35,6 +35,8 @@ export interface BrowserState {
   chat: string[];
   /** Seconds until the race phase ends (gather, start). */
   raceClock?: number;
+  /** The player's name on the servers. */
+  name: string;
 }
 
 export interface BrowserActions {
@@ -48,6 +50,8 @@ export interface BrowserActions {
   go(): void;
   quitRace(): void;
   chat(text: string): void;
+  /** Changes the player's name; throws with the reason when it is not allowed. */
+  rename(name: string): string;
   close(): void;
 }
 
@@ -58,6 +62,8 @@ export class ServerBrowser {
   private foot: HTMLElement;
   private chatInput: HTMLInputElement;
   private nameInput: HTMLInputElement;
+  private playerInput: HTMLInputElement;
+  private nameRow: HTMLElement;
   private nav: PadNav;
   private a: BrowserActions;
   private state: () => BrowserState;
@@ -92,7 +98,21 @@ export class ServerBrowser {
       if (e.key === 'Enter') this.create();
       if (e.key === 'Escape') a.close();
     });
-    this.root.append(head, this.status, this.body, this.foot);
+    this.playerInput = el('input');
+    this.playerInput.maxLength = 16;
+    this.playerInput.placeholder = 'Dein Name';
+    const rename = () => {
+      try { this.playerInput.value = a.rename(this.playerInput.value); this.listError = ''; } catch (e) { this.listError = (e as Error).message; }
+      this.render();
+    };
+    this.playerInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') rename();
+      if (e.key === 'Escape') a.close();
+    });
+    this.nameRow = el('div', 'nm-create nm-name');
+    this.nameRow.append(el('span', '', 'Dein Name'), this.playerInput, button('Übernehmen', rename));
+    this.root.append(head, this.status, this.nameRow, this.body, this.foot);
     parent.append(this.root);
     this.nav = new PadNav(this.root);
     this.nav.onBack = () => {
@@ -108,6 +128,7 @@ export class ServerBrowser {
   show() {
     this.root.hidden = false;
     this.picking = false;
+    this.playerInput.value = this.state().name;
     this.render();
     this.nav.focusFirst();
     if (this.state().status === 'off') void this.refresh();
@@ -121,7 +142,7 @@ export class ServerBrowser {
       this.servers = await this.a.list();
     } catch (e) {
       this.servers = [];
-      this.listError = (e as Error).message;
+      this.listError = `Online-Server nicht erreichbar: ${(e as Error).message}`;
     }
     this.render();
   }
@@ -140,6 +161,7 @@ export class ServerBrowser {
     const focus = buttons().indexOf(document.activeElement as HTMLElement);
     this.status.textContent = s.line;
     this.status.className = `nm-status ${s.status}`;
+    this.nameRow.hidden = s.status !== 'off';
     if (s.status === 'online') this.renderLobby(s);
     else this.renderServers(s);
     if (focus >= 0) (buttons()[Math.min(focus, buttons().length - 1)] ?? this.root.querySelector('button'))?.focus();
@@ -158,7 +180,7 @@ export class ServerBrowser {
     const tools = el('div', 'nm-tools');
     tools.append(button('Aktualisieren', () => void this.refresh()), button('Lokaler Testserver mit Bots', () => this.a.local()));
     this.body.replaceChildren(
-      ...(this.listError ? [el('p', 'nm-note', `Online-Server nicht erreichbar: ${this.listError}. Der lokale Testserver geht trotzdem.`)] : []),
+      ...(this.listError ? [el('p', 'nm-note', `${this.listError}${this.servers.length ? '' : '. Der lokale Testserver geht trotzdem.'}`)] : []),
       ...(rows.length ? rows : this.listError ? [] : [el('p', 'nm-note', 'Suche Server …')]),
       tools,
     );

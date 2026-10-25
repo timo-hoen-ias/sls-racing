@@ -9,14 +9,15 @@ import { findCar } from '../vehicle/cars.ts';
 import type { SportsCarModel } from '../vehicle/sportsCarModel.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
 import { gridSlot } from './grid.ts';
+import { identityQuery, playerName, setPlayerName } from './identity.ts';
 import { type LocalServer, startLocal } from './localServer.ts';
 import { type NetEvent, NetSession, WsTransport } from './netSession.ts';
 import { PoseFlag, POSE_LEN, type RaceInfo, type RoomSummary } from './protocol.ts';
 import { RemoteCars } from './remoteCars.ts';
 
 // Online play in the game (O2): the server browser and lobby, the other players' cars, shared races and the
-// net.* debug commands. Real servers need the Worker behind Cloudflare Access (worker/net.ts); until that is
-// set up the menu says why and the local test server with bots (net.local) shows everything working.
+// net.* debug commands. Real servers are the Worker's Durable Objects (worker/net.ts), public with
+// ONLINE_PUBLIC=1; the local test server with bots (net.local) works without them.
 
 export interface NetPlayDeps {
   R: typeof RAPIER_NS;
@@ -76,6 +77,7 @@ export class NetPlay {
       go: () => this.session.send({ t: 'go' }),
       quitRace: () => this.quitRace(),
       chat: (text) => this.session.send({ t: 'chat', text }),
+      rename: (name) => setPlayerName(name),
       close: () => this.browser.hide(),
     }, () => this.browserState());
     this.session.onEvent = (e) => this.onEvent(e);
@@ -113,18 +115,18 @@ export class NetPlay {
   }
 
   async list() {
-    const r = await this.api<{ servers: RoomSummary[] }>(`/servers${devAs()}`);
+    const r = await this.api<{ servers: RoomSummary[] }>(`/servers${query()}`);
     this.servers = r.servers;
     return r.servers;
   }
 
   create(name: string) {
-    return this.api<RoomSummary>(`/servers${devAs()}`, { method: 'POST', body: JSON.stringify({ name }) });
+    return this.api<RoomSummary>(`/servers${query()}`, { method: 'POST', body: JSON.stringify({ name }) });
   }
 
   join(room: { id: string; name: string }) {
     this.stopLocal();
-    const base = new URL(`${API}/servers/${encodeURIComponent(room.id)}/ws${devAs()}`, location.href);
+    const base = new URL(`${API}/servers/${encodeURIComponent(room.id)}/ws${query()}`, location.href);
     base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
     this.session.connect(new WsTransport(base.href), room.name, this.d.look());
     this.sentLook = '';
@@ -134,7 +136,7 @@ export class NetPlay {
 
   startLocal(bots = this.botCount) {
     this.stopLocal();
-    this.local = startLocal(this.session, { graph: this.d.graph, events: () => this.d.game.events, near: () => this.d.pos() }, 'Du', this.d.look(), bots);
+    this.local = startLocal(this.session, { graph: this.d.graph, events: () => this.d.game.events, near: () => this.d.pos() }, playerName(), this.d.look(), bots);
     this.sentLook = '';
     this.browser.render();
     return `lokaler Testserver mit ${bots} Bots`;
@@ -329,6 +331,7 @@ export class NetPlay {
       line: s.online ? `Verbunden: ${s.roomName} als ${s.me?.name}${s.rtt ? ` · Ping ${Math.round(s.rtt)} ms` : ''}${this.local ? ' · Testmodus' : ''}`
         : s.status === 'connecting' ? `Verbinde mit ${s.roomName} …` : `Nicht verbunden${s.reason && s.reason !== 'verlassen' ? ` (${s.reason})` : ''}. Bis zu 8 Spieler pro Server.`,
       available: this.servers.length > 0,
+      name: playerName(),
       me,
       players: players.map((p) => ({ id: p.id, name: p.name, car: findCar(p.car)?.label ?? p.car, color: p.color, me: p.me, inRace: this.inRace(r) && !!r?.entrants.includes(p.id) })),
       race: r,
@@ -372,6 +375,7 @@ export class NetPlay {
       return this.join(r);
     } });
     registerCommand({ name: 'net.create', help: 'Eigenen Server eröffnen und beitreten', args: '<name>', run: (w) => later(this.create(w.join(' ')).then((r) => this.join(r))) });
+    registerCommand({ name: 'net.name', help: 'Dein Name auf den Online-Servern (gilt ab dem nächsten Beitritt)', args: '[name]', run: (w) => (w.length ? `Name: ${setPlayerName(w.join(' '))}` : playerName()) });
     registerCommand({ name: 'net.leave', help: 'Server verlassen', run: () => this.leave() });
     registerCommand({ name: 'net.local', help: 'Lokaler Testserver im Browser mit Bots (ohne Worker und Access)', args: '[bots 0..7]', run: ([n]) => this.startLocal(n === undefined ? this.botCount : parseNum(n, 'Bots', 0, 7)) });
     registerCommand({ name: 'net.bots', help: 'Anzahl der Bots auf dem lokalen Testserver', args: '[0..7]', run: ([n]) => {
@@ -406,9 +410,9 @@ export class NetPlay {
   }
 }
 
-/** Local `wrangler dev` (DEV_NO_AUTH): ?as=name@x.de in the page address picks the test player. */
-function devAs() {
+/** Player id and name for public servers; with local `wrangler dev` (DEV_NO_AUTH) ?as=name@x.de picks the test player. */
+function query() {
   const as = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('as') : null;
-  return as ? `?as=${encodeURIComponent(as)}` : '';
+  return `?${identityQuery()}${as ? `&as=${encodeURIComponent(as)}` : ''}`;
 }
 

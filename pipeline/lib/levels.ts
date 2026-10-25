@@ -3,6 +3,7 @@
 // ledge the car bangs into; no car fits between surfaces less than APART apart, so where they overlap they
 // meet halfway and each fades back into its own profile along the road. The shift is stored per way
 // (`way.level`) and added by the surface function in roads.ts, so build, gap check and drive test agree.
+// A bridge and the road it ends into are matched the same way (the road gives way to the measured deck).
 // Other overlaps (a junction arm under a plateau, a road beside a ramp) are left to the junction plateaus
 // and overlap.ts: matched along their centre lines, ribbons meeting at an angle with different grades only
 // trade one ledge for another (measured with world:surface, it doubled the critical places).
@@ -38,6 +39,11 @@ const priority = (w: Way) => (isBridge(w.tags) ? 100 : 0) + ROAD_CLASSES[w.tags.
 export function matchLevels(ways: Way[], height: (e: number, n: number) => number): LevelReport {
   const roads = ways.filter((w) => isDrivable(w.tags));
   const half = new Map(roads.map((w) => [w, roadWidth(w.tags)! / 2]));
+  // Where a bridge ends and the road carries on (they share an end node), the two ribbons overlap beside the node
+  // at a kink and the deck end meets the road with a ledge: the road takes the deck's height there. Only beside the
+// deck (projecting onto a segment, not beyond its end): straight on, the road's own grade carries on from the node.
+  const ends = new Map(roads.map((w) => [w, new Set([w.ids[0], w.ids[w.ids.length - 1]])]));
+  const carriesOn = (a: Way, b: Way) => isBridge(a.tags) !== isBridge(b.tags) && [...ends.get(a)!].some((id) => ends.get(b)!.has(id));
   const changed = new Set<Way>();
   let overlaps = 0, maxShift = 0;
   for (let round = 0; round < ROUNDS; round++) {
@@ -72,12 +78,13 @@ export function matchLevels(ways: Way[], height: (e: number, n: number) => numbe
             for (const s of cells.get(`${cx}_${cy}`) ?? []) {
               if (s.prio < prio || s.prio < bestPrio) continue;
               const dx = s.e1 - s.e0, dy = s.n1 - s.n0;
-              const t = Math.min(1, Math.max(0, ((p.e - s.e0) * dx + (p.n - s.n0) * dy) / (dx * dx + dy * dy || 1)));
+              const tu = ((p.e - s.e0) * dx + (p.n - s.n0) * dy) / (dx * dx + dy * dy || 1);
+              const t = Math.min(1, Math.max(0, tu));
               const apart = Math.hypot(s.e0 + dx * t - p.e, s.n0 + dy * t - p.n);
               if (apart > hw + s.hw + TOUCH) continue;
               // Two bridge decks, or the same way where it comes back to itself: on a hairpin the legs are much
               // farther apart along the way than across, in its own neighbourhood (and along a bend) about as far.
-              if (s.way === way ? Math.abs(s.d0 + (s.d1 - s.d0) * t - p.dist) < 2 * apart + hw : !(bridge && isBridge(s.way.tags))) continue;
+              if (s.way === way ? Math.abs(s.d0 + (s.d1 - s.d0) * t - p.dist) < 2 * apart + hw : !(bridge && isBridge(s.way.tags)) && !(carriesOn(way, s.way) && tu > -0.02 && tu < 1.02)) continue;
               const other = s.b0 + (s.b1 - s.b0) * t;
               const gap = other - base;
               if (Math.abs(gap) < TOLERANCE || Math.abs(gap) > APART) continue;

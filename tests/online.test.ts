@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
-import { type Db, handleApi, type Stmt } from '../worker/api.ts';
+import { type Db, handleApi, NEW_PLAYERS_PER_DAY, POSTS_PER_MINUTE, type Stmt } from '../worker/api.ts';
 import { accessEmail, resetKeyCache } from '../worker/auth.ts';
 import { Online } from '../src/net/online.ts';
 
@@ -85,5 +85,32 @@ describe('Access token check (O1)', () => {
     const t = await sign(good);
     expect(await accessEmail(t.slice(0, -4) + 'AAAA', cfg, keys, now)).toBeUndefined();
     expect(await accessEmail(null, cfg, keys, now)).toBeUndefined();
+  });
+});
+
+describe('public leaderboards (ONLINE_PUBLIC)', () => {
+  const pub = async (db: Db, id: string, method: string, path: string, body?: unknown, name?: string, ip = 'a') => {
+    const res = await handleApi(new Request(`https://x/api/${path}`, { method, body: body ? JSON.stringify(body) : undefined }), db, id, { ip, name });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+
+  it('takes the name the game sends when it is free and clean, and keeps names unique', async () => {
+    const db = memoryDb();
+    expect((await pub(db, 'pid:1', 'GET', 'me', undefined, 'Timo')).body.name).toBe('Timo');
+    expect((await pub(db, 'pid:2', 'GET', 'me', undefined, 'Timo')).body.name).toBe('Timo 2');
+    expect((await pub(db, 'pid:2', 'GET', 'me', undefined, 'Nazi99')).body.name).toBe('Timo 2');
+    expect((await pub(db, 'pid:2', 'GET', 'me', undefined, 'Lena')).body.name).toBe('Lena');
+    expect((await pub(db, 'pid:3', 'GET', 'me')).body.name).toBe('Fahrer');
+    expect((await pub(db, 'pid:3', 'PUT', 'me', { name: 'fuck off' })).status).toBe(400);
+    expect((await pub(db, 'pid:3', 'PUT', 'me', { name: 'Lena' })).status).toBe(409);
+  });
+
+  it('limits new players per address and results per minute', async () => {
+    const db = memoryDb();
+    for (let i = 0; i < NEW_PLAYERS_PER_DAY; i++) expect((await pub(db, `pid:n${i}`, 'GET', 'me')).status).toBe(200);
+    expect((await pub(db, 'pid:late', 'GET', 'me')).status).toBe(429);
+    expect((await pub(db, 'pid:late', 'GET', 'me', undefined, undefined, 'b')).status).toBe(200);
+    for (let i = 0; i < POSTS_PER_MINUTE; i++) expect((await pub(db, 'pid:n0', 'POST', `board/ev${i}`, { value: 10 })).status).toBe(200);
+    expect((await pub(db, 'pid:n0', 'POST', 'board/evx', { value: 10 })).status).toBe(429);
   });
 });

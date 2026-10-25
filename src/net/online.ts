@@ -1,7 +1,9 @@
 import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { GhostRun } from '../game/ghost.ts';
+import { identityQuery, setPlayerName } from './identity.ts';
 
-// Leaderboards with friends (O1): results and ghosts go to the Worker (worker/api.ts) behind Cloudflare Access.
+// Leaderboards (O1): results and ghosts go to the Worker (worker/api.ts), public since 2026-10-25 with the same
+// random id and name as online play (identity.ts); behind Cloudflare Access the id is ignored.
 // Everything is asynchronous and optional: without the Worker API (dev server, Access not set up yet, offline)
 // the game plays as before and only says so in the console.
 
@@ -9,7 +11,7 @@ export interface BoardEntry { rank: number; name: string; value: number; car?: s
 export interface Board { event: string; higher: boolean; entries: BoardEntry[] }
 
 export class Online {
-  /** The API answered: signed in through Access. */
+  /** The API answered (public, or signed in through Access). */
   available = false;
   /** Results and ghosts are sent (online.send). */
   send = true;
@@ -25,7 +27,7 @@ export class Online {
   }
 
   private async call<T>(path: string, init?: RequestInit): Promise<T> {
-    const r = await fetch(`${this.base}${path}`, { ...init, headers: { 'content-type': 'application/json', ...init?.headers }, credentials: 'same-origin' });
+    const r = await fetch(`${this.base}${path}${path.includes('?') ? '&' : '?'}${identityQuery()}`, { ...init, headers: { 'content-type': 'application/json', ...init?.headers }, credentials: 'same-origin' });
     if (!(r.headers.get('content-type') ?? '').includes('json')) throw new Error('kein Online-Dienst (nur die Spieldateien)');
     const body = (await r.json()) as T & { error?: string };
     if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
@@ -69,6 +71,8 @@ export class Online {
   }
 
   async rename(name: string) {
+    // Online play shows the same name; the filter there also decides here.
+    setPlayerName(name);
     const r = await this.call<{ name: string }>('/me', { method: 'PUT', body: JSON.stringify({ name }) });
     this.name = r.name;
     return r.name;
@@ -76,7 +80,7 @@ export class Online {
 
   registerCommands(currentEvent: () => string | undefined, print: (s: string) => void, format: (event: string, v: number) => string) {
     const later = (p: Promise<string>) => { p.then(print, (e) => print(`Fehler: ${(e as Error).message}`)); return '…'; };
-    registerCommand({ name: 'online', help: 'Bestenlisten mit Freunden: Verbindung und Name (verbindet neu)', run: () => later(this.connect().then((ok) =>
+    registerCommand({ name: 'online', help: 'Bestenlisten: Verbindung und Name (verbindet neu)', run: () => later(this.connect().then((ok) =>
       ok ? `verbunden als ${this.name}` : `nicht verbunden: ${this.reason}`)) });
     registerCommand({ name: 'online.name', help: 'Deinen Namen in den Bestenlisten ändern', args: '<name>', run: ([...w]) => {
       if (!w.length) return this.name ?? 'nicht verbunden';

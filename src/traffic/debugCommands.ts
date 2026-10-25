@@ -51,6 +51,15 @@ export function registerTrafficCommands(t: Traffic, player: () => { x: number; z
     t.sound.enabled = v;
   });
   registerCommand({
+    name: 'traffic.voices',
+    help: 'Welche Fahrzeuge gerade zu hören sind und mit welcher Motorstimme (Benziner, Diesel, Lkw/Bus, Elektro)',
+    run: () => {
+      if (!t.sound) throw new Error('Ton startet erst nach dem Klick auf Start');
+      const v = t.sound.active;
+      return v.length ? v.map((x) => `#${x.id}: ${x.kind ?? '…'}`).join('\n') : 'kein Fahrzeug in Hörweite';
+    },
+  });
+  registerCommand({
     name: 'traffic.info',
     help: 'Zahl der Fahrzeuge nach Typ und Zustand',
     run: () => {

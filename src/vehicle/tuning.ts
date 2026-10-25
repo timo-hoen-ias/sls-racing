@@ -30,6 +30,13 @@ export const ENGINE_SOUND: EngineSoundProfile = {
     lumpy: 0.08,
     irregular: 0.1,
     pulse: { noise: 0.3, tone: 0.72, toneHz: 340, decay: 0.78, color: 0.9 },
+    // Boxer six, equal-length headers into a short sports exhaust: the high, clean howl.
+    layout: 'flat6',
+    header: 0.55,
+    pipe: 2.2,
+    cross: 0.3,
+    intakeLen: 0.35,
+    mech: 0.35,
   },
   resonances: [
     { freq: 170, q: 2, gain: 5 }, // exhaust body
@@ -42,6 +49,7 @@ export const ENGINE_SOUND: EngineSoundProfile = {
   intake: 0.09,
   pops: 0.55,
   shiftPop: 0.6,
+  whine: 0.025,
 };
 
 export const CAR = {

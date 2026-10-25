@@ -58,12 +58,13 @@ export const CARS: CarSpec[] = [
       engineBrake: { base: 24, perRpm: 0.011 },
     },
     sound: {
-      voice: { cylinders: 4, lumpy: 0.05, irregular: 0.08, pulse: { noise: 0.35, tone: 0.6, toneHz: 270, decay: 0.74, color: 0.85 } },
+      // Inline four, 4-into-1 manifold into the turbo, one big pipe: raspy, flutters when lifting off boost.
+      voice: { cylinders: 4, layout: 'i4', lumpy: 0.05, irregular: 0.08, pulse: { noise: 0.35, tone: 0.6, toneHz: 270, decay: 0.74, color: 0.85 }, header: 0.45, pipe: 2.8, cross: 1, intakeLen: 0.5, mech: 0.4 },
       resonances: [{ freq: 140, q: 2, gain: 5 }, { freq: 900, q: 2.2, gain: 4 }, { freq: 2600, q: 3, gain: 4 }],
       drive: 0.7,
       lpIdle: 1100,
       lpFull: 7000,
-      turbo: { ratio: 40, gain: 0.035 },
+      turbo: { ratio: 40, gain: 0.035, flutter: 0.6 },
       intake: 0.06,
       pops: 0.7,
       shiftPop: 0.7,
@@ -95,7 +96,8 @@ export const CARS: CarSpec[] = [
       engineBrake: { base: 40, perRpm: 0.016 },
     },
     sound: {
-      voice: { cylinders: 8, lumpy: 0.14, irregular: 0.14, pulse: { noise: 0.25, tone: 0.75, toneHz: 220, decay: 0.8, color: 0.95 } },
+      // Cross-plane V8 with separate banks and a long twin exhaust: the uneven burble of each bank.
+      voice: { cylinders: 8, layout: 'v8', lumpy: 0.14, irregular: 0.14, pulse: { noise: 0.25, tone: 0.75, toneHz: 220, decay: 0.8, color: 0.95 }, header: 0.85, pipe: 3.4, cross: 0.12, intakeLen: 0.55, mech: 0.25 },
       resonances: [{ freq: 110, q: 2, gain: 6 }, { freq: 700, q: 2, gain: 4 }, { freq: 2400, q: 3, gain: 3 }],
       drive: 0.55,
       lpIdle: 1000,
@@ -103,6 +105,7 @@ export const CARS: CarSpec[] = [
       intake: 0.08,
       pops: 0.6,
       shiftPop: 0.5,
+      whine: 0.015,
     },
   },
 ];

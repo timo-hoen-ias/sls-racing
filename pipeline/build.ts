@@ -71,9 +71,8 @@ function main() {
     }
   }
 
-  const height = terrainHeight(regions, toLonLat, console.log);
-
   const osm = readOsm(merged, project);
+  const height = terrainHeight(regions, toLonLat, console.log, osm.polygons);
   const tiles = new TileMap(info.tileSize);
   const measured = regions.reduce((n, r) => n + applyMeasuredWidths(osm.ways, loadAlkisRoads(r.id)), 0);
   console.log(`ALKIS: measured carriageway width on ${measured} streets`);
@@ -475,6 +474,11 @@ function main() {
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info, medians.points)));
+  // Flattened plazas (plazas.ts) for the plaza command: [name, x, z, plane height, area m², RMS cm, tilt %].
+  writeFileSync(`${paths.out}plazas.json`, JSON.stringify({ v: 1, plazas: height.plazas.map((p) => {
+    const [x, z] = utmToLocal(info, p.e0, p.n0);
+    return [p.name, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(p.y0 * 100) / 100, Math.round(p.area), Math.round(p.rms * 100), Math.round(Math.hypot(p.ge, p.gn) * 1000) / 10];
+  }) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);

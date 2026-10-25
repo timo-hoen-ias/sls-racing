@@ -2,27 +2,34 @@
 import { bridgeDecks } from './decks.ts';
 import { roadProfiles } from './profiles.ts';
 import { laserSampler } from './laser.ts';
-import type { Way } from './osm.ts';
+import type { Polygon, Way } from './osm.ts';
 import { liftOverpasses } from './overpasses.ts';
+import { planPlazas, type Plaza } from './plazas.ts';
 import { paths, type RegionConfig } from './region.ts';
 import { flatSampler, terrariumSampler, type HeightSampler } from './terrain.ts';
 
 /** Width (m) over which laser-scan terrain blends into the coarse terrain at the edge of its coverage. */
 const BLEND = 150;
 
-/** Terrain height at a UTM position: DGM1 where the regions have it, else their coarse terrain source. */
-export function terrainHeight(regions: RegionConfig[], toLonLat: (e: number, n: number) => [number, number], log = (_: string) => {}) {
+/**
+ * Terrain height at a UTM position: DGM1 where the regions have it, else their coarse terrain source. With the
+ * OSM polygons, squares and surface car parks are flattened to one plane each (plazas.ts).
+ */
+export function terrainHeight(regions: RegionConfig[], toLonLat: (e: number, n: number) => [number, number], log = (_: string) => {}, polygons: Polygon[] = []) {
   const terrarium = regions.find((r) => r.terrain.source === 'terrarium')?.terrain as { zoom: number } | undefined;
   const sampler: HeightSampler = terrarium ? terrariumSampler(paths.terrain, terrarium.zoom) : flatSampler();
   const dgm = regions.some((r) => r.laser) ? laserSampler(paths.dgm1) : undefined;
   if (dgm && !dgm.tiles) throw missing('DGM1', paths.dgm1, regions);
   if (dgm) log(`Terrain: DGM1 1 m grid in ${dgm.tiles} km tiles${terrarium ? `, Terrarium z${terrarium.zoom} outside` : ''}`);
-  const raw = (e: number, n: number) => {
+  const measured = (e: number, n: number) => {
     const d = dgm?.at(e, n);
     if (d === undefined) return sampler.at(...toLonLat(e, n));
     const c = dgm!.coverage(e, n, BLEND);
     return c >= BLEND ? d : d * (c / BLEND) + sampler.at(...toLonLat(e, n)) * (1 - c / BLEND);
   };
+  const flat = planPlazas(polygons, measured);
+  if (polygons.length) log(`Plazas: ${flat.report.plazas} flattened to a plane (${flat.report.polygons} outlines, max. ${(flat.report.maxRms * 100).toFixed(0)} cm RMS off the terrain), ${flat.report.skipped} left as measured (sloped or uneven)`);
+  const raw = (e: number, n: number) => flat.apply(e, n, measured(e, n));
   // Roads and buildings ask for the same points many times; the terrain grid asks once per vertex and
   // reads `raw` so the cache stays small.
   const cache = new Map<number, number>();
@@ -32,7 +39,7 @@ export function terrainHeight(regions: RegionConfig[], toLonLat: (e: number, n: 
     if (h === undefined) { h = raw(e, n); cache.set(k, h); }
     return h;
   };
-  return Object.assign(height, { raw });
+  return Object.assign(height, { raw, plazas: flat.plazas as Plaza[] });
 }
 
 /**
@@ -49,7 +56,7 @@ export function roadHeights(ways: Way[], regions: RegionConfig[], height: (e: nu
   const d = bridgeDecks(ways, dom, height);
   if (dom) log(`Bridges: ${d.measured}/${d.bridges} decks measured from DOM1, max. ${d.maxRise.toFixed(1)} m above the straight span`);
   const p = roadProfiles(ways, height, d.anchors);
-  log(`Road profiles: ${p.roads} roads, ${p.nodes} node heights, largest correction ${p.maxCorrection.toFixed(1)} m`);
+  log(`Road profiles: ${p.roads} roads, ${p.nodes} node heights, largest correction ${p.maxCorrection.toFixed(1)} m, bumps (off a 40 m mean) max. ${(p.roughness.max * 100).toFixed(1)} cm, mean ${(p.roughness.mean * 100).toFixed(2)} cm`);
   const over = liftOverpasses(ways, height);
   log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
 }

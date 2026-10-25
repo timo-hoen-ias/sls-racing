@@ -49,7 +49,7 @@ async function main() {
   const { cfg, project } = loadWorld();
   const regions = [loadRegion(region)];
   const osm = readOsm(JSON.parse(readFileSync(`${paths.raw(region)}osm.json`, 'utf8')), project);
-  const height = terrainHeight(regions, unproject(cfg.zone));
+  const height = terrainHeight(regions, unproject(cfg.zone), undefined, osm.polygons);
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
   separateCarriageways(osm.ways);
   const ramps = planRamps(osm.ways);

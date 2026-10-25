@@ -463,6 +463,7 @@ async function boot() {
   const viewDist = createViewDistance(view, quality, far);
   registerWorldCommands({
     R: RAPIER, world, scene: view.scene, mats, index, baseUrl: TILES_URL, pos: () => (hold ?? ip),
+    heading: () => car.heading(),
     teleport: (x, z, heading) => runCommand(`tp ${x.toFixed(1)} ${z.toFixed(1)}${heading === undefined ? '' : ` ${heading}`}`),
     print: (t) => debug.print(t, 'info'),
     tiles: (fn) => streamer.forEachContent(fn),

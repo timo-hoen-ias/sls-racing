@@ -1,4 +1,5 @@
-// world.* and terrain.* debug commands: road gaps found by the pipeline's gap check, terrain under the car.
+// world.* and terrain.* debug commands: road gaps found by the pipeline's gap check, terrain under the car,
+// bumps on the road ahead (road.bumps) and the plazas the pipeline flattened (plaza).
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addTeleportPlace } from '../debug/gameCommands.ts';
@@ -6,6 +7,9 @@ import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { Landmarks } from './landmarks.ts';
 import type { Materials } from '../render/materials.ts';
 import { TERRAIN_STEP, type TileContent, type WorldIndex } from './format.ts';
+
+/** [name, x, z, plane height, area m², RMS cm, tilt %] per flattened plaza (pipeline/lib/plazas.ts). */
+type PlazaRow = [string, number, number, number, number, number, number];
 
 interface Gaps { kinds: string[]; issues: [number, number, number, number, number, number][] }
 
@@ -20,6 +24,8 @@ export interface WorldCommandContext {
   index: WorldIndex;
   baseUrl: string;
   pos: () => { x: number; y?: number; z: number };
+  /** Car heading (rad, 0 = north / -z, like tp). */
+  heading: () => number;
   teleport: (x: number, z: number, heading?: number) => void;
   /** Prints into the console after an asynchronous load. */
   print: (text: string) => void;
@@ -106,7 +112,8 @@ export function registerWorldCommands(g: WorldCommandContext) {
 
   const down = (x: number, z: number) => {
     const ray = new g.R.Ray({ x, y: 2000, z }, { x: 0, y: -1, z: 0 });
-    return g.world.castRay(ray, 4000, true);
+    // Ground only: the car and other moving bodies are skipped.
+    return g.world.castRay(ray, 4000, true, undefined, undefined, undefined, undefined, (c) => !c.parent()?.isDynamic());
   };
   registerCommand({
     name: 'terrain.at',
@@ -122,6 +129,111 @@ export function registerWorldCommands(g: WorldCommandContext) {
       return `${y.toFixed(2)} m ü. NHN bei ${x.toFixed(1)} / ${z.toFixed(1)} (${utm}), Kollider-Typ ${hit.collider.shape.type === g.R.ShapeType.HeightField ? 'Gelände' : 'Fahrbahn/Brücke/Gebäude'}`;
     },
   });
+  // Bumps on the road ahead: the surface the wheels touch, every metre straight ahead, against its running mean.
+  let bumpMarks: THREE.InstancedMesh | null = null;
+  registerCommand({
+    name: 'road.bumps',
+    help: 'Misst Unebenheiten der Fahrbahn geradeaus vor dem Auto (Abweichung vom 20-m-Mittel); "show" markiert Stellen über 3 cm (rot über 8 cm), "hide" blendet aus',
+    args: '[länge m, Standard 80] [show|hide]',
+    complete: () => ['show', 'hide'],
+    run(a) {
+      if (a[0] === 'hide') { if (bumpMarks) bumpMarks.visible = false; return 'Markierungen ausgeblendet'; }
+      const len = Math.min(400, Math.max(20, a.find((v) => /^\d+$/.test(v)) ? +a.find((v) => /^\d+$/.test(v))! : 80));
+      const p = g.pos(), h = g.heading();
+      const fx = Math.sin(h), fz = -Math.cos(h);
+      const ys: number[] = [];
+      for (let d = 0; d <= len; d++) {
+        const hit = down(p.x + fx * d, p.z + fz * d);
+        ys.push(hit ? 2000 - hit.timeOfImpact : NaN);
+      }
+      const dev = ys.map((y, k) => {
+        const w = ys.slice(Math.max(0, k - 10), k + 11).filter((v) => !Number.isNaN(v));
+        return Number.isNaN(y) || w.length < 15 ? 0 : y - w.reduce((s, v) => s + v, 0) / w.length;
+      });
+      const valid = dev.filter((_, k) => k >= 10 && k <= len - 10);
+      const max = Math.max(0, ...valid.map(Math.abs));
+      const rms = Math.sqrt(valid.reduce((s, v) => s + v * v, 0) / Math.max(1, valid.length));
+      const spots = dev.map((v, k) => [k, v] as const).filter(([k, v]) => k >= 10 && k <= len - 10 && Math.abs(v) > 0.03);
+      if (a.includes('show')) {
+        if (bumpMarks) { g.scene.remove(bumpMarks); bumpMarks.dispose(); }
+        bumpMarks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.15, 3, 6), new THREE.MeshBasicMaterial({ depthTest: false, transparent: true, opacity: 0.85 }), Math.max(1, spots.length));
+        const m = new THREE.Matrix4(), c = new THREE.Color();
+        spots.forEach(([k, v], n) => {
+          bumpMarks!.setMatrixAt(n, m.makeTranslation(p.x + fx * k, ys[k] + 1.5, p.z + fz * k));
+          bumpMarks!.setColorAt(n, c.setHex(Math.abs(v) > 0.08 ? 0xff2020 : v > 0 ? 0xff9900 : 0x3399ff));
+        });
+        bumpMarks.count = spots.length;
+        bumpMarks.renderOrder = 998;
+        bumpMarks.frustumCulled = false;
+        g.scene.add(bumpMarks);
+      }
+      const holes = ys.filter((v) => Number.isNaN(v)).length;
+      return `${len} m geradeaus: größte Abweichung ${(max * 100).toFixed(1)} cm, RMS ${(rms * 100).toFixed(1)} cm, ${spots.length} Stellen über 3 cm${holes ? ` · ${holes} Messpunkte ohne Untergrund` : ''}${a.includes('show') ? ' (markiert: orange Buckel, blau Senke, rot über 8 cm)' : ''}`;
+    },
+  });
+
+  // Plazas flattened by the pipeline (plazas.json).
+  let plazas: PlazaRow[] | null = null;
+  let plazaMarks: THREE.InstancedMesh | null = null;
+  let plazaCursor = -1;
+  const loadPlazas = async () => {
+    if (plazas) return plazas;
+    const res = await fetch(`${g.baseUrl}/plazas.json`);
+    if (!res.ok) throw new Error(`plazas.json fehlt (HTTP ${res.status}), "npm run world:build" ausführen`);
+    plazas = ((await res.json()) as { plazas: PlazaRow[] }).plazas;
+    return plazas;
+  };
+  const plazaLine = (i: number) => {
+    const [name, x, z, y, area, rms, tilt] = plazas![i];
+    const p = g.pos();
+    return `#${i + 1} ${name}: ${area} m², Ebene auf ${y.toFixed(2)} m, Neigung ${tilt.toFixed(1)} %, Gelände wich ${rms} cm (RMS) ab · ${Math.hypot(x - p.x, z - p.z).toFixed(0)} m entfernt`;
+  };
+  const runPlaza = (a: string): string => {
+    const n = plazas!.length;
+    if (!n) return 'Keine Plätze geglättet.';
+    if (a === 'hide') { if (plazaMarks) plazaMarks.visible = false; return 'Markierungen ausgeblendet'; }
+    if (a === 'show') {
+      if (!plazaMarks) {
+        plazaMarks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.6, 0.6, 20, 6), new THREE.MeshBasicMaterial({ color: 0xb04cff, depthTest: false, transparent: true, opacity: 0.75 }), n);
+        const m = new THREE.Matrix4();
+        plazas!.forEach(([, x, z, y], k) => plazaMarks!.setMatrixAt(k, m.makeTranslation(x, y + 10, z)));
+        plazaMarks.renderOrder = 998;
+        plazaMarks.frustumCulled = false;
+        g.scene.add(plazaMarks);
+      }
+      plazaMarks.visible = true;
+      return `${n} geglättete Plätze markiert (violett)`;
+    }
+    if (a === 'next' || a === 'prev' || /^\d+$/.test(a)) {
+      plazaCursor = /^\d+$/.test(a) ? Math.min(n, Math.max(1, +a)) - 1 : (plazaCursor + (a === 'next' ? 1 : n - 1)) % n;
+      g.teleport(plazas![plazaCursor][1], plazas![plazaCursor][2]);
+      return plazaLine(plazaCursor);
+    }
+    const q = a.toLowerCase();
+    if (a !== 'list') {
+      const i = plazas!.findIndex(([name]) => name.toLowerCase().includes(q));
+      if (i < 0) return `Kein Platz mit "${a}"`;
+      plazaCursor = i;
+      g.teleport(plazas![i][1], plazas![i][2]);
+      return plazaLine(i);
+    }
+    const p = g.pos();
+    const near = plazas!.map((r, i) => [i, Math.hypot(r[1] - p.x, r[2] - p.z)] as const).sort((x, y) => x[1] - y[1]).slice(0, 10);
+    return [`${n} Plätze und Parkplätze zu einer Ebene geglättet · plaza <name> fährt hin`, ...near.map(([i]) => plazaLine(i))].join('\n');
+  };
+  registerCommand({
+    name: 'plaza',
+    aliases: ['platz'],
+    help: 'Geglättete Plätze und Parkplätze (eine Ebene statt Messrauschen): list die nächsten, show/hide Säulen, next/prev/<nr>/<name> teleportiert hin (z. B. "plaza markt")',
+    args: '[list|show|hide|next|prev|<nr>|<name>]',
+    complete: () => ['list', 'show', 'hide', 'next', 'prev'],
+    run([a = 'list']) {
+      if (plazas) return runPlaza(a);
+      loadPlazas().then(() => g.print(runPlaza(a))).catch((e) => g.print(`Fehler: ${(e as Error).message}`));
+      return 'Lade plazas.json …';
+    },
+  });
+
   registerToggle('terrain.wire', 'Gelände als Drahtgitter (zeigt das 4-m-Netz und wie es an die Straßen angepasst ist)', () => g.mats.ground.wireframe, (v) => {
     g.mats.ground.wireframe = v;
     g.mats.ground.needsUpdate = true;

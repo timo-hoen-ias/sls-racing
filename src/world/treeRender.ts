@@ -59,6 +59,10 @@ const LOD_VERTEX = `
     vLodT = vec2(clamp((lodD - uLod.x) / max(uLod.y - uLod.x, 1e-3), 0.0, 1.0), clamp((lodD - uLod.z) / max(uLod.w - uLod.z, 1e-3), 0.0, 1.0));
   }`;
 
+// Instances outside their tier's band (kept in the mesh as a margin for the camera moving) leave the clip space.
+const LOD_CULL = `#include <project_vertex>
+  if (vLodT.x <= 0.0 || vLodT.y >= 1.0) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);`;
+
 // Interleaved gradient noise: the dither pattern; a pixel belongs to the far tier once noise + progress >= 1.
 const LOD_DITHER = `
   {
@@ -121,6 +125,7 @@ function patchTree(mat: THREE.MeshStandardMaterial, o: TreeMatOpts) {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', VERTEX_HEAD)
       .replace('#include <begin_vertex>', `#include <begin_vertex>\n${WIND_VERTEX(o.wind)}\n${LOD_VERTEX}`)
+      .replace('#include <project_vertex>', LOD_CULL)
       .replace('#include <common>', '#include <common>\nuniform float uVegLift;')
       .replace('#include <shadowmap_vertex>', `#ifdef USE_SHADOWMAP
   worldPosition.xyz += uVegLight * leaf * length((modelMatrix * instanceMatrix)[0].xyz) * uVegLift;
@@ -160,7 +165,8 @@ function treeDepth(o: TreeMatOpts, leaves: THREE.Texture) {
     Object.assign(shader.uniforms, vegUniforms, { uLod: { value: o.band }, uLeafMap: { value: leaves } });
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `${VERTEX_HEAD}\nvarying float vLeaf;\nvarying vec2 vLeafUv;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${WIND_VERTEX(o.wind)}\n${LOD_VERTEX}\n  vLeaf = leaf;\n  vLeafUv = uv;`);
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${WIND_VERTEX(o.wind)}\n${LOD_VERTEX}\n  vLeaf = leaf;\n  vLeafUv = uv;`)
+      .replace('#include <project_vertex>', LOD_CULL);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vLodT;\nvarying float vLeaf;\nvarying vec2 vLeafUv;\nuniform sampler2D uLeafMap;')
       .replace('#include <map_fragment>', '')
@@ -351,8 +357,11 @@ const IMP_SAMPLE = `
   vec4 impC = mix(texture2D(map, vImpUv0), texture2D(map, vImpUv1), vImpW);
   diffuseColor *= impC;`;
 
-/** Material of one species' impostors: camera-facing quad, two nearest frames blended, baked normals. */
-export function impostorMaterial(atlas: ImpostorAtlas, id: string, g: TreeGeometry, band: LodBand): { mat: THREE.MeshStandardMaterial; depth: THREE.MeshDepthMaterial } {
+/**
+ * Material of one species' impostors: camera-facing quad, two nearest frames blended, baked normals. The shadow
+ * caster has its own band: impostor shadows also stand in for the simple model's (2 triangles instead of hundreds).
+ */
+export function impostorMaterial(atlas: ImpostorAtlas, id: string, g: TreeGeometry, band: LodBand, shadowBand = band): { mat: THREE.MeshStandardMaterial; depth: THREE.MeshDepthMaterial } {
   const mat = new THREE.MeshStandardMaterial({ map: atlas.albedo.texture, alphaTest: 0.45, roughness: 0.85, side: THREE.DoubleSide });
   const uniforms = {
     uImpNormal: { value: atlas.normal.texture },
@@ -384,6 +393,7 @@ varying vec3 vImpZ;`)
   }
 ${WIND_VERTEX(0.3)}
 ${LOD_VERTEX}`)
+      .replace('#include <project_vertex>', LOD_CULL)
       // The quad stands in the middle of the tree, where its own shadow caster (facing the sun) cuts through it:
       // look up the shadow from a point moved towards the light past the crown, so the tree does not shade
       // half of itself, while the shadows of other trees and buildings still fall on it.
@@ -420,7 +430,7 @@ varying vec3 vImpZ;`)
   // Shadow caster: the same quad turned towards the light, showing the frames seen from the sun's direction.
   const depth = new THREE.MeshDepthMaterial({ map: atlas.albedo.texture, alphaTest: 0.45, side: THREE.DoubleSide });
   depth.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, vegUniforms, uniforms, { uLod: { value: band } });
+    Object.assign(shader.uniforms, vegUniforms, uniforms, { uLod: { value: shadowBand } });
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `${VERTEX_HEAD}${IMP_HEAD}`)
       .replace('#include <begin_vertex>', `
@@ -428,7 +438,8 @@ varying vec3 vImpZ;`)
   vec2 impD = normalize((inverse(impM) * vec4(uVegLight, 0.0)).xz + vec2(1e-5, 0.0));
 ${IMP_QUAD}
 ${WIND_VERTEX(0.3)}
-${LOD_VERTEX}`);
+${LOD_VERTEX}`)
+      .replace('#include <project_vertex>', LOD_CULL);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec2 vLodT;

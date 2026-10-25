@@ -161,8 +161,8 @@ export class Vegetation {
   bushDistance: number;
   /** Width of the dithered cross-fade between tiers as a share of the distance (veg.fade). */
   fade = 0.3;
-  /** Detail tiers that cast shadows (0 = none, 1 = detailed, 2 = detailed and simple, 3 = all). */
-  shadowTiers = 3;
+  /** Tree shadows: 0 none, 1 detailed trees, 2 also the rest (the impostor quad turned to the sun, from the simple tier on). */
+  shadowTiers = 2;
   /** Trees fade out (dithered) towards this distance (m), inside the loaded tiles, so they never pop in with a tile. */
   farDistance: number;
   /** Tree and bush instances moved between tiers in the last frame (veg.info). */
@@ -186,6 +186,8 @@ export class Vegetation {
   readonly groundUniforms = { uVegFields: { value: 1 } };
   /** Distance bands of the tree tiers and the bush tiers (shared with their materials). */
   private treeBands = [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()];
+  /** Band of the impostors' shadow casters: every tree past the detailed tier. */
+  private shadowBand = new THREE.Vector4();
   private bushBands = [new THREE.Vector4(), new THREE.Vector4()];
   private tiles = new Map<string, VegTile>();
   private geo: Record<string, TreeGeometry> = {};
@@ -276,7 +278,7 @@ export class Vegetation {
     for (const sp of SPECIES) {
       if (sp.form === 'bush') continue;
       this.impGeo[sp.id] = impostorGeometry(this.geo[sp.id]);
-      this.impMats[sp.id] = impostorMaterial(this.atlas, sp.id, this.geo[sp.id], this.treeBands[2]);
+      this.impMats[sp.id] = impostorMaterial(this.atlas, sp.id, this.geo[sp.id], this.treeBands[2], this.shadowBand);
     }
     this.ready = true;
     for (const t of this.tiles.values()) this.buildTile(t);
@@ -292,6 +294,9 @@ export class Vegetation {
     const far = Math.max(d1 + 2 * half(d1) + 20, this.farDistance);
     t2.set(d1 - half(d1), d1 + half(d1), far * 0.8, far);
     if (this.forcedLod !== undefined) this.treeBands.forEach((b, i) => (i === this.forcedLod ? b.set(-2, -1, 1e9, 1e9 + 1) : b.copy(HIDDEN())));
+    if (this.forcedLod === 0) this.shadowBand.copy(HIDDEN());
+    else if (this.forcedLod !== undefined) this.shadowBand.set(-2, -1, 1e9, 1e9 + 1);
+    else this.shadowBand.set(t1.x, t1.y, t2.z, t2.w);
     const b0 = BUSH_DETAIL, b1 = Math.max(b0 + 10, this.bushDistance);
     this.bushBands[0].set(-2, -1, b0 - half(b0), b0 + half(b0));
     this.bushBands[1].set(b0 - half(b0), b0 + half(b0), b1 * 0.85, b1);
@@ -339,7 +344,7 @@ export class Vegetation {
         const im = new THREE.InstancedMesh(geo, tm ? tm.mats : this.impMats[sp].mat, recs.length);
         im.customDepthMaterial = tm ? tm.depth : this.impMats[sp].depth;
         im.userData.sharedGeometry = true;
-        im.castShadow = t.shadows && !bush && l < this.shadowTiers;
+        im.castShadow = this.castsShadow(t, { bush }, l);
         im.receiveShadow = true;
         im.name = `vegetation/${sp} ${l === 2 ? 'impostor' : `lod${l}`}`;
         return im;
@@ -378,9 +383,16 @@ export class Vegetation {
     return { mats, cols, xz };
   }
 
-  /** Distance range (m) each tier of a group draws instances in, fades included. */
+  /** Distance range (m) each tier of a group holds instances in, fades included (impostors also for their shadows). */
   private ranges(g: VegGroup): [number, number][] {
-    return (g.bush ? this.bushBands : this.treeBands).map((b) => [b.x, b.w]);
+    if (g.bush) return this.bushBands.map((b) => [b.x, b.w]);
+    const r = this.treeBands.map((b): [number, number] => [b.x, b.w]);
+    if (this.shadowTiers >= 2 && this.forcedLod === undefined) r[2][0] = Math.min(r[2][0], this.shadowBand.x);
+    return r;
+  }
+
+  private castsShadow(t: VegTile, g: { bush: boolean }, tier: number) {
+    return t.shadows && !g.bush && (tier === 0 ? this.shadowTiers >= 1 : tier === 2 && this.shadowTiers >= 2);
   }
 
   /** Puts the first `count` instances into one tier (-1 = none). */
@@ -557,10 +569,10 @@ export class Vegetation {
     registerValue('veg.lod.billboard', 'Ab dieser Entfernung (m) werden Bäume als Impostor (gebackenes Bild aus 8 Richtungen) gezeichnet', () => this.billboardDistance, (v) => { this.billboardDistance = v; this.forcedLod = undefined; bands(); }, [0, 5000]);
     registerValue('veg.lod.bush', 'Büsche bis zu dieser Entfernung (m) zeichnen', () => this.bushDistance, (v) => { this.bushDistance = v; bands(); }, [0, 1000]);
     registerValue('veg.fade', 'Breite der geditherten Überblendung zwischen den Detailstufen, Anteil der Entfernung 0..0.5', () => this.fade, (v) => { this.fade = v; bands(); }, [0, 0.5]);
-    registerValue('veg.shadows', 'Detailstufen, die Schatten werfen (mit Wind und Überblendung): 0 keine, 1 detailliert, 2 detailliert und einfach, 3 alle', () => this.shadowTiers, (v) => {
+    registerValue('veg.shadows', 'Baumschatten (mit Wind und Überblendung): 0 keine, 1 nur detaillierte Bäume, 2 alle (ab der einfachen Stufe als Impostor zur Sonne gedreht)', () => this.shadowTiers, (v) => {
       this.shadowTiers = Math.round(v);
-      for (const t of this.tiles.values()) for (const g of t.groups) g.meshes.forEach((im, l) => (im.castShadow = t.shadows && !g.bush && l < this.shadowTiers));
-    }, [0, 3]);
+      for (const t of this.tiles.values()) for (const g of t.groups) { g.state = ''; g.meshes.forEach((im, l) => (im.castShadow = this.castsShadow(t, g, l))); }
+    }, [0, 2]);
     registerValue('veg.far', 'Bäume blenden bis zu dieser Entfernung (m) geditherten aus, damit sie nicht mit ihrer Kachel auftauchen (höchstens stream.radius)', () => this.farDistance, (v) => { this.farDistance = v; bands(); }, [100, 10000]);
     registerValue('veg.selfshadow', 'Blätter fragen den Sonnenschatten so viele Kronenradien zur Sonne hin ab: 0 = Krone beschattet sich selbst über die Schattenkarte, 1 = nur über Normalen und Verdeckung (wie Impostor)', () => vegUniforms.uVegLift.value, (v) => (vegUniforms.uVegLift.value = v), [0, 3]);
     registerValue('veg.translucency', 'Durchscheinendes Sonnenlicht in den Blättern bei Gegenlicht 0..2 (im Schatten keins)', () => vegUniforms.uVegThrough.value, (v) => (vegUniforms.uVegThrough.value = v), [0, 2]);

@@ -7,10 +7,13 @@ import { propSetFromScene } from '../src/world/propGlb.ts';
 import { PROP_NAMES } from '../src/world/propKinds.ts';
 import { withoutTextures } from './glbWithoutTextures.ts';
 
-async function load() {
+async function scene() {
   const buf = readFileSync(new URL('../public/models/props.glb', import.meta.url));
-  const gltf = await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(withoutTextures(buf), '');
-  return propSetFromScene(gltf.scene);
+  return (await new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parseAsync(withoutTextures(buf), '')).scene;
+}
+
+async function load() {
+  return propSetFromScene(await scene());
 }
 
 const tris = (g: THREE.BufferGeometry) => (g.index ? g.index.count : g.getAttribute('position').count) / 3;
@@ -53,20 +56,9 @@ describe('props GLB', () => {
     }
   });
 
-  it('pedestrians: four variants under 400 triangles with the pedView pivots', async () => {
-    const set = await load();
-    expect(set.peds.map((p) => p.variant)).toEqual(['mantel', 'rock', 'rucksack', 'kind']);
-    for (const p of set.peds) {
-      expect(tris(p.torso) + tris(p.head) + tris(p.hair) + 2 * (tris(p.leg) + tris(p.arm))).toBeLessThan(400);
-      const leg = box(p.leg), arm = box(p.arm), head = box(p.head);
-      expect(leg.max.y).toBeLessThan(0.05);
-      expect(leg.min.y).toBeCloseTo(-0.92, 1);
-      expect(arm.min.y).toBeCloseTo(-0.6, 1);
-      expect(head.max.y).toBeGreaterThan(1.75);
-      // Greyscale: the game tints them.
-      const c = p.torso.getAttribute('color') as THREE.BufferAttribute;
-      for (let i = 0; i < c.count; i += 7) expect(Math.abs(c.getX(i) - c.getY(i)) + Math.abs(c.getY(i) - c.getZ(i))).toBeLessThan(0.02);
-    }
-    expect(set.peds.find((p) => p.variant === 'kind')!.scale).toBeCloseTo(0.67, 2);
+  it('has no pedestrian figures', async () => {
+    const names: string[] = [];
+    (await scene()).traverse((o) => names.push(o.name));
+    expect(names.filter((n) => /^fussgaenger-\d/.test(n))).toEqual([]);
   });
 });

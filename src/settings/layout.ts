@@ -125,8 +125,6 @@ export const SECTIONS: MenuSection[] = [
       'Leben in der Stadt',
       e('traffic', 'Verkehr'),
       e('traffic.density', 'Verkehrsdichte'),
-      e('peds', 'Fußgänger'),
-      e('peds.density', 'Fußgängerdichte'),
     ],
   },
   {
@@ -152,7 +150,7 @@ export const LISTED = new Set(SECTIONS.flatMap((s) => s.items.filter((i): i is M
 
 /** Namespace headings in "Erweitert". */
 export const NAMESPACES: Record<string, string> = {
-  fx: 'Effekte', fog: 'Dunst', quality: 'Qualität', stream: 'Kachel-Streaming', lod: 'Fernsicht', traffic: 'Verkehr', peds: 'Fußgänger', amb: 'Geräuschkulisse',
+  fx: 'Effekte', fog: 'Dunst', quality: 'Qualität', stream: 'Kachel-Streaming', lod: 'Fernsicht', traffic: 'Verkehr', amb: 'Geräuschkulisse',
   assist: 'Fahrhilfen', drive: 'Antrieb', damage: 'Schaden', hud: 'Anzeige', perf: 'Leistung', telemetry: 'Telemetrie', nitro: 'Nitro', bld: 'Gebäude',
   water: 'Wasser', weather: 'Wetter', time: 'Tageszeit', cam: 'Kamera', input: 'Eingabe', audio: 'Audio', surface: 'Untergrund', physics: 'Physik', pad: 'Gamepad',
 };

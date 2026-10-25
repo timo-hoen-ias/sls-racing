@@ -303,7 +303,7 @@ export class Water {
   /** Mirror plane height in use, for the debug console. */
   level = 0;
   mirrorActive = false;
-  /** Small detail (props, traffic, pedestrians, grass) left out of the mirror; it barely shows in rippled water. */
+  /** Small detail (props, traffic, grass) left out of the mirror; it barely shows in rippled water. */
   readonly hideInMirror: THREE.Object3D[] = [];
   /** Draw everything in the mirror after all (water.mirror.detail). */
   mirrorDetail = false;

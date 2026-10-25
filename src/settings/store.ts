@@ -9,7 +9,7 @@ type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem' | 'removeItem'>;
 const KEY = 'sls.settings';
 
 /** Debug switches that only make sense for the moment; the menu changes them but never saves them. */
-export const SESSION_ONLY = new Set(['freeze', 'nitro', 'slowmo', 'physics.gravity', 'fx.wireframe', 'surface.show', 'traffic.freeze', 'peds.freeze', 'traffic.debug', 'peds.debug', 'phys.model', 'time']);
+export const SESSION_ONLY = new Set(['freeze', 'nitro', 'slowmo', 'physics.gravity', 'fx.wireframe', 'surface.show', 'traffic.freeze', 'traffic.debug', 'phys.model', 'time']);
 
 export class SettingsStore {
   saved: Record<string, Value> = {};

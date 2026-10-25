@@ -9,7 +9,7 @@ import type { Knockdown } from '../world/knockdown.ts';
 import type { WallGlide } from './forgive.ts';
 
 // Game feel: one switch between the fun racer (The Crew style: punchy engine, planted at speed, nitro bursts,
-// soft landings, gliding along walls, shoving traffic, safe pedestrians, fewer parked cars, a lively camera)
+// soft landings, gliding along walls, shoving traffic, fewer parked cars, a lively camera)
 // and the realistic setup the game had before. Each value also has its own command.
 
 export type FeelProfile = 'fun' | 'real';
@@ -23,7 +23,6 @@ export interface FeelContext {
   speedLines: SpeedLines;
   damage: CarDamage;
   traffic: { punt: boolean; massScale: number; applyMass(): void };
-  peds: { safe: boolean };
   props: { parkDensity: number; parkMinWidth: number; applyParkFilter(): void };
 }
 
@@ -38,7 +37,6 @@ interface Profile {
   kerb: number;
   punt: boolean;
   traffic: number;
-  peds: boolean;
   park: number;
   parkWidth: number;
   cam: ChaseCamera['feel'];
@@ -49,13 +47,13 @@ interface Profile {
 export const FEEL: Record<FeelProfile, Profile> = {
   fun: {
     car: { torque: 1.2, downforce: 1.7, drag: 0.85, airLevel: 0.7, landing: 0.8, brake: 1.1, stick: 1 },
-    burst: true, drift: true, refill: 0.03, knockLoss: 0.04, glide: true, kerb: 0.35, punt: true, traffic: 0.5, peds: true,
+    burst: true, drift: true, refill: 0.03, knockLoss: 0.04, glide: true, kerb: 0.35, punt: true, traffic: 0.5,
     park: 0.5, parkWidth: 6, lines: true, damagePower: false,
     cam: { lag: 1, swing: 1, height: 1.8, dist: 5.8, speedFov: 0.06, boostFov: 9, maxKmh: 280 },
   },
   real: {
     car: { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0 },
-    burst: false, drift: false, refill: 0.05, knockLoss: 0.1, glide: false, kerb: 1, punt: false, traffic: 1, peds: false,
+    burst: false, drift: false, refill: 0.05, knockLoss: 0.1, glide: false, kerb: 1, punt: false, traffic: 1,
     park: 1, parkWidth: 0, lines: false, damagePower: true,
     cam: { lag: 0, swing: 0, height: 2.1, dist: 6, speedFov: 0.045, boostFov: 6, maxKmh: 220 },
   },
@@ -88,7 +86,6 @@ export class GameFeel {
     c.traffic.punt = f.punt;
     c.traffic.massScale = f.traffic;
     c.traffic.applyMass();
-    c.peds.safe = f.peds;
     c.props.parkDensity = f.park;
     c.props.parkMinWidth = f.parkWidth;
     c.props.applyParkFilter();
@@ -105,7 +102,7 @@ export class GameFeel {
       `Spielgefühl: ${this.profile === 'fun' ? 'Fun-Racer' : 'Realistisch'}`,
       `Motor ×${fe.torque} · Abtrieb ×${fe.downforce} · Luftwiderstand ×${fe.drag} · Ausrichten in der Luft ${fe.airLevel} · weiche Landung ${fe.landing} · Arcade-Bremse +${fe.brake} g · Bodenhaftung ${fe.stick}`,
       `Nitro-Stoß ${c.car.burst.enabled ? 'an' : 'aus'} · Nachfüllen ${CAR.nitro.refill}/s · Gleiten an Wänden ${c.glide.enabled ? 'an' : 'aus'} · Bordsteinstoß ×${c.surface.kerbBump}`,
-      `Verkehr rammen ${c.traffic.punt ? 'an' : 'aus'} (Masse ×${c.traffic.massScale}) · sichere Fußgänger ${c.peds.safe ? 'an' : 'aus'} · Parker ${Math.round(c.props.parkDensity * 100)} % ab ${c.props.parkMinWidth} m`,
+      `Verkehr rammen ${c.traffic.punt ? 'an' : 'aus'} (Masse ×${c.traffic.massScale}) · Parker ${Math.round(c.props.parkDensity * 100)} % ab ${c.props.parkMinWidth} m`,
       `Kamera: Nachziehen ${c.cam.feel.lag} · Kurvenblick ${c.cam.feel.swing} · Höhe ${c.cam.feel.height} m · Tempo-Linien ${c.speedLines.enabled ? 'an' : 'aus'} · Schaden kostet Leistung ${c.damage.performance ? 'ja' : 'nein'}`,
     ].join('\n');
   }

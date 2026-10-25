@@ -87,7 +87,7 @@ Seit Oktober 2026 geht Spielgefühl vor Realismus (Vorschlagsliste `docs/fun-rac
 - **Nitro**: kurz antippen gibt einen Stoß (`feel.burst`, `feel.burstkick`, `feel.burstcost`), halten den Dauerschub. Nachgefüllt wird vor allem durch Stil (`nitro.refill` für das langsame Nachfüllen).
 - **Stilpunkte** (`src/game/style.ts`, `src/game/score.ts`): knapp vorbei, Windschatten, Gegenverkehr, Drift, Sprung, Umfahren, Rammen und Vollgas geben Nitro und Punkte. Moves stapeln sich zu einer Kombo mit Multiplikator, die nach einigen Sekunden ohne neuen Move gutgeschrieben wird; ein harter Crash kostet die laufende Kombo. Befehle `score.info|bank|add|window|step`.
 - **Verzeihende Kollisionen**: an Wänden und Planken gleitet das Auto bei streifenden Treffern weiter (`forgive`, `forgive.keep|angle`). Verkehr lässt sich rammen: das getroffene Fahrzeug fliegt als Wrack aus dem Verkehr (`traffic.punt`, `traffic.mass`, `traffic.wreck`, `traffic.wrecktime`). Parkende Autos werden ab 25 km/h weggeschoben.
-- **Weniger im Weg**: nur die Hälfte der parkenden Autos und keine an Straßen unter 6 m (`props.parkdensity`, `props.parkwidth`), flache Bordsteine (8 cm) mit kleinem Stoß (`kerb.bump`), Fußgänger springen immer rechtzeitig weg (`peds.safe`).
+- **Weniger im Weg**: nur die Hälfte der parkenden Autos und keine an Straßen unter 6 m (`props.parkdensity`, `props.parkwidth`), flache Bordsteine (8 cm) mit kleinem Stoß (`kerb.bump`).
 - **Kamera und Tempo**: die Verfolgerkamera fällt beim Beschleunigen zurück und schaut in Kurven mit (`cam.style arcade|ruhig`, `cam.lag|swing|height|dist`), das Sichtfeld weitet sich bis 280 km/h, Tempo-Linien am Bildrand (`fx.speedlines`, `fx.speedlines.from|strength`).
 - **Spiel-Sounds** (`src/audio/gameSfx.ts`, ohne Sample-Dateien): `sfx on|off`, `sfx.volume`, `sfx.play <name>`.
 
@@ -111,8 +111,6 @@ KI-Verkehr (Autos, Lieferwagen, Busse, Lkw) fährt auf dem Straßengraph rechts,
 Ampeln: Kreuzungen mit `highway=traffic_signals` in OSM (benachbarte Knoten einer großen Kreuzung zu einer Gruppe zusammengefasst, `pipeline/lib/signals.ts`) schalten zwischen Haupt- und Querrichtung (Grün, Gelb 3 s, Alles-Rot 2 s, Rot-Gelb vor Grün; Zyklus 56 s, versetzt je Kreuzung). Der Verkehr hält bei Rot und bei Gelb, wenn er noch bremsen kann; an Ampelkreuzungen gilt die Vorfahrtsregel nicht. Jede Zufahrt hat einen Ampelmast rechts vor der Kreuzung. Befehle: `traffic.signals [on|off]`, `traffic.signals.cycle [s]`, `traffic.signals.force red|yellow|green|auto`, `traffic.signals.near [n]`.
 
 Befehle: `traffic.density 0..1`, `traffic.spawn [anzahl] [car|van|bus|truck]`, `traffic.freeze`, `traffic.debug` (Zustand als Farbe über jedem Fahrzeug), `traffic.info`, `traffic.near` (mit Grund fürs Warten), `traffic.clear`, `traffic.max`, `traffic.radius`, `traffic.sound`, `traffic on|off`.
-
-Fußgänger gehen auf den Gehwegen der Stadtstraßen und in der Fußgängerzone, queren an Kreuzungen (der Verkehr wartet; an Ampeln nur bei Grün für ihre Richtung), springen zur Seite, wenn du auf sie zufährst, und stehen nach einem Umfaller wieder auf. In Ladenstraßen sind mehr Leute unterwegs, und manche gehen hinüber zum Schaufenster, schauen ein paar Sekunden hinein und laufen weiter (`peds.browse 0..1`, `peds.info` zählt sie). Befehle: `peds.density 0..1`, `peds.spawn [n]`, `peds.debug`, `peds.info`, `peds.freeze`, `peds.models glb|procedural` (vier Blender-Figuren: Mantel, Rock, Rucksack, Kind), `peds.jaywalk` (auch bei Rot gehen), `peds.clear`, `peds.max`, `peds on|off`.
 
 Fassaden haben Charakter: Die Pipeline ordnet jedem Gebäude einen Typ zu (Wohnhaus, Altbau in der Altstadt, Mehrfamilienhaus, Büro/Geschäft, Halle, Kirche, Garage, Schule/öffentlich; `pipeline/lib/facades.ts`), an Hauptstraßen der Innenstadt bekommt das Erdgeschoss Schaufenster. Nachts leuchten zufällige Fenster. Befehle: `bld.facade [auto|typ]`, `bld.windows`, `bld.shops`, `bld.night auto|0..1`.
 
@@ -159,7 +157,7 @@ Wahrzeichen (W7): `tools/landmark-footprints.ts` holt die OSM-Grundrisse und sch
 
 Vegetation: `tools/blender/make_vegetation.py` baut Platane, Linde, Kastanie, Ahorn, Birke, Pappel, Fichte, Kiefer und Obstbaum (auf 8 m normiert, Extras `height`/`crown`/`kind`) sowie Busch, Gebüsch und ein 1 m langes Heckenstück entlang z. Je Art gibt es `lod0` (400–800 Dreiecke), `lod1` (≤ 120) und für Bäume ein Billboard aus zwei gekreuzten Flächen mit eingebackenem Atlas. Farben stecken in den Vertexfarben, Texturen werden keine gebraucht außer dem Billboard-Atlas. `src/world/vegGlb.ts` lädt `public/models/vegetation.glb` (`npm run models:vegetation`), ergänzt das `wind`-Attribut wie `vegModels.ts` und ordnet die Arten den Vegetationsarten zu (`SPECIES_BY_KIND`).
 
-Straßenmöbel und Fußgänger: `tools/blender/make_props.py` baut `public/models/props.glb` (`npm run models:props`) mit allen Möbeln aus `propKinds.ts` (je `lod0`/`lod1`, lod1 unter 150 Dreiecken), Bushaltestelle mit Häuschen, Ampel mit getrennten Lampen (rot/gelb/grün an den Positionen aus `signalView.ts`), Verkehrsschildern nach StVO (Vorfahrtstraße, Vorfahrt, Vorfahrt achten, Stop, Einfahrt verboten, Tempo 30/50/70/100, Ortsschild, Zusatzzeichen, Fußgängerüberweg; Schilder-Atlas selbst gezeichnet und eingebettet) und vier Fußgängern (Mantel, Rock, Rucksack, Kind) in Einzelteilen mit den Drehpunkten aus `pedView.ts`, hellgrau zum Einfärben per Instanzfarbe. `src/world/propGlb.ts` lädt alles.
+Straßenmöbel: `tools/blender/make_props.py` baut `public/models/props.glb` (`npm run models:props`) mit allen Möbeln aus `propKinds.ts` (je `lod0`/`lod1`, lod1 unter 150 Dreiecken), Bushaltestelle mit Häuschen, Ampel mit getrennten Lampen (rot/gelb/grün an den Positionen aus `signalView.ts`), Verkehrsschildern nach StVO (Vorfahrtstraße, Vorfahrt, Vorfahrt achten, Stop, Einfahrt verboten, Tempo 30/50/70/100, Ortsschild, Zusatzzeichen, Fußgängerüberweg; Schilder-Atlas selbst gezeichnet und eingebettet). `src/world/propGlb.ts` lädt alles.
 
 Straßenbrücken: Deck, Rampen und Kollision baut die Pipeline (`public/tiles/bridges.json`). `tools/blender/make_bridges.py` setzt darauf für jede Brücke ab 30 m Länge Brüstung mit Gesims, Stahlgeländer und Pfeiler mit Querträger (`public/models/landmarks/bruecke-<way id>.glb`, Kollision nur außerhalb des Fahrbahnbands). `node tools/landmark-footprints.ts` trägt sie mit `bridge` und Deckhöhe `y` ins Manifest ein, `npm run models:bridges` baut sie (nach `npm run world:build`).
 
@@ -189,7 +187,6 @@ src/
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
   world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)
   nav/               GPS: Ziel, Fortschritt, Neuberechnung, Abbiegehinweise
-  peds/              Fußgänger auf Gehwegen: Laufen, Queren, Ausweichen
   traffic/           KI-Verkehr auf dem Straßengraph: Fahrlogik (IDM, Vorfahrt), Modelle, Kollision, Sound
   render/ audio/ ui/ Szene, Post-Processing, Routen-Linie, Motorsound, HUD, Minimap, Karte
 ```

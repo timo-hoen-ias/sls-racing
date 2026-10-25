@@ -279,7 +279,7 @@ export class WorldStreamer implements KnockableSource {
     return this.available.has(tileKey(ix, iy));
   }
 
-  /** True when the tile under (x, z) is drawn (for spawning traffic, pedestrians …). */
+  /** True when the tile under (x, z) is drawn (for spawning traffic …). */
   isVisibleAt(x: number, z: number) {
     return this.loaded.has(tileKey(...tileOfLocal(this.index.world, x, z)));
   }

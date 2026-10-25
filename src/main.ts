@@ -773,6 +773,7 @@ async function boot() {
     game.update({ x: ip.x, z: ip.z, speed: Math.hypot(lvel.x, lvel.z), dt: paused ? 0 : dt });
     styleFeed.setCombo(score.bank, score.multiplier, score.timer / score.window);
     speedLines.update(dt, Math.abs(rs ? rs.speed : car.speed) * 3.6, boostFx);
+    if (car.boosting) game.nitroUsed();
     if (car.bursting > 0 && !wasBursting) { sfx.play('burst'); input.rumble(0.8, 220); }
     wasBursting = car.bursting > 0;
     viewDist.afterCamera();

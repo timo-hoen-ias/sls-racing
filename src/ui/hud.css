@@ -205,3 +205,7 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 #wanted .wd-escape .wd-fill { background: #4bd37b; }
 #wanted .wd-bust .wd-fill { background: #ff4b4b; }
 @keyframes wd-flash { 0% { box-shadow: 0 0 0 2px #2a5bffaa; } 100% { box-shadow: 0 0 0 2px #ff3030aa; } }
+
+/* First-minutes hints (E8) */
+#tutorial-hint { position: absolute; left: 50%; top: calc(12px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); max-width: min(520px, 52vw); text-align: center; background: #0b1520e0; border: 1px solid #38b6ff88; border-radius: 8px; padding: 6px 12px; font-size: 14px; font-weight: 600; text-shadow: 0 1px 3px #000; }
+#tutorial-hint b { color: #38b6ff; margin-right: 6px; }

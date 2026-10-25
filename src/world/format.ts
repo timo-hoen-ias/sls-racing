@@ -74,6 +74,8 @@ export interface TileData {
   sidewalks?: PackedMesh;
   /** Footpaths, cycle paths and steps: road shader, wheels-only collision. */
   paths?: PackedMesh;
+  /** OSM details, visual only: vertex colours (sRGB bytes) and normals (pipeline/lib/details.ts). */
+  details?: PackedMesh;
   /** Float32 x, y, z, heading per street lamp. */
   lamps?: string;
   /** Uint8 tree kind per tree, see vegKinds.ts. */

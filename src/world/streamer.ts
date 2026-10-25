@@ -101,6 +101,19 @@ class TileLoader {
  */
 export class WorldStreamer implements KnockableSource {
   readonly root = new THREE.Group();
+  /** OSM detail meshes (tracks, wires, markings, islands) shown (world.details). */
+  private detailsShown = true;
+  get showDetails() { return this.detailsShown; }
+  set showDetails(v: boolean) {
+    this.detailsShown = v;
+    for (const t of this.loaded.values()) { const d = t.group.getObjectByName('details'); if (d) d.visible = v; }
+  }
+  /** Triangles of the detail meshes in loaded tiles. */
+  detailTriangles() {
+    let n = 0;
+    for (const t of this.loaded.values()) { const d = t.group.getObjectByName('details') as THREE.Mesh | undefined; if (d) n += (d.geometry.index?.count ?? d.geometry.getAttribute('position').count) / 3; }
+    return n;
+  }
   private loaded = new Map<string, LoadedTile>();
   private loading = new Set<string>();
   private available: Set<string>;
@@ -477,6 +490,9 @@ export class WorldStreamer implements KnockableSource {
     mesh('paths', b.meshes.paths, this.mats.road);
     mesh('markings', b.meshes.markings, this.mats.marking);
     mesh('buildings', b.meshes.buildings, this.mats.building, { cast: true });
+    // OSM details (pipeline/lib/details.ts): tracks, overhead wires, pitch markings, islands …
+    const dm = mesh('details', b.meshes.details, this.mats.detail, { cast: true });
+    if (dm) dm.visible = this.showDetails;
 
     // Trees and bushes are drawn by the vegetation layer (src/world/vegetation.ts).
 

@@ -4,7 +4,7 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 import { propSetFromScene } from '../src/world/propGlb.ts';
-import { PROP_NAMES } from '../src/world/propKinds.ts';
+import { PROP_NAMES, Prop } from '../src/world/propKinds.ts';
 import { withoutTextures } from './glbWithoutTextures.ts';
 
 async function scene() {
@@ -24,8 +24,9 @@ describe('props GLB', () => {
     const set = await load();
     // Bridge railings, delineators and chevron boards are procedural only (propModels.ts) for now.
     const skip = new Set(['hecke', 'parker', 'schild', 'stoppschild', 'vorfahrt-achten', 'ortsschild', 'gelaender', 'leitpfosten', 'richtungstafel-links', 'richtungstafel-rechts']);
-    for (const name of Object.values(PROP_NAMES)) {
-      if (skip.has(name)) continue;
+    // So are the OSM detail kinds from the gate on (2026-10-25); the Blender set may add them later.
+    for (const [kind, name] of Object.entries(PROP_NAMES)) {
+      if (skip.has(name) || Number(kind) >= Prop.gate) continue;
       const p = set.props[name];
       expect(p, name).toBeDefined();
       expect(tris(p.lod1), name).toBeLessThanOrEqual(150);

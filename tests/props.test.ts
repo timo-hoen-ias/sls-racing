@@ -137,3 +137,42 @@ describe('street furniture', () => {
     expect(signTypeOf(Prop.bench, -1)).toBeUndefined();
   });
 });
+
+describe('OSM detail props', () => {
+  const pt = (e: number, n: number, tags: Record<string, string>, id = 50) => ({ id, tags, e, n });
+
+  it('places the new furniture with its variant', () => {
+    const recs = records(run({ ways: [street()], points: [
+      pt(E + 30, N + 8, { amenity: 'vending_machine', vending: 'parking_tickets' }, 51),
+      pt(E + 60, N + 8, { historic: 'memorial', memorial: 'stele' }, 52),
+      pt(E + 90, N + 8, { highway: 'speed_camera' }, 53),
+      pt(E + 120, N + 9, { tourism: 'information', information: 'map' }, 54),
+      pt(E + 150, N + 8, { historic: 'memorial', memorial: 'stolperstein' }, 55),
+      pt(E + 30, N - 30, { amenity: 'hunting_stand' }, 56),
+    ] }).tiles);
+    const of = (k: PropKind) => recs.filter((r) => r[0] === k);
+    expect(of(Prop.vending)[0][5]).toBe(1);
+    expect(of(Prop.memorial)).toHaveLength(1);
+    expect(of(Prop.memorial)[0][5]).toBe(1);
+    expect(of(Prop.speedCamera)).toHaveLength(1);
+    expect(of(Prop.infoBoard)[0][5]).toBe(1);
+    expect(of(Prop.huntingStand)).toHaveLength(1);
+  });
+
+  it('opens a gate mapped on a road and moves it to the kerb, keeps big props off the lanes', () => {
+    const recs = records(run({ ways: [street()], points: [pt(E + 50, N, { barrier: 'gate' }), pt(E + 100, N + 2, { advertising: 'billboard' }, 60)] }).tiles);
+    const gate = recs.find((r) => r[0] === Prop.gate)!;
+    expect(gate[5]).toBe(1);
+    expect(Math.abs(gate[3])).toBeGreaterThan(2);
+    // The billboard (3.8 m wide) is moved off the street, never left on it.
+    for (const b of recs.filter((r) => r[0] === Prop.billboard)) expect(Math.abs(b[3])).toBeGreaterThan(2);
+  });
+
+  it('lays retaining walls along their way and adds mapped lamps', () => {
+    const wall: Way = { id: 9, tags: { barrier: 'retaining_wall' }, pts: [[E, N + 20], [E + 40, N + 20]], ids: [90, 91], closed: false };
+    const out = run({ ways: [street()], extra: { ways: [wall], areas: [] }, points: [pt(E + 70, N + 6, { highway: 'street_lamp' })] });
+    const walls = records(out.tiles).filter((r) => r[0] === Prop.retainingWall);
+    expect(walls.reduce((a, r) => a + linearLength(r[5]), 0)).toBeCloseTo(40, 0);
+    expect(out.lamps).toHaveLength(1);
+  });
+});

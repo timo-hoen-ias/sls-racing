@@ -391,6 +391,18 @@ export function applyCar(spec: CarSpec, geometry?: CarGeometry) {
   v.maxRpm = ENGINE.maxRpm;
 }
 
+/** A car's engine sound and gearbox without touching the player's car (the other players' cars online). */
+export function carSound(spec: CarSpec) {
+  const engine = structuredClone(BASE.engine), sound = structuredClone(BASE.sound);
+  delete sound.turbo;
+  if (spec.engine) deepAssign(engine, spec.engine as Overrides);
+  if (spec.sound) deepAssign(sound, spec.sound);
+  const e = engine as unknown as typeof ENGINE;
+  const profile = sound as unknown as typeof ENGINE_SOUND;
+  profile.voice = { ...profile.voice, idleRpm: e.idleRpm, maxRpm: e.maxRpm };
+  return { profile, engine: e };
+}
+
 /** Peak power (kW) and torque (Nm) of the current ENGINE, for car.info. */
 export function enginePeak() {
   let kw = 0, nm = 0;

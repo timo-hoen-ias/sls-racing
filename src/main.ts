@@ -48,7 +48,6 @@ import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
 import { BridgeJoints } from './audio/bridgeJoints.ts';
-import { Pedestrians } from './peds/peds.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
 import { StallLayer } from './world/stalls.ts';
@@ -206,20 +205,13 @@ async function boot() {
     if (hedge) props.setModel(Prop.hedge, hedge.lod0);
   }, (e) => console.warn('[veg] GLB nicht geladen', e));
   loadVehicleParts().then((set) => { traffic.view.setModels(set, 'glb'); props.setVehicles(set); }, (e) => console.warn('[traffic] GLB nicht geladen, nehme die prozeduralen Fahrzeuge', e));
-  const peds = new Pedestrians(graph, { maxPeds: quality.peds, shadows: quality.shadows > 0, traffic: traffic.sim });
-  view.scene.add(peds.view.root);
-  water.hideInMirror.push(props.root, peds.view.root, traffic.view.root, vegetation.root, guideSigns.root);
-  // Street furniture, signs, traffic light heads and pedestrian figures from Blender (props.models, peds.models).
+  water.hideInMirror.push(props.root, traffic.view.root, vegetation.root, guideSigns.root);
+  // Street furniture, signs, and traffic light heads from Blender (props.models).
   loadProps().then((set) => {
     props.setPropSet(set);
     if (set.props.ampel) traffic.lights.setModels(set.props.ampel.lod0, set.lamps);
-    peds.view.setVariants(set.peds);
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
-  peds.sim.events.knocked = (_, v) => {
-    sound?.impact(Math.min(0.5, v / 30));
-    input.rumble(0.5, 150);
-  };
   const worldAudio = new WorldAudio({
     R: RAPIER, world, graph, car: car.body, scene: view.scene,
     ignore: (c) => traffic.isSolid(c.parent()),
@@ -405,8 +397,6 @@ async function boot() {
   registerRenderCommands(view);
   registerWaterCommands(water);
   registerTrafficCommands(traffic, () => ({ x: ip.x, z: ip.z, heading: car.heading() }));
-  peds.registerCommands(() => ({ x: ip.x, z: ip.z }));
-  peds.sim.shops = shops;
   props.registerCommands(() => ({ x: ip.x, z: ip.z }));
   shops.registerCommands(() => ({ x: ip.x, z: ip.z }));
   vegetation.registerCommands();
@@ -420,7 +410,7 @@ async function boot() {
   glide.registerCommands();
   const speedLines = new SpeedLines($('hud'));
   speedLines.registerCommands();
-  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, damage: carView.damage, traffic, peds: peds.sim, props });
+  const feel = new GameFeel({ car, cam, knock: knockdown, glide, surface: roadSurface, speedLines, damage: carView.damage, traffic, props });
   feel.registerCommands();
   const vehicleDebug = registerVehicleCommands({ car, view: carView, cam, sound: () => sound, setManual, reset: () => resetCar(), carUrl: () => garage.current.url });
 
@@ -679,7 +669,6 @@ async function boot() {
     const lvel = car.body.linvel();
     const simDt = debugState.frozen || paused ? 0 : dt * debugState.timeScale;
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
-    peds.update(simDt, worldReady ? ip : undefined, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
@@ -787,7 +776,6 @@ async function boot() {
       fps, speed: car.speed, time: view.daylight.hours, rpm: car.rpm, gear: car.gear, slip: car.slip, pos: { x: ip.x, y: ip.y, z: ip.z }, tiles: streamer.loadedCount, ready: worldReady,
       route: nav.route ? { length: nav.route.length, progress: nav.progress } : null,
       traffic: traffic.sim,
-      peds: peds.sim,
       setDestination: (x: number, z: number) => nav.setDestination(x, z, ip.x, ip.z),
       debug: (line: string) => runCommand(line),
       run: (line: string) => debug.exec(line),

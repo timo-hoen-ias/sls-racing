@@ -91,6 +91,14 @@ Seit Oktober 2026 geht Spielgefühl vor Realismus (Vorschlagsliste `docs/fun-rac
 - **Kamera und Tempo**: die Verfolgerkamera fällt beim Beschleunigen zurück und schaut in Kurven mit (`cam.style arcade|ruhig`, `cam.lag|swing|height|dist`), das Sichtfeld weitet sich bis 280 km/h, Tempo-Linien am Bildrand (`fx.speedlines`, `fx.speedlines.from|strength`).
 - **Spiel-Sounds** (`src/audio/gameSfx.ts`, ohne Sample-Dateien): `sfx on|off`, `sfx.volume`, `sfx.play <name>`.
 
+### Events, Stufen und Spielstand
+
+- **Titelbildschirm** mit Losfahren, Events, Garage und Optionen, bedienbar mit Maus, Tastatur und Gamepad (`src/ui/gameMenus.ts`, `src/ui/padNav.ts`). `title` zeigt ihn wieder.
+- **Events** (`src/game/events/`): der Generator legt sie beim Start aus dem Straßengraph an (immer gleich, `event.regen [seed]` würfelt neu): Sprints quer durch die Stadt und Rundkurse (Rennen mit Countdown und Checkpoints), ein Duell auf der Autobahn, Blitzer und Tempozonen auf Geraden, Driftzonen auf kurvigen Strecken, Verkehrsslalom auf Hauptstraßen, Pylonen-Slalom auf breiten Geraden, Sprünge an Schanzen. Handgemachte Events in `public/tiles/events.json` (`{ "events": [...] }`) ersetzen generierte mit gleicher id oder kommen dazu. Skills starten beim Durchfahren ihres Starttors, Rennen mit F (Pad: Steuerkreuz →) am Start oder aus der Eventliste (J, Pad: L3) mit „Hin & los“. Im Rennen führt das Navi zum nächsten Checkpoint (`event.navi`), R setzt am letzten Checkpoint zurück. Medaillen Bronze, Silber, Gold, Platin; die Karte und die Minimap zeigen jedes Event mit Farbe nach Art und Ring nach der besten Medaille.
+- **Stufen und Credits** (`src/game/progress.ts`): Events zahlen XP und Credits nach Medaille und Schwierigkeit, Stufen schalten schwerere Events frei. Anzeige oben rechts.
+- **Spielstand** (`src/game/save.ts`, localStorage `sls.save`): XP, Credits, Autos, Teile, Bestzeiten und Medaillen je Event, Entdecktes.
+- Befehle: `event.list [art]`, `event.start <nr|id|name>`, `event.near [art]`, `event.win [0..4]`, `event.abort`, `event.info`, `event.regen`, `events on|off`, `xp`, `xp.add`, `credits.add`, `level.set`, `save.info|write|export|import`, `save.reset ja`.
+
 ## Stadtleben
 
 KI-Verkehr (Autos, Lieferwagen, Busse, Lkw) fährt auf dem Straßengraph rechts, folgt mit Abstand (Intelligent Driver Model), bremst vor Kurven und Abbiegungen, lässt an Kreuzungen die größere Straße zuerst, sonst gilt rechts vor links, Linksabbieger warten auf Gegenverkehr. Vor dir bremsen die Autos und hupen, wenn du im Weg stehst; nach einem Rempler bleiben sie mit Warnblinker stehen. Im Nahbereich sind sie fest (Kollision), die nächsten fünf haben Motor- und Reifengeräusch mit Doppler-Effekt.

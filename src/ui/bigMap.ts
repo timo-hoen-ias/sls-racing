@@ -1,6 +1,6 @@
 import type { Navigation } from '../nav/navigation.ts';
 import type { RoadGraph } from '../world/roadGraph.ts';
-import { MAP_COLORS, drawCar, drawFlag, drawRoads, drawRoute } from './mapDraw.ts';
+import { MAP_COLORS, type MapMarker, drawMarkers, drawCar, drawFlag, drawRoads, drawRoute } from './mapDraw.ts';
 
 /** Full-screen north-up map: drag to pan, wheel or pinch to zoom, tap a street to set the destination. */
 export class BigMap {
@@ -10,6 +10,8 @@ export class BigMap {
   private ctx: CanvasRenderingContext2D;
   private graph: RoadGraph;
   private nav: Navigation;
+  /** Event markers (U2), set by the game. */
+  markers?: () => MapMarker[];
   private cx = 0;
   private cz = 0;
   private pxPerM = 0.4;
@@ -131,6 +133,7 @@ export class BigMap {
     ctx.translate(-this.cx, -this.cz);
     const radius = Math.hypot(w, h) / 2 / k;
     drawRoads(ctx, this.graph, this.cx, this.cz, radius, k);
+    if (this.markers) drawMarkers(ctx, this.markers(), this.cx, this.cz, radius, k);
     if (this.nav.route) drawRoute(ctx, this.nav.route, this.nav.progress, k);
     if (this.nav.destination) drawFlag(ctx, this.nav.destination.x, this.nav.destination.z, k);
     drawCar(ctx, this.car.x, this.car.z, this.car.heading, k);

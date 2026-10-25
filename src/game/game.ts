@@ -28,6 +28,7 @@ import { Collectibles, DISTRICT_BONUS, placeTokens, TOKEN_REWARD } from './colle
 import { STEPS, Tutorial } from './tutorial.ts';
 import { type Destination, makeDelivery } from './delivery.ts';
 import { Discovery, DISTRICT_REWARD, type District, type Viewpoint, VIEWPOINT_REWARD } from './discovery.ts';
+import { Online } from '../net/online.ts';
 import { GhostRecorder, type GhostRun, ghostStore, GhostView, type Pose } from './ghost.ts';
 
 // The game around the driving (G1): spielstand, level and credits, the events in town with their gates and
@@ -60,6 +61,8 @@ export interface GameDeps {
   ramps?: JumpRamp[];
   /** The player car's garage (vehicle/garage.ts): parts, dealer and home garage need it (P3, P4). */
   cars?: CarControl;
+  /** Leaderboards and friends' ghosts (O1); absent or unavailable = offline. */
+  online?: Online;
   /** Where the home garage goes (beside the start). */
   home?: { x: number; z: number };
   /** Ground height for markers. */
@@ -615,6 +618,40 @@ export class Game {
     }
   }
 
+  /** The running event, else the last race (online.board). */
+  currentEventId() { return this.runner.event?.id ?? this.lastRace?.id; }
+
+  /** A result as the event shows it (time, km/h, m …). */
+  formatResult(id: string, v: number) {
+    const ev = this.events.find((x) => x.id === id);
+    return ev ? formatValue(ev, v) : String(v);
+  }
+
+  /** In races: the fastest friend's ghost replaces your own when it beats it (O1). */
+  private async friendGhost(e: GameEvent) {
+    const on = this.d.online;
+    if (!on?.available || !on.friendGhosts || !this.ghosts || !this.ghostEvent(e)) return;
+    try {
+      const rival = Online.rivalOf(await on.board(e.id), this.ghostRun?.value);
+      if (!rival) return;
+      const run = await on.ghost(e.id, rival.name);
+      if (this.runner.event?.id !== e.id || this.runner.state === 'done') return;
+      this.ghostRun = run;
+      this.d.toast(`Geist: ${rival.name} ${formatValue(e, run.value)}`, 1.8);
+    } catch (err) { console.info('[online] kein Geist', (err as Error).message); }
+  }
+
+  /** Sends the result (and the run's ghost) to the friends' leaderboard and tells the rank (O1). */
+  private async sendResult(e: GameEvent, value: number) {
+    const on = this.d.online;
+    if (!on?.available || !on.send) return;
+    try {
+      const ghost = this.ghostEvent(e) ? this.ghostRec.finish(value) : undefined;
+      const r = await on.submit(e.id, value, e.higher, this.d.cars?.current(), ghost);
+      this.d.toast(`Bestenliste: Platz ${r.rank}${r.best ? ' · neue Bestleistung' : ''}`, 2);
+    } catch (err) { console.info('[online] Ergebnis nicht gesendet', (err as Error).message); }
+  }
+
   private wireRunner() {
     const r = this.runner;
     const { sfx, toast, rumble } = this.d;
@@ -622,6 +659,7 @@ export class Game {
       this.ghostRec.start();
       this.ghostRun = this.ghostEvent(e) ? ghostStore.load(e.id) : undefined;
       if (this.ghostRun && this.ghosts) toast(`Geist: deine Bestzeit ${formatValue(e, this.ghostRun.value)}`, 1.6);
+      void this.friendGhost(e);
       if (!RACE_TYPES.has(e.type)) { sfx.play('go', 0.6); toast(`${EVENT_LABELS[e.type]}: ${e.name}`, 1.4); } };
     r.onCountdown = (n) => { this.hud.countdown(n); sfx.play('beep'); };
     r.onGo = () => { this.hud.countdown(0); sfx.play('go'); rumble(0.5, 200); };
@@ -644,6 +682,7 @@ export class Game {
       this.signal({ kind: 'medal', medal: res.medal, type: e.type });
       this.tutorial.mark('event');
       if (res.best && this.ghostEvent(e)) ghostStore.save(e.id, this.ghostRec.finish(res.value));
+      void this.sendResult(e, res.value);
       this.progress.reward(res.xp, res.credits, e.name);
       const part = this.workshop?.reward(e, res.medal);
       if (part) { toast(`Neues Teil: ${part}`, 2.5); sfx.play('discover', 0.7); }

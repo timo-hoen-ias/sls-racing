@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "online:dev": "wrangler dev -c worker/wrangler.dev.jsonc --port 8788",
     "test": "vitest run",
     "world:fetch": "node pipeline/fetch.ts saarlouis",
     "world:lidar": "node pipeline/lidar.ts saarlouis",

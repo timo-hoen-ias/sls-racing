@@ -238,7 +238,10 @@ export class Game {
     if (this.title.open) this.play();
     if (this.runner.busy) this.runner.abort('Abgebrochen');
     const back = RACE_TYPES.has(e.type) ? (this.fieldOf(e) ? 14 : 6) : 60;
-    this.d.teleport(e.start.x - e.start.dx * back, e.start.z - e.start.dz * back, headingOf(e.start));
+    // Speed traps start at their run-up, far enough back to reach the gold speed.
+    const r = e.extra?.runup;
+    if (r) this.d.teleport(r.x, r.z, headingOf(r));
+    else this.d.teleport(e.start.x - e.start.dx * back, e.start.z - e.start.dz * back, headingOf(e.start));
     this.pending = RACE_TYPES.has(e.type) ? e : undefined;
     this.prev = undefined;
   }

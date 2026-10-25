@@ -87,7 +87,12 @@ export interface MapMarker {
   medal?: number;
   /** Races: a bigger marker. */
   big?: boolean;
+  /** Filter group on the big map (U2). */
+  group?: MarkerGroup;
 }
+
+export type MarkerGroup = 'race' | 'skill' | 'place' | 'view';
+export const MARKER_GROUPS: Record<MarkerGroup, string> = { race: 'Rennen', skill: 'Skills', place: 'Orte', view: 'Aussichtspunkte' };
 
 const MEDAL_RING = ['', '#c98a4b', '#c9d1d9', '#ffd60a', '#e8f6ff'];
 

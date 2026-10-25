@@ -150,7 +150,7 @@ export interface GenerateOptions {
   spacing?: number;
   max?: Partial<Record<EventType, number>>;
   /** Ramps placed in the world (W3) that get a jump event each. */
-  ramps?: { x: number; y: number; z: number; heading: number; length: number; height: number; name: string }[];
+  ramps?: { x: number; y: number; z: number; heading: number; length: number; height: number; name: string; runup?: { x: number; y: number; z: number } }[];
 }
 
 const STREET = (name: string) => name.replaceAll(';', ' / ') || 'Landstraße';
@@ -260,15 +260,6 @@ export function generateEvents(graph: RoadGraph, opts: GenerateOptions = {}): Ga
       medals: [16, 13, 11, 9.5], higher: false, unit: 's', level: 1, limit: 45, extra: { cones } });
   }
 
-  // Jumps on placed ramps.
-  for (const r of opts.ramps ?? []) {
-    if (count('jump') >= max.jump) break;
-    const dx = Math.sin(r.heading), dz = -Math.cos(r.heading);
-    const g: Gate = { x: r.x - dx * (r.length / 2 + 15), y: r.y, z: r.z - dz * (r.length / 2 + 15), dx, dz, w: 4 };
-    events.push({ id: id('jump', g), type: 'jump', name: `Sprungschanze ${r.name}`, where: r.name, start: g, gates: [], medals: [20, 35, 50, 70], higher: true, unit: 'm', level: 1, limit: 6, extra: { ramp: r } });
-    taken.push({ x: g.x, z: g.z });
-  }
-
   // Sprints across town and circuits around a centre.
   const rand = rng(opts.seed ?? 7);
   const big = all.filter((c) => c.rank >= 4 && c.length > 80);
@@ -320,6 +311,17 @@ export function generateEvents(graph: RoadGraph, opts: GenerateOptions = {}): Ga
     add({ id: id('circuit', s), type: 'circuit', name: `Rundkurs ${STREET(snaps[0]!.edge.name)}`, where: STREET(snaps[0]!.edge.name), start: s,
       gates: routeGates(P, cum, 400, 9), laps, path: flat(P), medals: [total / (60 / 3.6), total / (75 / 3.6), total / (90 / 3.6), total / (105 / 3.6)], higher: false, unit: 's',
       level: 2 + count('circuit'), rivals: 4 });
+  }
+  // Jumps on placed ramps (W3), last so they never push other events away.
+  for (const r of opts.ramps ?? []) {
+    if (count('jump') >= max.jump) break;
+    const dx = Math.sin(r.heading), dz = -Math.cos(r.heading);
+    const g: Gate = { x: r.x - dx * (r.length / 2 + 12), y: r.y, z: r.z - dz * (r.length / 2 + 12), dx, dz, w: 5 };
+    const ru = r.runup ?? { x: g.x - dx * 60, y: g.y, z: g.z - dz * 60 };
+    const rl = Math.hypot(g.x - ru.x, g.z - ru.z) || 1;
+    const runup: Gate = { ...ru, dx: (g.x - ru.x) / rl, dz: (g.z - ru.z) / rl, w: 5 };
+    events.push({ id: id('jump', g), type: 'jump', name: `Sprungschanze ${r.name}`, where: r.name, start: g, gates: [], medals: [20, 35, 50, 70], higher: true, unit: 'm', level: 1, limit: 6, extra: { ramp: r, runup } });
+    taken.push({ x: g.x, z: g.z });
   }
   return events;
 }

@@ -1,0 +1,13 @@
+{
+  "name": "Sportcoupé RS",
+  "credit": "Generic Sport Coupé Car von Márcio Meireles (mmcworks), CC BY 4.0, sketchfab.com/3d-models/820a13c4831c41959ce75e6c2014e882",
+  "forward": "+z",
+  "wheels": "Wheel\\.(Ft|Bk)|/brake-disc[.0-9]*/",
+  "calipers": "/brake-caliper[.0-9]*/",
+  "head": "/headlight-drl\\.[lr]/|/headlights\\.[lr]/",
+  "brake": "/taillight-led/|/taillight-01/.*Red_0",
+  "paint": { "materials": ["car-body"] },
+  "tyre": ["tire-low.001"],
+  "hidden": ["interior", "media", "mechanics"],
+  "exhaust": "/exhaust-pipe/"
+}

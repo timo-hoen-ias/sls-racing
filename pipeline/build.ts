@@ -3,6 +3,7 @@
 //   node pipeline/build.ts saarlouis  only the named regions
 //   node pipeline/build.ts fixture    synthetic test area (no download needed)
 // Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.bin (gzipped binary container, see encodeTile in format.ts)
+import { districtList } from './lib/districts.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import {
@@ -11,7 +12,7 @@ import {
 } from '../src/world/format.ts';
 import { buildBuildings, buildLod2 } from './lib/buildings.ts';
 import { landmarkArea, landmarkList, readLandmarks } from './lib/landmarks.ts';
-import { Footprints, isTrafficStructure, lod2Buildings, lod2TileCount, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
+import { Footprints, isTrafficStructure, lod2Buildings, lod2Tags, lod2TileCount, LOD2_ATTRIBUTION, type Lod2Building } from './lib/lod2.ts';
 import { bridgeDeckList } from './lib/bridges.ts';
 import { RoadCarve } from './lib/carve.ts';
 import { buildProps, mapillarySignType, signSize } from './lib/props.ts';
@@ -41,7 +42,8 @@ import { MeshBuf, TileMap } from './lib/tilebuf.ts';
 import { WaterLines } from './lib/waterways.ts';
 import { fixtureOsm } from './fixture.ts';
 import { buildFar } from './lib/far.ts';
-import { PROP_NAMES, Prop, type PropKind } from '../src/world/propKinds.ts';
+import { PROP_NAMES, PROP_STRIDE, Prop, type PropKind } from '../src/world/propKinds.ts';
+import { FootGrid, HouseIndex, buildGardens, houseRecords, planHouses, ringArea, type HouseCandidate } from './lib/houses.ts';
 import { BUSH_STRIDE, Bush, type TreeKind } from '../src/world/vegKinds.ts';
 import { areaDensity, areaTreeKind, areaTreeScale, isPark, treeKindOf } from './lib/vegetation.ts';
 import { loadLidar } from './lib/lidar.ts';
@@ -133,7 +135,12 @@ function main() {
   const landmarkFoot = landmarkArea(landmarks);
   const centre = (r: [number, number][]) => r.reduce(([a, b], [e, n]) => [a + e / r.length, b + n / r.length], [0, 0]);
   const footprints = new Footprints();
-  if (lod2Dir) for (const b of lod2Buildings(lod2Dir)) if (!isTrafficStructure(b)) footprints.add(b.ground);
+  // LoD2 buildings that may become freely designed houses (houses.ts): one ground ring each.
+  const lod2Rings: { id: string; ring: [number, number][]; fn: string; parts: number }[] = [];
+  if (lod2Dir) for (const b of lod2Buildings(lod2Dir)) if (!isTrafficStructure(b)) {
+    footprints.add(b.ground);
+    if (b.ground.length) lod2Rings.push({ id: b.id, ring: b.ground.reduce((a, r) => (ringArea(r) > ringArea(a) ? r : a)), fn: b.fn, parts: b.ground.length });
+  }
   // Only where the region has something already (roads, OSM buildings): the survey tiles reach past it.
   const T0 = info.tileSize;
   const used = new Set(tiles.tiles.keys());
@@ -164,10 +171,30 @@ function main() {
     if (hit) blocking++;
     return hit;
   };
+  // Freely designed houses, villas and administrative buildings in place of fitting surveyed ones (houses.ts).
+  const houseRoad = new RoadMask(osm.ways, 2.0);
+  const osmKept = osm.polygons.filter((p) => p.tags.building && p.tags.building !== 'no' && p.outer.length > 3 && !footprints.covers(p.outer.slice(0, -1)) && !landmarkFoot.contains(...centre(p.outer.slice(0, -1))));
+  const lod2Kept = lod2Rings.filter((b) => {
+    const r = b.ring;
+    return r.length >= 3 && used.has(`${Math.floor(r[0][0] / T0)}_${Math.floor(r[0][1] / T0)}`) && !landmarkFoot.contains(...centre(r)) && lines.through(r) === undefined;
+  });
+  const houseCands: HouseCandidate[] = [
+    ...lod2Kept.filter((b) => b.parts === 1).map((b) => ({ key: `L${b.id}`, outer: b.ring, tags: lod2Tags(b.fn), fn: b.fn })),
+    ...osmKept.filter((p) => !p.holes.length && lines.through(p.outer.slice(0, -1)) === undefined).map((p) => ({ key: `O${p.id}`, outer: p.outer.slice(0, -1), tags: p.tags })),
+  ];
+  const allFoot = [...lod2Rings.map((b) => ({ key: `L${b.id}`, ring: b.ring })), ...osmKept.map((p) => ({ key: `O${p.id}`, ring: p.outer.slice(0, -1) }))];
+  const houses = planHouses(houseCands, {
+    world: info, height, onRoad: (e, n) => houseRoad.has(e, n), onPath: (e, n) => onPaths.has(e, n),
+    centre: (e, n) => Math.hypot(e - info.originE, n - info.originN), footprints: allFoot,
+  });
+  const houseRecs = houseRecords(houses.plans, info);
+  console.log(`Houses: ${houses.plans.length} freely designed (${Object.entries(houseRecs.counts).sort((a, b) => b[1] - a[1]).map(([k, c]) => `${k} ${c}`).join(', ')}) · kept real: ${Object.entries(houses.rejected).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
+  const keptFoot = new FootGrid([...lod2Rings.filter((b) => !houses.replaced.has(`L${b.id}`)).map((b) => b.ring), ...osmKept.filter((p) => !houses.replaced.has(`O${p.id}`)).map((p) => p.outer.slice(0, -1))]);
+  const houseIndex = new HouseIndex(houses.plans);
   const shopBuildings: ShopBuilding[] = [];
   const onBuilding = (b: ShopBuilding) => shopBuildings.push(b);
-  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, roofColour: roofColourAt, skip: (b) => isTrafficStructure(b) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
-  const nBuildings = buildBuildings(osm.polygons, info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding, roofColour: roofColourAt });
+  const lod2 = buildLod2(lod2Dir ? lod2Buildings(lod2Dir) : [], info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), onBuilding, roofColour: roofColourAt, skip: (b) => isTrafficStructure(b) || houses.replaced.has(`L${b.id}`) || outside(b) || (!!b.ground[0] && landmarkFoot.contains(...centre(b.ground[0]))) || blocks(b.ground) });
+  const nBuildings = buildBuildings(osm.polygons.filter((p) => !houses.replaced.has(`O${p.id}`)), info, height, tiles, { mainRoad: (e, n) => mainRoads.has(e, n), skip: (o) => footprints.covers(o) || landmarkFoot.contains(...centre(o)) || blocks([o]), onBuilding, roofColour: roofColourAt });
   if (landcover) console.log(`Roofs: ${[...roofInfo.values()].reduce((a, v) => a + v.length / 5, 0)} buildings with their surveyed colour`);
   console.log(`Roads: ${samples.length} samples, ${graph.edges.length} graph edges, ${graph.names.length} street names · Buildings: ${lod2.count} LoD2 + ${nBuildings} OSM, ${blocking} left out on roads`);
 
@@ -326,6 +353,21 @@ function main() {
   console.log(`Car parks: ${props.stallLines.length / 4} painted stall lines`);
   if (landcover) console.log(`Hedges: ${landcover.hedges.length} measured from the laser heights, ${props.measuredHedges} pieces placed, ${hedgeBushes} bushes on them dropped; ${props.alkisWalls} wall pieces from ALKIS`);
   const shops = buildShops(osm, { world: info, height, onRoad: (e, n) => onRoad.has(e, n), onLanes: (e, n) => onLanes.has(e, n), buildings: shopBuildings });
+  // Front gardens of the designed houses, where no surveyed fence, wall or hedge runs already.
+  const barrierCells = new Set<string>();
+  for (const list of props.tiles.values())
+    for (let i = 0; i + PROP_STRIDE <= list.length; i += PROP_STRIDE) {
+      if (list[i] !== Prop.fence && list[i] !== Prop.wall && list[i] !== Prop.hedge) continue;
+      const [e, n] = localToUtm(info, list[i + 1], list[i + 3]);
+      const len = Math.abs(list[i + 5]), h = list[i + 4];
+      // Linear props run along their heading: local (sin h, cos h) is UTM (sin h, -cos h).
+      for (let d = -len / 2; d <= len / 2; d += 1) barrierCells.add(`${Math.round(e + Math.sin(h) * d)}_${Math.round(n - Math.cos(h) * d)}`);
+    }
+  const gardens = buildGardens(houses.plans, {
+    world: info, height, onRoad: (e, n) => houseRoad.has(e, n), onPath: (e, n) => onPaths.has(e, n), inBuilding: (e, n) => keptFoot.inside(e, n),
+    barrier: (e, n) => { for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (barrierCells.has(`${Math.round(e) + a}_${Math.round(n) + b}`)) return true; return false; },
+  });
+  console.log(`Gardens: ${gardens.gardens} front gardens · ${Object.entries(gardens.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   // Guard rails, delineators and chevron boards outside town (roadside.ts).
   const roadside = buildRoadside(osm.ways, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), dressed });
@@ -337,6 +379,24 @@ function main() {
   const rc = roadside.counts;
   console.log(`Roadside: ${rc.railKm} km guard rail (${rc.motorway} motorway, ${rc.medianKm} km double median, ${rc.bridges} bridge, ${rc.mapped} mapped runs, ${rc.embankments} embankment roads), ${rc.posts} delineators, ${rc.chevrons} chevron boards`);
   console.log(`Props: ${Object.entries(props.counts).map(([k, c]) => `${PROP_NAMES[Number(k) as PropKind]} ${c}`).join(', ') || '-'}`);
+
+  // Trees and bushes the designed houses (a little larger than the real footprints) would swallow.
+  let clearedTrees = 0;
+  for (const [k, list] of treesByTile) {
+    const kinds = treeKindsByTile.get(k)!, crowns = treeCrownsByTile.get(k)!;
+    const keep: number[] = [], keepK: number[] = [], keepC: number[] = [];
+    for (let i = 0, j = 0; i < list.length; i += 4, j++) {
+      if (houseIndex.covers(...localToUtm(info, list[i], list[i + 2]), 0.8)) { clearedTrees++; continue; }
+      keep.push(...list.slice(i, i + 4)); keepK.push(kinds[j]); keepC.push(crowns[j]);
+    }
+    treesByTile.set(k, keep); treeKindsByTile.set(k, keepK); treeCrownsByTile.set(k, keepC);
+  }
+  for (const [k, list] of bushesByTile) {
+    const keep: number[] = [];
+    for (let i = 0; i < list.length; i += 5) if (!houseIndex.covers(...localToUtm(info, list[i], list[i + 2]), 0.5)) keep.push(...list.slice(i, i + 5));
+    bushesByTile.set(k, keep);
+  }
+  console.log(`Houses: ${clearedTrees} trees inside the designed houses removed`);
 
   rmSync(`${paths.out}t`, { recursive: true, force: true });
   mkdirSync(`${paths.out}t`, { recursive: true });
@@ -419,15 +479,19 @@ function main() {
     const ww = waterways.get(k);
     if (ww) tile.waterways = encode(new Float32Array(ww));
     const trees = treesByTile.get(k);
-    if (trees) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
+    if (trees?.length) tile.trees = encode(new Float32Array(trees.map((v) => Math.round(v * 100) / 100)));
     const treeKinds = treeKindsByTile.get(k);
-    if (treeKinds) tile.treeKinds = encode(new Uint8Array(treeKinds));
+    if (treeKinds?.length) tile.treeKinds = encode(new Uint8Array(treeKinds));
     const crowns = treeCrownsByTile.get(k);
     if (crowns?.some((c) => c > 0)) tile.treeCrowns = encode(new Uint8Array(crowns));
     const bushes = bushesByTile.get(k);
-    if (bushes) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
+    if (bushes?.length) tile.bushes = encode(new Float32Array(bushes.map((v) => Math.round(v * 100) / 100)));
     const rails = railTiles.get(k);
     if (rails) tile.rails = encode(new Float32Array(rails));
+    const tileHouses = houseRecs.tiles.get(k);
+    if (tileHouses) tile.houses = encode(new Float32Array(tileHouses));
+    const tileGardens = gardens.tiles.get(k);
+    if (tileGardens) tile.gardens = encode(new Float32Array(tileGardens));
     const tileShops = shops.tiles.get(k);
     if (tileShops) tile.shops = encode(new Float32Array(tileShops));
     const tileProps = props.tiles.get(k);
@@ -491,6 +555,9 @@ function main() {
   const placed = landmarkList(landmarks, info, height, (e, n) => want.has(`${Math.floor(e / T)}_${Math.floor(n / T)}`));
   writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
   console.log(`Landmarks: ${placed.length} models placed`);
+  const districts = districtList(osm, (e, n) => utmToLocal(info, e, n));
+  writeFileSync(`${paths.out}districts.json`, JSON.stringify({ v: 1, districts }));
+  console.log(`Districts: ${districts.map((d) => d.name).join(', ') || '–'}`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info, medians.points)));

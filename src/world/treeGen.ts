@@ -6,7 +6,9 @@ import { BARKS, FOLIAGE_GRID, LEAF_CARDS, type SpeciesShape } from './treeSpecie
 // (bark.webp) and leaf cluster cards (leaves.webp) at the twigs. Two levels of detail from the same skeleton:
 // lod 0 with every branch and card, lod 1 with the main branches and fewer, larger cards.
 // Geometry groups: 0 wood, 1 leaves. Attributes: position, normal, uv, color (ambient occlusion), wind (0 at the
-// base, 1 at the top; how far a vertex sways). Trunk base at the origin, +Y up.
+// base, 1 at the top; how far a vertex sways), leaf (the crown radius on leaf cards, 0 on bark: the shadow pass
+// draws both groups with one material, and leaves look up their shadow from the crown's sunny side). Trunk base at
+// the origin, +Y up.
 
 type V3 = THREE.Vector3;
 const v3 = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
@@ -215,9 +217,11 @@ function grow(sp: SpeciesShape, seed: number) {
       cards.push({ p, up, n: nn, size, lod1: false, shell: true });
     }
   }
-  // The simple model keeps every third card of the inner shell and every twelfth twig card, both larger.
+  // The simple model keeps every other card of the inner shell and every fourth twig card (conifers: every other,
+  // their boughs are the outline), both larger (lod1Scale).
+  const [es, et] = lod1Every(sp);
   let k = 0, ks = 0;
-  for (const cd of cards) cd.lod1 = cd.shell ? ks++ % 3 === 0 : k++ % 12 === 0;
+  for (const cd of cards) cd.lod1 = cd.shell ? ks++ % es === 0 : k++ % et === 0;
   return { limbs, cards, c, R, Rv };
 }
 
@@ -260,16 +264,25 @@ function tube(b: Buf, l: Limb, sides: number, barkCell: number, H: number) {
     }
 }
 
-/** One leaf card: square quad, bottom centre at the twig, cell of the leaf atlas; normals bent towards the crown's. */
+/** The simple model keeps every n-th card of the inner shell and of the twigs. */
+const lod1Every = (sp: SpeciesShape) => [2, sp.form === 'cone' ? 2 : 4];
+/** Size factor of a kept card: about the same leaf area as the cards left out. */
+const lod1Scale = (every: number) => Math.sqrt(every) * 0.96;
+
+/**
+ * One leaf card: square quad, bottom centre at the twig, cell of the leaf atlas; normals bent towards the crown's.
+ * A larger card (sizeK > 1) keeps the centre of the original, so the simple model has the same outline.
+ */
 function card(b: Buf, cd: Card, cell: number, sizeK: number, c: V3, R: number, Rv: number, H: number) {
   const base = b.pos.length / 3;
   const s = cd.size * sizeK;
   const side = cd.up.clone().cross(cd.n).normalize();
+  const lift = -(sizeK - 1) * cd.size * 0.38;
   const cu = (cell % FOLIAGE_GRID) / FOLIAGE_GRID, cv = 1 - (Math.floor(cell / FOLIAGE_GRID) + 1) / FOLIAGE_GRID;
   const e = 1 / FOLIAGE_GRID;
   const corners: [number, number][] = [[-0.5, 0], [0.5, 0], [-0.5, 1], [0.5, 1]];
   for (const [x, y] of corners) {
-    const p = cd.p.clone().addScaledVector(side, x * s).addScaledVector(cd.up, y * s - s * 0.12);
+    const p = cd.p.clone().addScaledVector(side, x * s).addScaledVector(cd.up, y * s - s * 0.12 + lift);
     b.pos.push(p.x, p.y, p.z);
     // Mostly the crown's normal (soft volume shading), a little of the card's own.
     const out = p.clone().sub(c);
@@ -288,13 +301,14 @@ function card(b: Buf, cd: Card, cell: number, sizeK: number, c: V3, R: number, R
   b.idx.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
 }
 
-function toGeometry(b: Buf) {
+function toGeometry(b: Buf, leaf: number) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(b.pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(b.nrm, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
   g.setAttribute('color', new THREE.Float32BufferAttribute(b.col, 3));
   g.setAttribute('wind', new THREE.Float32BufferAttribute(b.wind, 1));
+  g.setAttribute('leaf', new THREE.Float32BufferAttribute(new Float32Array(b.wind.length).fill(leaf), 1));
   g.setIndex(b.idx);
   return g;
 }
@@ -318,9 +332,9 @@ export function buildTree(sp: SpeciesShape, seed = 1): TreeGeometry {
     }
     for (const cd of cards) {
       if (lod === 1 && !cd.lod1) continue;
-      card(leaf, cd, Math.max(0, leafCell), lod ? (cd.shell ? 1.7 : 2.3) : 1, c, R, Rv, H);
+      card(leaf, cd, Math.max(0, leafCell), lod ? lod1Scale(lod1Every(sp)[cd.shell ? 0 : 1]) : 1, c, R, Rv, H);
     }
-    const g = mergeGeometries([toGeometry(wood), toGeometry(leaf)], true)!;
+    const g = mergeGeometries([toGeometry(wood, 0), toGeometry(leaf, R)], true)!;
     g.computeBoundingSphere();
     lods.push(g);
   }

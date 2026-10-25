@@ -34,6 +34,7 @@ export const SECTIONS: MenuSection[] = [
       e('fx.shadows', 'Schatten'),
       e('fx.ao', 'Umgebungsverdeckung (AO)'),
       e('fx.bloom', 'Bloom'),
+      e('fx.look', 'Spiel-Look'),
       e('fx.godrays', 'Lichtstrahlen'),
       e('fx.flare', 'Lens Flare'),
       'Atmosphäre',

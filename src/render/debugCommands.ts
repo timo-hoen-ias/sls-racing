@@ -163,6 +163,7 @@ export function registerRenderCommands(view: SceneSetup) {
   factor('godrays', 'fx.godrays', 'Lichtstrahlen (God Rays) durch Wolken und Gebäude');
   factor('flare', 'fx.flare', 'Lens Flare der Sonne');
   factor('bloom', 'fx.bloom', 'Leichtes Bloom/Glühen heller Lichter');
+  factor('look', 'fx.look', 'Spiel-Look: kräftigere Farben, Kontrast, warme Lichter und mehr Bloom (0 = neutral)');
   reg({
     name: 'fx.clouds',
     args: '[0..1|on|off]',

@@ -136,8 +136,12 @@ export function laneOffset(e: Edge) {
 
 export class TrafficSim {
   readonly agents: Agent[] = [];
-  /** 0..1, scales the number of vehicles around the player. */
-  density = 0.6;
+  /** 0..1, scales the number of vehicles around the player (a little dense in free roam, for near misses). */
+  density = 0.7;
+  /** Event route (V1): traffic there is thinned to this share, and the whole field to eventDensity. */
+  thinOut?: (x: number, z: number) => boolean;
+  thinKeep = 0.2;
+  eventDensity = 0.7;
   maxAgents: number;
   /** Vehicles appear and vanish between these distances from the player. */
   spawnMin = 90;
@@ -168,7 +172,19 @@ export class TrafficSim {
   }
 
   get target() {
-    return Math.round(this.density * this.maxAgents);
+    return Math.round(this.density * this.maxAgents * (this.thinOut ? this.eventDensity : 1));
+  }
+
+  /** Clears most vehicles off the event route, except those near the player (they would vanish in sight). */
+  thinRoute(p: { x: number; z: number }, keepNear = 120) {
+    if (!this.thinOut) return 0;
+    const before = this.agents.length;
+    for (let i = this.agents.length - 1; i >= 0; i--) {
+      const a = this.agents[i];
+      if (a.state === 'player' || Math.hypot(a.x - p.x, a.z - p.z) < keepNear) continue;
+      if (this.thinOut(a.x, a.z) && this.rng() > this.thinKeep) this.agents.splice(i, 1);
+    }
+    return before - this.agents.length;
   }
 
   clear() {
@@ -260,6 +276,7 @@ export class TrafficSim {
       const [x, , z] = pointAt(e.p, e.cum, along);
       const d = Math.hypot(x - p.x, z - p.z);
       if (d < (burst ? 40 : this.spawnMin) || d > this.spawnMax) continue;
+      if (this.thinOut?.(x, z) && this.rng() > this.thinKeep) continue;
       // Do not pop up in plain sight.
       if (!burst && view && d < 250) {
         const dx = (x - view.x) / d, dz = (z - view.z) / d;

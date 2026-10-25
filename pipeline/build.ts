@@ -3,6 +3,7 @@
 //   node pipeline/build.ts saarlouis  only the named regions
 //   node pipeline/build.ts fixture    synthetic test area (no download needed)
 // Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.bin (gzipped binary container, see encodeTile in format.ts)
+import { districtList } from './lib/districts.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import {
@@ -488,6 +489,9 @@ function main() {
   const placed = landmarkList(landmarks, info, height, (e, n) => want.has(`${Math.floor(e / T)}_${Math.floor(n / T)}`));
   writeFileSync(`${paths.out}landmarks.json`, JSON.stringify({ v: 1, landmarks: placed }));
   console.log(`Landmarks: ${placed.length} models placed`);
+  const districts = districtList(osm, (e, n) => utmToLocal(info, e, n));
+  writeFileSync(`${paths.out}districts.json`, JSON.stringify({ v: 1, districts }));
+  console.log(`Districts: ${districts.map((d) => d.name).join(', ') || '–'}`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
   writeFileSync(`${paths.out}ramps.json`, JSON.stringify(rampList(ramps, info, medians.points)));

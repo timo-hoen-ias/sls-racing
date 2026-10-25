@@ -45,7 +45,7 @@ export function registerGameSettings(c: GameSettingsContext) {
   const post = view.post;
   if (post) {
     const st = post.settings;
-    for (const [key, name] of [['fog', 'fx.fog'], ['heightFog', 'fx.heightfog'], ['bloom', 'fx.bloom'], ['godrays', 'fx.godrays'], ['flare', 'fx.flare'], ['blur', 'fx.blur'], ['radial', 'fx.radial'], ['nitroBlur', 'fx.nitroblur']] as const) {
+    for (const [key, name] of [['fog', 'fx.fog'], ['heightFog', 'fx.heightfog'], ['bloom', 'fx.bloom'], ['look', 'fx.look'], ['godrays', 'fx.godrays'], ['flare', 'fx.flare'], ['blur', 'fx.blur'], ['radial', 'fx.radial'], ['nitroBlur', 'fx.nitroblur']] as const) {
       describe(name, { kind: 'value', get: () => st[key], set: (v) => { st[key] = Number(v); }, range: name === 'fx.fog' || name === 'fx.heightfog' ? [0, 4] : [0, 2], step: 0.1 });
     }
     describe('fx.fogheight', { kind: 'value', get: () => st.fogHeight, set: (v) => { st.fogHeight = Number(v); }, range: [5, 300], step: 5 });

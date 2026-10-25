@@ -2,7 +2,7 @@
 // no collision. Railway tracks, overhead wires, pitch markings, islands and the like are built from these
 // primitives (rail.ts, power.ts, leisure.ts, roadDetails.ts). Positions come in UTM with absolute heights.
 import { type WorldInfo, utmToLocal } from '../../src/world/format.ts';
-import type { MeshBuf, TileMap } from './tilebuf.ts';
+import { MeshBuf, type TileMap } from './tilebuf.ts';
 
 export type Rgb = [number, number, number];
 type P3 = [number, number, number]; // local x, y, z
@@ -19,7 +19,10 @@ export class Details {
     this.tiles = tiles;
   }
 
+  /** Tiles outside the built area get nothing: details alone would add tiles beyond the region. */
+  private spare = new MeshBuf();
   private buf(e: number, n: number): MeshBuf {
+    if (!this.tiles.has(e, n)) { this.spare = new MeshBuf(); return this.spare; }
     return this.tiles.at(e, n).details;
   }
 
@@ -60,6 +63,13 @@ export class Details {
     else this.quad(a, d, c, b, col);
   }
 
+  /** Horizontal-ish quad facing down (an underside), whatever order its corners come in. */
+  quadDown(a: P3, b: P3, c: P3, d: P3, col: Rgb) {
+    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (cross < 0) this.quad(a, b, c, d, col);
+    else this.quad(a, d, c, b, col);
+  }
+
   /** Box centred at (e, n) on y (its bottom), `along` metres along the unit direction (de, dn), `across` wide. */
   box(e: number, n: number, y: number, de: number, dn: number, along: number, across: number, h: number, col: Rgb, top = col) {
     const ae = de * along / 2, an = dn * along / 2, ce = dn * across / 2, cn = -de * across / 2;
@@ -73,6 +83,16 @@ export class Details {
   /** Vertical wall between two ground points, h high, visible from both sides. */
   wall(a: P3, b: P3, h: number, col: Rgb) {
     this.quad(a, b, [b[0], b[1], b[2] + h], [a[0], a[1], a[2] + h], col, true);
+  }
+
+  /** Vertical face a-b (bottom heights in a, b; tops ta, tb), one-sided, facing the UTM direction (fe, fn). */
+  face(a: P3, b: P3, ta: number, tb: number, fe: number, fn: number, col: Rgb) {
+    const A: P3 = a, B: P3 = b, C: P3 = [b[0], b[1], tb], D: P3 = [a[0], a[1], ta];
+    // The quad's normal (UTM e, n part) from its first edge along the bottom and the upward edge.
+    const ue = B[0] - A[0], un = B[1] - A[1];
+    // Wound A, B, C, D the face points to (un, -ue) in UTM (right of a → b) — see quad's local-frame flip.
+    if (un * fe - ue * fn >= 0) this.quad(A, B, C, D, col);
+    else this.quad(B, A, D, C, col);
   }
 
   /** Tube from a to b (UTM e, n, y): `sides` faces, radius r. */

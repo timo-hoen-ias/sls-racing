@@ -32,6 +32,7 @@ import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
 import { drawCalming, drawRoundaboutIslands, planTurningCircles } from './lib/roadDetails.ts';
 import { Details } from './lib/details.ts';
+import { TRACK, buildRail, isTrack } from './lib/rail.ts';
 import { fillSlots } from './lib/slots.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { CarriagewayIndex, buildRoads, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
@@ -131,6 +132,8 @@ function main() {
   const details = new Details(info, tiles);
   const islands = drawRoundaboutIslands(osm.ways, info, tiles, details, height);
   console.log(`Roundabout islands: ${islands.islands} raised, ${islands.spots.length - islands.islands} left open`);
+  const rail = buildRail(osm, info, details, height);
+  console.log(`Rail: ${rail.km.toFixed(1)} km track (${rail.electrifiedKm.toFixed(1)} km electrified, ${rail.masts} masts), ${rail.bridges} bridges, ${rail.crossings} level crossings`);
   // Narrow slots left between carriageways get patched, so no wheel drops between two roads.
   const slots = fillSlots(tiles, info);
   console.log(`Road slots: ${slots} cells of 0.5 m patched between carriageways`);
@@ -259,6 +262,10 @@ function main() {
   const onMotorLanes = new RoadMask(osm.ways, -0.5, (t) => !noCars(t));
   // Trees a little further: their trunk collider is up to TREE_COLLIDER_MAX wide and the mask is a 2 m grid.
   const treeLanes = new RoadMask(osm.ways, 1.0);
+  // No trees or bushes on the railway beds (rail.ts).
+  const railBed = new RoadMask([], 0.5);
+  railBed.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
+  treeLanes.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
   for (const m of [onRoad, onLanes, onMotorLanes, nearLanes, treeLanes]) m.addFillets(fillets);
   const offLanes = (lamps: number[]) => {
     const out: number[] = [];
@@ -404,6 +411,10 @@ function main() {
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   // Guard rails, delineators and chevron boards outside town (roadside.ts).
   const roadside = buildRoadside(osm.ways, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), dressed });
+  for (const [k, list] of rail.props) {
+    if (!props.tiles.has(k)) props.tiles.set(k, []);
+    props.tiles.get(k)!.push(...list);
+  }
   for (const [k, list] of roadside.props) {
     if (!props.tiles.has(k)) props.tiles.set(k, []);
     props.tiles.get(k)!.push(...list);
@@ -482,7 +493,7 @@ function main() {
           for (let i = 0; i < nt + nb; i++) {
             const te = e + rand(e, n, i * 2 + 5) * TREE_CELL;
             const tn = n - rand(e, n, i * 2 + 6) * TREE_CELL;
-            if (onRoad.has(te, tn) || onPaths.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
+            if (onRoad.has(te, tn) || railBed.has(te, tn) || onPaths.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
             if (i < nt) {
               // Trunks keep clear of the carriageway like the measured trees.
               if (treeLanes.has(te, tn)) continue;
@@ -616,7 +627,7 @@ function main() {
     return [p.name, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(p.y0 * 100) / 100, Math.round(p.area), Math.round(p.rms * 100), Math.round(Math.hypot(p.ge, p.gn) * 1000) / 10];
   }) }));
   // OSM details placed by the pipeline, for the osm.details command: [kind, x, z, note].
-  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots].map((s) => {
+  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots, ...rail.spots].map((s) => {
     const [x, z] = utmToLocal(info, s.e, s.n);
     return [s.kind, Math.round(x * 10) / 10, Math.round(z * 10) / 10, s.note];
   }) }));

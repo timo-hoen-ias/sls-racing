@@ -54,6 +54,12 @@ export class PropLayer {
   showMeasured = true;
   private tiles = new Map<string, TileProps>();
   private removedProps = new Set<string>();
+  /** Share of the parked cars that are kept (props.parkdensity), and the narrowest carriageway they stay on (props.parkwidth). */
+  parkDensity = 1;
+  parkMinWidth = 0;
+  /** Carriageway width of the street at a point (from the road graph), for props.parkwidth. */
+  roadWidthAt?: (x: number, z: number) => number | undefined;
+  private parkCache = new Map<string, boolean>();
   private byCollider = new Map<number, PropHit>();
   private collidersByTile = new Map<string, number[]>();
   private meshes = new Map<ModelKey, THREE.InstancedMesh[]>();
@@ -249,7 +255,7 @@ export class PropLayer {
     for (const t of tiles)
       for (let i = 0; i * PROP_STRIDE < t.data.length; i++) {
         const kind = t.data[i * PROP_STRIDE] as PropKind;
-        if (this.hiddenKinds.has(kind) || this.removedProps.has(`${t.key}:${i}`)) continue;
+        if (this.hiddenKinds.has(kind) || this.gone(t.key, i, t.data)) continue;
         const size = t.data[i * PROP_STRIDE + 5];
         if ((!this.showDetected && isDetected(kind, size)) || (!this.showMeasured && isMeasured(kind, size))) continue;
         let model: ModelKey = kind === Prop.busStop && size ? 'busShelter' : kind;
@@ -309,8 +315,58 @@ export class PropLayer {
       const kind = d[o] as PropKind;
       handles.push(col.handle);
       this.byCollider.set(col.handle, { kind, name: PROP_NAMES[kind], tileKey: key, index: i, x: d[o + 1], y: d[o + 2], z: d[o + 3], heading: d[o + 4], size: d[o + 5], breakable: BREAKABLE.has(kind) });
-    }, (i) => this.removedProps.has(`${key}:${i}`));
+    }, (i) => this.gone(key, i, d));
     this.collidersByTile.set(key, handles);
+  }
+
+  /** Knocked over, or a parked car thinned out by props.parkdensity / props.parkwidth. */
+  private gone(key: string, i: number, d: Float32Array) {
+    if (this.removedProps.has(`${key}:${i}`)) return true;
+    if (d[i * PROP_STRIDE] !== Prop.parkedCar || (this.parkDensity >= 1 && this.parkMinWidth <= 0)) return false;
+    const id = `${key}:${i}`;
+    let hide = this.parkCache.get(id);
+    if (hide === undefined) {
+      const o = i * PROP_STRIDE;
+      // Stable per car: the same ones vanish every time the tile loads.
+      let h = 2166136261;
+      for (let c = 0; c < id.length; c++) h = Math.imul(h ^ id.charCodeAt(c), 16777619);
+      const r = ((h >>> 0) % 1000) / 1000;
+      const w = this.parkMinWidth > 0 ? this.roadWidthAt?.(d[o + 1], d[o + 3]) : undefined;
+      hide = r >= this.parkDensity || (w !== undefined && w < this.parkMinWidth);
+      this.parkCache.set(id, hide);
+    }
+    return hide;
+  }
+
+  /** After props.parkdensity / props.parkwidth changed: hides the thinned-out cars and drops their colliders. */
+  applyParkFilter() {
+    this.parkCache.clear();
+    for (const [handle, hit] of this.byCollider) {
+      if (hit.kind !== Prop.parkedCar) continue;
+      const t = this.tiles.get(hit.tileKey);
+      if (!t || !this.gone(hit.tileKey, hit.index, t.data)) continue;
+      const c = this.world?.getCollider(handle);
+      this.byCollider.delete(handle);
+      if (c) this.world!.removeCollider(c, false);
+    }
+    this.dirty = true;
+  }
+
+  /** A parked car as loose debris (pushed away when rammed), from the model drawn for it. */
+  parkedCarDebris(hit: PropHit): THREE.Object3D[] {
+    const v = hit.size % 2 ? 'van' : 'car';
+    const meshes = this.meshes.get(`${v}${(Math.floor(hit.size / 2) + hit.index) % this.carVariants[v]}.0`) ?? this.meshes.get(`${v}.box`);
+    if (!meshes) return [];
+    const paint = (this.carMats.paint as THREE.MeshStandardMaterial).clone();
+    paint.color.setHex(CAR_PALETTE[Math.floor(hit.size / 2) % CAR_PALETTE.length]);
+    return meshes.map((im, n) => {
+      const m = new THREE.Mesh(im.geometry, n === 0 ? paint : im.material);
+      m.position.set(hit.x, hit.y, hit.z);
+      m.rotation.y = hit.heading;
+      m.castShadow = true;
+      m.userData.sharedGeometry = true;
+      return m;
+    });
   }
 
   private forgetColliders(key: string) {
@@ -347,7 +403,7 @@ export class PropLayer {
       for (let i = 0; i * PROP_STRIDE < t.data.length; i++) {
         const o = i * PROP_STRIDE;
         const d = Math.hypot(t.data[o + 1] - x, t.data[o + 3] - z);
-        if (d < r && !this.removedProps.has(`${t.key}:${i}`)) out.push({ kind: t.data[o] as PropKind, name: PROP_NAMES[t.data[o] as PropKind], d, size: t.data[o + 5], x: t.data[o + 1], z: t.data[o + 3] });
+        if (d < r && !this.gone(t.key, i, t.data)) out.push({ kind: t.data[o] as PropKind, name: PROP_NAMES[t.data[o] as PropKind], d, size: t.data[o + 5], x: t.data[o + 1], z: t.data[o + 3] });
       }
     return out.sort((a, b) => a.d - b.d);
   }
@@ -382,6 +438,8 @@ export class PropLayer {
     registerToggle('props.laserhecken', 'Hecken aus den Laserhöhen (DOM1 − DGM1 mit Luftbild-NDVI) zeigen (sonst nur OSM-Hecken)', () => this.showMeasured, (v) => { this.showMeasured = v; this.dirty = true; });
     registerToggle('props.mapillary', 'Schilder, Bänke und Hydranten aus Mapillary-Fotos zeigen (sonst nur OSM)', () => this.showDetected, (v) => { this.showDetected = v; this.dirty = true; });
     registerValue('props.carbox', 'Parkende Autos ab dieser Entfernung (m) als einfache Kästen ohne Schatten', () => this.carBoxDistance, (v) => { this.carBoxDistance = v; this.dirty = true; }, [0, 1500]);
+    registerValue('props.parkdensity', 'Anteil der parkenden Autos 0..1 (weniger = mehr Platz zum Fahren)', () => this.parkDensity, (v) => { this.parkDensity = v; this.applyParkFilter(); }, [0, 1]);
+    registerValue('props.parkwidth', 'Parkende Autos nur an Straßen ab dieser Fahrbahnbreite in m (0 = überall)', () => this.parkMinWidth, (v) => { this.parkMinWidth = v; this.applyParkFilter(); }, [0, 20]);
     registerValue('props.radius', 'Sichtweite der Straßenmöbel und Parker in Metern', () => this.radius, (v) => { this.radius = v; this.dirty = true; }, [30, 1500]);
     registerCommand({
       name: 'props.toggle', help: `Gruppe ein/aus: ${Object.keys(PROP_GROUPS).join(', ')} oder ein einzelner Typ (${Object.values(PROP_NAMES).join(', ')})`, args: '<gruppe> [on|off]',

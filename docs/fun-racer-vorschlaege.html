@@ -1,0 +1,663 @@
+<title>Saarlouis Fun-Racer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: Fahrbahn-Band oben, dann Pakete wie Wegweiser, dann Bereiche als Kartenraster. */
+:root {
+  --bg: #f3f4f1; --surface: #ffffff; --fg: #1b1f22; --muted: #5d6468; --line: #d9ddd8;
+  --sign: #1f5aa6; --sign-fg: #ffffff; --yellow: #f2b705; --yellow-fg: #1b1f22;
+  --p1: #c4361d; --p2: #1f5aa6; --p3: #6a7277; --warn-bg: #fff4d1; --warn-fg: #5a4300;
+  --asphalt: #2a2e31; --asphalt-fg: #eef0ec;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Source Serif 4", Georgia, serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #15181a; --surface: #1e2225; --fg: #e8ebe7; --muted: #9aa2a6; --line: #30363a;
+  --sign: #3f7fd0; --sign-fg: #ffffff; --yellow: #f2b705; --yellow-fg: #1b1f22;
+  --p1: #ff7a5c; --p2: #78a9ec; --p3: #9aa2a6; --warn-bg: #3a3014; --warn-fg: #f5d77a;
+  --asphalt: #0d0f10; --asphalt-fg: #eef0ec; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #15181a; --surface: #1e2225; --fg: #e8ebe7; --muted: #9aa2a6; --line: #30363a;
+  --sign: #3f7fd0; --sign-fg: #ffffff; --yellow: #f2b705; --yellow-fg: #1b1f22;
+  --p1: #ff7a5c; --p2: #78a9ec; --p3: #9aa2a6; --warn-bg: #3a3014; --warn-fg: #f5d77a;
+  --asphalt: #0d0f10; --asphalt-fg: #eef0ec; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3, .tag, .id, .eyebrow, .chip { font-family: var(--display); }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+header.road { background: var(--asphalt); color: var(--asphalt-fg); position: relative; overflow: hidden; }
+header.road::after { content: ""; position: absolute; left: 0; right: 0; bottom: 18px; height: 6px;
+  background: repeating-linear-gradient(90deg, var(--asphalt-fg) 0 48px, transparent 48px 84px); opacity: .55; }
+header .wrap { padding-block: 40px 52px; display: grid; gap: 14px; }
+.eyebrow { text-transform: uppercase; letter-spacing: .14em; font-weight: 700; font-size: 13px; color: var(--yellow); }
+h1 { font-size: clamp(36px, 7vw, 64px); font-weight: 800; line-height: 1; letter-spacing: -.01em; }
+.lead { max-width: 66ch; font-size: 18px; margin: 0; opacity: .92; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 22px; font-family: var(--mono); font-size: 13px; opacity: .85; font-variant-numeric: tabular-nums; }
+main .wrap { display: grid; gap: 48px; padding-block: 36px 64px; }
+section > h2 { font-size: 30px; font-weight: 700; margin-bottom: 6px; }
+.sec-intro { color: var(--muted); max-width: 70ch; margin: 0 0 18px; }
+.thesis { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.thesis div { border-top: 3px solid var(--fg); padding-top: 10px; min-width: 0; }
+.thesis b { font-family: var(--display); font-size: 19px; display: block; margin-bottom: 4px; }
+.thesis p { margin: 0; color: var(--muted); }
+.pk { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.sign { background: var(--sign); color: var(--sign-fg); border-radius: 10px; padding: 16px 18px; border: 3px solid var(--sign-fg); outline: 2px solid var(--sign); min-width: 0; }
+.sign .n { font-family: var(--display); font-weight: 800; font-size: 14px; letter-spacing: .1em; text-transform: uppercase; opacity: .8; }
+.sign h3 { font-size: 23px; font-weight: 700; margin: 2px 0 2px; }
+.sign .sub { font-size: 14px; opacity: .85; margin-bottom: 10px; }
+.sign .ids { display: flex; flex-wrap: wrap; gap: 6px; }
+.sign .ids a { font-family: var(--mono); font-size: 12px; color: var(--sign-fg); text-decoration: none; border: 1px solid currentColor; border-radius: 4px; padding: 1px 6px; }
+.sign .ids a:hover, .sign .ids a:focus-visible { background: var(--sign-fg); color: var(--sign); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; position: sticky; top: env(safe-area-inset-top, 0px); background: var(--bg); padding-block: 10px; z-index: 5; border-bottom: 1px solid var(--line); }
+.filters span { font-family: var(--display); font-weight: 600; color: var(--muted); margin-right: 4px; }
+.chip { border: 1px solid var(--line); background: var(--surface); color: var(--fg); border-radius: 999px; padding: 5px 14px; font-size: 15px; font-weight: 600; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chip:focus-visible, .sign a:focus-visible { outline: 3px solid var(--yellow); outline-offset: 2px; }
+.area-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.area-head .letter { font-family: var(--display); font-weight: 800; background: var(--yellow); color: var(--yellow-fg); border-radius: 6px; width: 36px; height: 36px; display: grid; place-items: center; font-size: 22px; flex: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.it { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.it p { margin: 0; font-size: 15.5px; }
+.it-head { display: flex; gap: 10px; align-items: baseline; }
+.id { font-family: var(--mono); font-size: 13px; color: var(--muted); flex: none; }
+.it h3 { font-size: 20px; font-weight: 700; line-height: 1.15; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { font-size: 13px; font-weight: 600; letter-spacing: .03em; border-radius: 4px; padding: 1px 8px; border: 1px solid currentColor; }
+.tag.p1 { color: var(--p1); } .tag.p2 { color: var(--p2); } .tag.p3 { color: var(--p3); }
+.tag.eff { color: var(--muted); }
+.tag.rule { background: var(--warn-bg); color: var(--warn-fg); border-color: transparent; }
+.base { color: var(--muted); font-size: 14px !important; font-family: var(--mono); font-size: 12.5px !important; overflow-wrap: anywhere; }
+.base span { font-family: var(--display); font-size: 13px; text-transform: uppercase; letter-spacing: .08em; margin-right: 4px; }
+.warn { background: var(--warn-bg); color: var(--warn-fg); border-radius: 6px; padding: 8px 10px; font-size: 14.5px !important; }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.rules div { background: var(--warn-bg); color: var(--warn-fg); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.rules b { font-family: var(--display); font-size: 19px; display: block; margin-bottom: 4px; }
+.rules p { margin: 0; font-size: 15px; }
+ol.q { margin: 0; padding-left: 22px; display: grid; gap: 8px; max-width: 75ch; }
+.legend { color: var(--muted); font-size: 14px; }
+.legend code { font-family: var(--mono); font-size: 12.5px; }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: no-preference) { .it { transition: opacity .15s; } }
+</style>
+
+<header class="road"><div class="wrap">
+  <div class="eyebrow">Vorschlagsliste · Stand 25. Oktober 2026</div>
+  <h1>Saarlouis als Fun-Racer</h1>
+  <p class="lead">Was sich ändern muss, damit aus der genauen Saarlouis-Nachbildung ein Open-World-Racer im Stil von The Crew wird. Spielgefühl vor Realismus: breitere Straßen, verzeihende Physik, Events, Fortschritt und später Online.</p>
+  <div class="stats"><span>60 Vorschläge</span><span>12 Bereiche</span><span>31 zuerst · 23 danach · 6 später</span></div>
+</div></header>
+
+<main><div class="wrap">
+
+<section>
+  <h2>Die Leitidee</h2>
+  <p class="sec-intro">Der Stand heute: echte Stadt in 1:1, gutes Fahrmodell mit Nitro, Verkehr, Fußgänger, Wetter, Tag und Nacht, Navigation, drei Autos und Wiederholungen. Es fehlt fast alles, was daraus ein Spiel macht.</p>
+  <div class="thesis">
+    <div><b>Daten bleiben 1:1</b><p>Luftbild, LiDAR, Häuser und Adressen passen nur so zusammen. Mehr Platz kommt von breiteren Straßen und einem größeren Gebiet, nicht von einem Maßstabsfaktor.</p></div>
+    <div><b>Erst Gefühl, dann Inhalte</b><p>Kamera, Tempo, Nitro und weiche Kollisionen machen schon freies Fahren spaßiger und kosten wenig.</p></div>
+    <div><b>Events sind der Kern</b><p>Ein Event-System mit Skills, Rennen und Stilpunkten ist die Grundlage für Fortschritt, Bestenlisten und Online.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Empfohlene Reihenfolge</h2>
+  <p class="sec-intro">Vier Pakete. Jedes ist für sich spielbar und baut auf dem vorigen auf.</p>
+  <div class="pk">
+  <div class="sign"><div class="n">Paket 1</div><h3>Es fühlt sich schnell an</h3><div class="sub">Sofort spürbar, kaum Risiko</div><div class="ids"><a href="#K1" title="Verfolgerkamera neu abstimmen">K1</a><a href="#K2" title="Geschwindigkeitseffekte">K2</a><a href="#F1" title="Arcade-Abstimmung „Crew“">F1</a><a href="#F3" title="Verzeihende Kollisionen">F3</a><a href="#F4" title="Nitro als Belohnung">F4</a><a href="#S3" title="Überfahrbare Bordsteine">S3</a><a href="#S4" title="Weniger parkende Autos">S4</a><a href="#V2" title="Fußgänger immer sicher">V2</a><a href="#W4" title="Mehr zum Umfahren">W4</a><a href="#T1" title="Arcade-Sounds">T1</a></div></div>
+  <div class="sign"><div class="n">Paket 2</div><h3>Es gibt etwas zu tun</h3><div class="sub">Erstes richtiges Spiel</div><div class="ids"><a href="#G1" title="Spielzustand und Modi">G1</a><a href="#E1" title="Event-System als Kern">E1</a><a href="#E2" title="Skills im Vorbeifahren">E2</a><a href="#E4" title="Stilpunkte und Combos">E4</a><a href="#U1" title="Hauptmenü und Spielfluss">U1</a><a href="#U3" title="Event-HUD">U3</a><a href="#U4" title="Streckenführung auf der Straße">U4</a><a href="#P1" title="Level, XP und Credits">P1</a><a href="#P2" title="Spielstand">P2</a></div></div>
+  <div class="sign"><div class="n">Paket 3</div><h3>Die Stadt wird zur Rennstrecke</h3><div class="sub">Straßen umbauen, Gegner</div><div class="ids"><a href="#S1" title="Spiel-Querschnitt für alle Straßen">S1</a><a href="#S2" title="Kreuzungen und Kurven entschärfen">S2</a><a href="#S6" title="Rennstrecken aus echten Straßen">S6</a><a href="#S7" title="Schnellstraßen ohne Tempofallen">S7</a><a href="#G2" title="Streaming für Hochtempo">G2</a><a href="#G3" title="Tests für Spielinhalte">G3</a><a href="#V3" title="Rivalen-KI für Rennen">V3</a><a href="#E3" title="Rennen">E3</a><a href="#F2" title="Drift auf Knopfdruck">F2</a></div></div>
+  <div class="sign"><div class="n">Paket 4</div><h3>Größer und gemeinsam</h3><div class="sub">Langfristig</div><div class="ids"><a href="#W1" title="Größeres Spielgebiet">W1</a><a href="#V4" title="Polizei und Verfolgungen">V4</a><a href="#P3" title="Teile und Leistungsstufe">P3</a><a href="#P4" title="Händler und Heimatgarage">P4</a><a href="#A1" title="Mehr Autos und Klassen">A1</a><a href="#O1" title="Bestenlisten und Geister">O1</a><a href="#O2" title="Freie Fahrt zu mehreren">O2</a></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Alle Vorschläge</h2>
+  <p class="legend">Priorität: Zuerst, Danach, Später. Aufwand in Arbeitsschritten: <code>S</code> ein PR, <code>M</code> zwei bis drei PRs, <code>L</code> ein eigener Thread, <code>XL</code> mehrere Threads. „Regel“ heißt, dass der Punkt eine bestehende Projektregel berührt.</p>
+  <div class="filters" role="group" aria-label="Nach Priorität filtern">
+    <span>Zeigen</span>
+    <button class="chip" id="f-all" data-f="all" aria-pressed="true">Alle</button>
+    <button class="chip" id="f-1" data-f="1" aria-pressed="false">Zuerst</button>
+    <button class="chip" id="f-2" data-f="2" aria-pressed="false">Danach</button>
+    <button class="chip" id="f-3" data-f="3" aria-pressed="false">Später</button>
+    <button class="chip" id="f-r" data-f="rule" aria-pressed="false">Nur mit Regel</button>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">F</span><h2>Fahrgefühl</h2></div>
+  <p class="sec-intro">Das Auto soll sich schnell, griffig und verzeihend anfühlen. Grip bleibt der Standard, weil das schlitternde Reifenmodell schon einmal als unfahrbar empfunden wurde.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="F1">
+  <div class="it-head"><span class="id">F1</span><h3>Arcade-Abstimmung „Crew“</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span><span class="tag rule">Regel</span></div>
+  <p>Höhere Endgeschwindigkeit je nach Auto bis über 300 km/h, kräftigere Beschleunigung, künstlicher Abtrieb, damit das Auto bei Tempo satter liegt, und ruhiges Verhalten nach Sprüngen. Als eigenes Preset neben arcade und sim, damit die heutige Abstimmung erhalten bleibt.</p>
+  <p class="base"><span>Baut auf</span> tuning.ts, cars.ts, phys.model</p>
+  <p class="warn">Fahrmodell: Standard bleibt griffig, nicht rutschiger.</p>
+</article>
+<article class="it" data-prio="1" id="F2">
+  <div class="it-head"><span class="id">F2</span><h3>Drift auf Knopfdruck</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Kurzer Zug an der Handbremse leitet einen kontrollierten Drift ein, ein Drift-Assistent hält den Winkel, Gas und Lenkung steuern ihn. Ohne Handbremse fährt das Auto wie bisher auf Grip.</p>
+  <p class="base"><span>Baut auf</span> Handbremse, assist.steer, nitro.driftRefill</p>
+  
+</article>
+<article class="it" data-prio="1" id="F3">
+  <div class="it-head"><span class="id">F3</span><h3>Verzeihende Kollisionen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>An Wänden und Planken gleitet das Auto ab statt abzuprallen. Ein Streifschuss mit einem Verkehrsauto kostet wenig Tempo, und leichte Hindernisse schiebt das Auto beiseite. Frontalaufpralle bleiben spürbar, aber nach einer Sekunde ist man wieder unterwegs.</p>
+  <p class="base"><span>Baut auf</span> carPhysics.ts, Rapier-Kontakte, trafficSim crash()</p>
+  
+</article>
+<article class="it" data-prio="1" id="F4">
+  <div class="it-head"><span class="id">F4</span><h3>Nitro als Belohnung</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Nitro füllt sich nicht nur beim Driften, sondern auch durch Beinaheunfälle, Windschatten, Sprünge, Fahren im Gegenverkehr und umgefahrene Objekte. Dazu ein kurzer Stoß beim Antippen und Dauerschub beim Halten.</p>
+  <p class="base"><span>Baut auf</span> CAR.nitro (drain, refill, driftRefill)</p>
+  
+</article>
+<article class="it" data-prio="2" id="F5">
+  <div class="it-head"><span class="id">F5</span><h3>Schaden nur optisch</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Beulen, Kratzer und fliegende Teile bleiben, aber standardmäßig ohne Leistungsverlust. Realistischer Schaden wird eine Option.</p>
+  <p class="base"><span>Baut auf</span> damage.ts, debris.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="F6">
+  <div class="it-head"><span class="id">F6</span><h3>Sprünge und Landung</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Die vorhandene Luftsteuerung bekommt ein automatisches Ausrichten, weiche Landungen ohne Nachfedern und eine Sprungwertung für Weite und Höhe.</p>
+  <p class="base"><span>Baut auf</span> Luftsteuerung in carPhysics.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="F7">
+  <div class="it-head"><span class="id">F7</span><h3>Zurückspulen und Auto-Rettung</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Im freien Fahren die letzten fünf Sekunden zurückspulen. Liegt das Auto auf dem Dach oder steckt fest, setzt es sich nach zwei Sekunden selbst zurück auf die Straße.</p>
+  <p class="base"><span>Baut auf</span> replay/recorder.ts, rescue.ts (R)</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">K</span><h2>Kamera und Tempogefühl</h2></div>
+  <p class="sec-intro">Die Kamera ist der billigste Hebel für Geschwindigkeit. Viel davon geht ohne neue Inhalte.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="K1">
+  <div class="it-head"><span class="id">K1</span><h3>Verfolgerkamera neu abstimmen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Etwas tiefer, beim Beschleunigen leicht zurückfallen, in Kurven mitschauen, stärkere FOV-Weitung bei Tempo (heute höchstens rund 10 Grad bis 220 km/h). Presets nah, fern und Stoßstange, im Menü wählbar.</p>
+  <p class="base"><span>Baut auf</span> chaseCamera.ts, cam.basefov, cam.speedfov</p>
+  
+</article>
+<article class="it" data-prio="1" id="K2">
+  <div class="it-head"><span class="id">K2</span><h3>Geschwindigkeitseffekte</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Speedlines am Bildrand ab etwa 150 km/h, Radialunschärfe beim Nitro, dosiertes Kamerazittern und Fahrtwind-Partikel. Alles im Menü abschaltbar.</p>
+  <p class="base"><span>Baut auf</span> postFx.ts, Nitro-Blur, cam.shake</p>
+  
+</article>
+<article class="it" data-prio="3" id="K3">
+  <div class="it-head"><span class="id">K3</span><h3>Filmkamera und Fotomodus</h3></div>
+  <div class="tags"><span class="tag p3">Später</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Kamerafahrt vor dem Start eines Events, Zeitlupe über die Ziellinie, freier Fotomodus mit Filtern. Wiederholungen bekommen Fernsehkameras am Straßenrand.</p>
+  <p class="base"><span>Baut auf</span> replayPlayer.ts</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">S</span><h2>Straßen und Strecken</h2></div>
+  <p class="sec-intro">Hier lockert sich die 1:1-Regel am stärksten. Jede Änderung hier fällt unter die Anschlussregel und braucht Drivetest und Lückenprüfung.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="S1">
+  <div class="it-head"><span class="id">S1</span><h3>Spiel-Querschnitt für alle Straßen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">L · eigener Thread</span><span class="tag rule">Regel</span></div>
+  <p>Ein zweites Profil in roadSpec.ts: Fahrstreifen 15 bis 30 Prozent breiter (Wohnstraße 3,0 auf 3,6 m, Hauptstraße 3,5 auf 4,0 m, Autobahn 3,75 auf 4,25 m). Gehwege werden dafür schmaler, wo Häuser im Weg stehen. Bordsteine, Planken, Bäume und Props folgen der Straßenmaske schon heute automatisch. Umschaltbar mit road.profile game|real.</p>
+  <p class="base"><span>Baut auf</span> roadSpec.ts, RoadMask, Kanten w/l/r in graph.json</p>
+  <p class="warn">Anschlussregel: Drivetest und Lückenprüfung neu einmessen. Echte Häuser begrenzen die Breite in engen Gassen.</p>
+</article>
+<article class="it" data-prio="1" id="S2">
+  <div class="it-head"><span class="id">S2</span><h3>Kreuzungen und Kurven entschärfen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span><span class="tag rule">Regel</span></div>
+  <p>Größere Eckradien an Kreuzungen (Ausrundung von etwa 4 auf 8 bis 10 m), geglättete Kurven statt zackiger OSM-Linien, Kreisel mit flüssiger Einfahrt.</p>
+  <p class="base"><span>Baut auf</span> Pipeline-Straßengeometrie, Kreuzungsplateaus</p>
+  <p class="warn">Anschlussregel: neue Kreuzungsflächen müssen nahtlos an jede Zufahrt anschließen.</p>
+</article>
+<article class="it" data-prio="1" id="S3">
+  <div class="it-head"><span class="id">S3</span><h3>Überfahrbare Bordsteine</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span><span class="tag rule">Regel</span></div>
+  <p>In der Stadt niedrige, abgeschrägte Bordsteine ohne Lenkstoß und ohne Hängenbleiben. Gehwege und Plätze werden zu Abkürzungen, Fußgänger springen beiseite.</p>
+  <p class="base"><span>Baut auf</span> roadside kerbs (PR #75)</p>
+  <p class="warn">Schnellstraßen bleiben ohne Bordstein.</p>
+</article>
+<article class="it" data-prio="1" id="S4">
+  <div class="it-head"><span class="id">S4</span><h3>Weniger parkende Autos</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Auf Straßen unter 6 m Fahrbahn keine parkenden Autos, sonst etwa die halbe Dichte. Wer eins trifft, schiebt es weg.</p>
+  <p class="base"><span>Baut auf</span> props.ts Randparker (heute ab 4,5 m)</p>
+  
+</article>
+<article class="it" data-prio="2" id="S5">
+  <div class="it-head"><span class="id">S5</span><h3>Hindernisse an der Fahrlinie</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Poller, Pfosten und Bäume direkt am Kurvenrand rücken zurück oder werden zerbrechlich. Hart bleiben nur Gebäude, Brückenpfeiler und große Bäume abseits der Ideallinie.</p>
+  <p class="base"><span>Baut auf</span> knockdown.ts, propKinds, Baumabstände</p>
+  
+</article>
+<article class="it" data-prio="1" id="S6">
+  <div class="it-head"><span class="id">S6</span><h3>Rennstrecken aus echten Straßen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span><span class="tag rule">Regel</span></div>
+  <p>Rundkurse und Sprints entlang des Straßengraphen, zum Beispiel um den sechseckigen Festungsgrundriss der Innenstadt oder über die A620. Während eines Events sperren Absperrgitter und Pylonen die Seitenstraßen.</p>
+  <p class="base"><span>Baut auf</span> graph.json, Navigation, routeLine.ts</p>
+  <p class="warn">Anschlussregel: Absperrungen nur temporär im Event, nie in den Kacheln.</p>
+</article>
+<article class="it" data-prio="1" id="S7">
+  <div class="it-head"><span class="id">S7</span><h3>Schnellstraßen ohne Tempofallen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span><span class="tag rule">Regel</span></div>
+  <p>Brückenfugen, Rampenübergänge und Bodenwellen dürfen das Auto bei 250 km/h nicht aushebeln. Dazu ein Drivetest im Hochgeschwindigkeitsmodus für Autobahn und Bundesstraßen.</p>
+  <p class="base"><span>Baut auf</span> drivetest.ts --pace, bridgeJoints</p>
+  <p class="warn">Anschlussregel: Prüfung wird um eine Hochtempo-Variante erweitert.</p>
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">W</span><h2>Welt und Maßstab</h2></div>
+  <p class="sec-intro">Empfehlung: kein globaler Maßstabsfaktor. Luftbild, LiDAR, Häuser und Adressen passen nur in 1:1 zusammen. Mehr Raum entsteht durch breitere Straßen und ein größeres Gebiet.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="W1">
+  <div class="it-head"><span class="id">W1</span><h3>Größeres Spielgebiet</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">XL · mehrere Threads</span><span class="tag rule">Regel</span></div>
+  <p>Saarlouis (66740) hat rund 44 km². Mit 300 km/h ist man in gut einer Minute quer durch. Vorschlag in Stufen: erst der Landkreis Saarlouis mit Ensdorf, Dillingen und Wallerfangen, dann Saarbrücken und die Saarschleife bei Mettlach, verbunden über A8, A620 und B51. Die Pipeline arbeitet schon mit Regionsdateien.</p>
+  <p class="base"><span>Baut auf</span> pipeline/regions, Kachel-Streaming, Fernsicht</p>
+  <p class="warn">Datenmenge, Bauzeit und Drivetest-Laufzeit steigen stark.</p>
+</article>
+<article class="it" data-prio="2" id="W2">
+  <div class="it-head"><span class="id">W2</span><h3>Offroad freigeben</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Felder, Wiesen, Waldwege, Saarufer und die Bergehalden werden befahrbar. Zäune und Hecken lassen sich durchbrechen. Die Bodenklassen aus dem Luftbild liefern bereits passenden Grip pro Untergrund.</p>
+  <p class="base"><span>Baut auf</span> landcover (PR #82), roadSurface.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="W3">
+  <div class="it-head"><span class="id">W3</span><h3>Sprünge an echten Orten</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span><span class="tag rule">Regel</span></div>
+  <p>Böschungen, Deichkronen, Haldenkuppen und Parkhausrampen als natürliche Schanzen, dazu wenige gesetzte Rampen. Mit W1 wird die Halde mit dem Saarpolygon in Ensdorf ein Bergsprint.</p>
+  <p class="base"><span>Baut auf</span> DGM1-Gelände, rampCommands.ts</p>
+  <p class="warn">Anschlussregel: gesetzte Schanzen sind gewollte Kanten und brauchen eine Ausnahme im Drivetest.</p>
+</article>
+<article class="it" data-prio="1" id="W4">
+  <div class="it-head"><span class="id">W4</span><h3>Mehr zum Umfahren</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Zäune, Bänke, Mülltonnen, Bauzäune, Schilder und Leitpfosten fliegen beim Treffen davon und kosten kaum Tempo. Laternen und einzelne Props können das schon.</p>
+  <p class="base"><span>Baut auf</span> knockdown.ts, props.ts breakable</p>
+  
+</article>
+<article class="it" data-prio="2" id="W5">
+  <div class="it-head"><span class="id">W5</span><h3>Stadtteile entdecken</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Innenstadt, Roden, Fraulautern, Lisdorf, Beaumarais, Picard, Steinrausch und Neuforweiler werden beim ersten Befahren auf der Karte aufgedeckt. Dazu Aussichtspunkte an den Wahrzeichen.</p>
+  <p class="base"><span>Baut auf</span> Ortstafeln, landmarks.json, bigMap.ts</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">V</span><h2>Verkehr und Verfolgungen</h2></div>
+  <p class="sec-intro">Der Verkehr ist schon da. Er soll Spielmaterial werden und nicht nur Kulisse.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="V1">
+  <div class="it-head"><span class="id">V1</span><h3>Verkehr als Spielhebel</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>In der Stadt etwas dichter für Beinaheunfälle, bei Events auf der Strecke dünner. Verkehr auf der Eventroute weicht aus und hält sich rechts.</p>
+  <p class="base"><span>Baut auf</span> trafficSim.ts (density 0.6)</p>
+  
+</article>
+<article class="it" data-prio="1" id="V2">
+  <div class="it-head"><span class="id">V2</span><h3>Fußgänger immer sicher</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Fußgänger springen stets rechtzeitig zur Seite und werden nie verletzt. Auf Eventstrecken verschwinden sie vorher.</p>
+  <p class="base"><span>Baut auf</span> pedSim.ts</p>
+  
+</article>
+<article class="it" data-prio="1" id="V3">
+  <div class="it-head"><span class="id">V3</span><h3>Rivalen-KI für Rennen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">L · eigener Thread</span></div>
+  <p>Gegner mit echter Fahrphysik statt kinematischer Verkehrsautos. Sie fahren eine Ideallinie aus dem Straßengraphen, und ein mildes Gummiband hält das Feld zusammen. Drei Stärken einstellbar.</p>
+  <p class="base"><span>Baut auf</span> drivetest-Autopilot als Startpunkt, CarPhysics</p>
+  
+</article>
+<article class="it" data-prio="2" id="V4">
+  <div class="it-head"><span class="id">V4</span><h3>Polizei und Verfolgungen</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">L · eigener Thread</span></div>
+  <p>Streifen reagieren auf Rasen und Rammen. Fahndungsstufen eskalieren mit mehr Wagen, Straßensperren und Nagelbändern. Man entkommt, indem man außer Sicht bleibt. Auch als eigenes Event „Flucht“.</p>
+  <p class="base"><span>Baut auf</span> Verkehrsmodelle, Navigation</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">E</span><h2>Spielinhalte</h2></div>
+  <p class="sec-intro">Das fehlt heute am meisten. Ohne Events gibt es nur freies Fahren.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="E1">
+  <div class="it-head"><span class="id">E1</span><h3>Event-System als Kern</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">L · eigener Thread</span></div>
+  <p>Startpunkte auf der Karte, Startbildschirm, Countdown, Checkpoint-Bögen, Ziel, Ergebnis mit Bronze, Silber, Gold und Platin, sofortiger Neustart. Events liegen als events.json je Region, damit neue Städte eigene bekommen.</p>
+  <p class="base"><span>Baut auf</span> Teleport, Navigation, Spawnlogik</p>
+  
+</article>
+<article class="it" data-prio="1" id="E2">
+  <div class="it-head"><span class="id">E2</span><h3>Skills im Vorbeifahren</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Wie bei The Crew: Blitzer, Tempozone (Schnitt über eine Strecke), Slalom durch Pylonen, Sprungweite, Driftzone, Ausweichen im Verkehr. Ein paar Dutzend über die Stadt verteilt, sie starten beim Durchfahren ohne Menü.</p>
+  <p class="base"><span>Baut auf</span> E1, Straßengraph</p>
+  
+</article>
+<article class="it" data-prio="1" id="E3">
+  <div class="it-head"><span class="id">E3</span><h3>Rennen</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Sprint von A nach B, Rundkurs, Autobahnduell. Mit Rivalen (V3) und Streckenführung (U4).</p>
+  <p class="base"><span>Baut auf</span> E1, S6, V3</p>
+  
+</article>
+<article class="it" data-prio="1" id="E4">
+  <div class="it-head"><span class="id">E4</span><h3>Stilpunkte und Combos</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Beinaheunfall, Drift, Sprung, Windschatten, Gegenverkehr und Zerstörung geben Punkte, die sich zu einem Multiplikator stapeln. Die Punkte fließen in XP (P1) und Nitro (F4).</p>
+  <p class="base"><span>Baut auf</span> trafficSim, knockdown, airborne</p>
+  
+</article>
+<article class="it" data-prio="2" id="E5">
+  <div class="it-head"><span class="id">E5</span><h3>Zeitfahren gegen Geister</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Die eigene Bestfahrt fährt als halbtransparentes Auto mit. Später kommen Geister von Freunden über das Netz (O1).</p>
+  <p class="base"><span>Baut auf</span> replay/recorder.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="E6">
+  <div class="it-head"><span class="id">E6</span><h3>Lieferfahrten zu echten Adressen</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Kurier- und Pizzafahrten mit Zeitlimit zu echten Hausnummern. Die Adressdaten liegen schon vor, die Navigation zeigt den Weg.</p>
+  <p class="base"><span>Baut auf</span> nav/addresses.ts, navigation.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="E7">
+  <div class="it-head"><span class="id">E7</span><h3>Sammeln und Werbetafeln</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Werbetafeln, die man durchbrechen kann, und versteckte Sammelobjekte in jedem Stadtteil.</p>
+  <p class="base"><span>Baut auf</span> props, W5</p>
+  
+</article>
+<article class="it" data-prio="2" id="E8">
+  <div class="it-head"><span class="id">E8</span><h3>Einstieg in drei Minuten</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Kurze Einführung: erstes Auto, erster Skill, erstes Rennen, Garage. Danach ist die Stadt frei.</p>
+  <p class="base"><span>Baut auf</span> E1, U1</p>
+  
+</article>
+<article class="it" data-prio="3" id="E9">
+  <div class="it-head"><span class="id">E9</span><h3>Partymodi</h3></div>
+  <div class="tags"><span class="tag p3">Später</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Fangen, King of the Hill auf dem Großen Markt, Zerstörungsjagd. Vor allem für später online.</p>
+  <p class="base"><span>Baut auf</span> O2</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">P</span><h2>Fortschritt und Garage</h2></div>
+  <p class="sec-intro">Ein Grund, morgen wiederzukommen.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="P1">
+  <div class="it-head"><span class="id">P1</span><h3>Level, XP und Credits</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Jede Aktivität gibt XP und Credits. Levels schalten Events, Autos und Teile frei.</p>
+  
+  
+</article>
+<article class="it" data-prio="1" id="P2">
+  <div class="it-head"><span class="id">P2</span><h3>Spielstand</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Erst lokal im Browser, später in der Cloud (O4). Speichert Level, Autos, Bestzeiten und entdeckte Orte.</p>
+  <p class="base"><span>Baut auf</span> settings/store.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="P3">
+  <div class="it-head"><span class="id">P3</span><h3>Teile und Leistungsstufe</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">L · eigener Thread</span></div>
+  <p>Medaillen geben Teile (Motor, Getriebe, Reifen, Bremsen, Fahrwerk), die die Leistungsstufe des Autos heben. Events nennen eine empfohlene Stufe.</p>
+  <p class="base"><span>Baut auf</span> cars.ts tuning-Overrides</p>
+  
+</article>
+<article class="it" data-prio="2" id="P4">
+  <div class="it-head"><span class="id">P4</span><h3>Händler und Heimatgarage</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Autos kaufen bei einem Händler im Gewerbegebiet, eine Garage als Heimatbasis mit Schnellreise.</p>
+  <p class="base"><span>Baut auf</span> garage.ts, shops</p>
+  
+</article>
+<article class="it" data-prio="2" id="P5">
+  <div class="it-head"><span class="id">P5</span><h3>Optik-Tuning</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">L · eigener Thread</span></div>
+  <p>Lack, Felgen, Folien, Spoiler, Tieferlegung. Die Teile kommen aus der Blender-Pipeline als zusätzliche Knoten pro Auto-GLB.</p>
+  <p class="base"><span>Baut auf</span> tools/blender, carView.ts</p>
+  
+</article>
+<article class="it" data-prio="3" id="P6">
+  <div class="it-head"><span class="id">P6</span><h3>Tagesaufgaben</h3></div>
+  <div class="tags"><span class="tag p3">Später</span><span class="tag eff">S · ein PR</span></div>
+  <p>Drei kleine Ziele pro Tag, etwa „5 Beinaheunfälle in Roden“.</p>
+  <p class="base"><span>Baut auf</span> E4</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">A</span><h2>Autos</h2></div>
+  <p class="sec-intro">Heute gibt es drei Autos. Für ein Fun-Racer braucht es Auswahl und klare Unterschiede.</p>
+  <div class="grid">
+<article class="it" data-prio="2" id="A1">
+  <div class="it-head"><span class="id">A1</span><h3>Mehr Autos und Klassen</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">L · eigener Thread</span><span class="tag rule">Regel</span></div>
+  <p>Straße, Drift, Offroad/Rally, Hypercar. Je Auto etwa ein PR: Blender-Modell und ein Eintrag in CARS. Weiter keine echten Marken oder Modelle.</p>
+  <p class="base"><span>Baut auf</span> cars.ts, models:cars</p>
+  <p class="warn">Keine echten Marken (bestehende Vorgabe in cars.ts).</p>
+</article>
+<article class="it" data-prio="2" id="A2">
+  <div class="it-head"><span class="id">A2</span><h3>Spezifikationen pro Auto</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Wie bei The Crew kann ein Auto als Straßen-, Drift- oder Offroad-Version aufgebaut werden, jede mit eigener Abstimmung und eigenem Fortschritt.</p>
+  <p class="base"><span>Baut auf</span> cars.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="A3">
+  <div class="it-head"><span class="id">A3</span><h3>Kennwerte im Menü</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Balken für Tempo, Beschleunigung, Handling und Bremsen in der Autowahl.</p>
+  <p class="base"><span>Baut auf</span> car.specs, menu.ts</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">U</span><h2>Oberfläche</h2></div>
+  <p class="sec-intro">Gamepad zuerst, wenig Text, klare Belohnungen.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="U1">
+  <div class="it-head"><span class="id">U1</span><h3>Hauptmenü und Spielfluss</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Titelbildschirm, Fortsetzen, Weltkarte, Garage, Einstellungen. Die Pause zeigt die Karte. Alles mit Gamepad bedienbar.</p>
+  <p class="base"><span>Baut auf</span> menu.ts, bindings.ts</p>
+  
+</article>
+<article class="it" data-prio="1" id="U2">
+  <div class="it-head"><span class="id">U2</span><h3>Weltkarte als Drehscheibe</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Event-Icons mit Filter, Ziel setzen, Schnellreise zu entdeckten Orten, Fortschritt pro Stadtteil.</p>
+  <p class="base"><span>Baut auf</span> bigMap.ts, mapDraw.ts</p>
+  
+</article>
+<article class="it" data-prio="1" id="U3">
+  <div class="it-head"><span class="id">U3</span><h3>Event-HUD</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Platz, Runde, Zeit, Abstand zum Vordermann, Countdown, Punkte-Popups. Die Minimap zeigt die Eventroute.</p>
+  <p class="base"><span>Baut auf</span> navHud.ts, minimap.ts, tacho.ts</p>
+  
+</article>
+<article class="it" data-prio="1" id="U4">
+  <div class="it-head"><span class="id">U4</span><h3>Streckenführung auf der Straße</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Checkpoint-Bögen und Leitpfeile an Abzweigen statt Navi-Ansagen. Optional eine leuchtende Linie auf der Fahrbahn.</p>
+  <p class="base"><span>Baut auf</span> routeLine.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="U5">
+  <div class="it-head"><span class="id">U5</span><h3>Belohnungs-Feedback</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Einblendungen und Sounds für Levelaufstieg, Medaille, neuen Rekord und freigeschaltete Teile.</p>
+  
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">T</span><h2>Ton und Musik</h2></div>
+  <p class="sec-intro">Motor und Umgebung klingen schon gut. Es fehlt alles, was nach Spiel klingt.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="T1">
+  <div class="it-head"><span class="id">T1</span><h3>Arcade-Sounds</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span></div>
+  <p>Nitro-Zischen, Whoosh beim Beinaheunfall, Aufprall, Punktesounds, Countdown, Zieljubel.</p>
+  <p class="base"><span>Baut auf</span> audio/mixer.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="T2">
+  <div class="it-head"><span class="id">T2</span><h3>Radio und Musik</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Lizenzfreie Tracks (CC0 oder CC-BY, in CREDITS.md), mehrere Sender, und die Musik wird in Rennen und Verfolgungen intensiver.</p>
+  <p class="base"><span>Baut auf</span> mixer.ts</p>
+  
+</article>
+<article class="it" data-prio="2" id="T3">
+  <div class="it-head"><span class="id">T3</span><h3>Sirenen und Polizeifunk</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">S · ein PR</span></div>
+  <p>Gehört zu V4.</p>
+  <p class="base"><span>Baut auf</span> trafficSound.ts</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">O</span><h2>Online</h2></div>
+  <p class="sec-intro">Privat bleibt die Grundregel. Vor dem ersten Online-Teil kommt Cloudflare Access vor das Spiel.</p>
+  <div class="grid">
+<article class="it" data-prio="2" id="O1">
+  <div class="it-head"><span class="id">O1</span><h3>Bestenlisten und Geister</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">M · 2–3 PRs</span><span class="tag rule">Regel</span></div>
+  <p>Zeiten und Geisterfahrten pro Event über einen Cloudflare Worker mit D1 oder KV. Asynchron, also billig und robust. Nur für eingeladene Freunde.</p>
+  <p class="base"><span>Baut auf</span> wrangler.jsonc, E5</p>
+  <p class="warn">Privat: erst hinter Cloudflare Access.</p>
+</article>
+<article class="it" data-prio="2" id="O2">
+  <div class="it-head"><span class="id">O2</span><h3>Freie Fahrt zu mehreren</h3></div>
+  <div class="tags"><span class="tag p2">Danach</span><span class="tag eff">L · eigener Thread</span><span class="tag rule">Regel</span></div>
+  <p>Zwei bis acht Spieler in einer Sitzung, ein Durable Object je Sitzung, WebSocket mit Interpolation der Positionen.</p>
+  <p class="base"><span>Baut auf</span> Cloudflare-Hosting</p>
+  <p class="warn">Privat: erst hinter Cloudflare Access.</p>
+</article>
+<article class="it" data-prio="3" id="O3">
+  <div class="it-head"><span class="id">O3</span><h3>Gemeinsame Events</h3></div>
+  <div class="tags"><span class="tag p3">Später</span><span class="tag eff">L · eigener Thread</span></div>
+  <p>Zusammen Rennen starten, Koop-Skills und Crew-Punkte wie bei The Crew.</p>
+  <p class="base"><span>Baut auf</span> O2, E1</p>
+  
+</article>
+<article class="it" data-prio="3" id="O4">
+  <div class="it-head"><span class="id">O4</span><h3>Spielstand in der Cloud</h3></div>
+  <div class="tags"><span class="tag p3">Später</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Fortschritt auf jedem Rechner gleich.</p>
+  <p class="base"><span>Baut auf</span> P2</p>
+  
+</article>
+  </div>
+</section>
+
+<section class="area">
+  <div class="area-head"><span class="letter">G</span><h2>Technik und Grafik</h2></div>
+  <p class="sec-intro">Die Grundlagen, damit die Spielteile sauber zusammenpassen.</p>
+  <div class="grid">
+<article class="it" data-prio="1" id="G1">
+  <div class="it-head"><span class="id">G1</span><h3>Spielzustand und Modi</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Ein Modusverwalter für freies Fahren, Event, Menü und Wiederholung, mit Event-Skripten und Spielstand. Ohne ihn werden E, P und U zu Einzellösungen.</p>
+  <p class="base"><span>Baut auf</span> main.ts</p>
+  
+</article>
+<article class="it" data-prio="1" id="G2">
+  <div class="it-head"><span class="id">G2</span><h3>Streaming für Hochtempo</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">M · 2–3 PRs</span></div>
+  <p>Kacheln vorausschauend nach Richtung und Tempo laden, auf der Autobahn weitere Fernsicht.</p>
+  <p class="base"><span>Baut auf</span> streamer.ts, tileWorker.ts, farField.ts</p>
+  
+</article>
+<article class="it" data-prio="1" id="G3">
+  <div class="it-head"><span class="id">G3</span><h3>Tests für Spielinhalte</h3></div>
+  <div class="tags"><span class="tag p1">Zuerst</span><span class="tag eff">S · ein PR</span><span class="tag rule">Regel</span></div>
+  <p>Automatisch prüfen, dass jeder Checkpoint erreichbar ist und jede Eventroute ohne Hängenbleiben fahrbar ist.</p>
+  <p class="base"><span>Baut auf</span> drivetest.ts</p>
+  <p class="warn">Anschlussregel: gilt auch für Eventrouten.</p>
+</article>
+<article class="it" data-prio="3" id="G4">
+  <div class="it-head"><span class="id">G4</span><h3>Kräftigerer Look</h3></div>
+  <div class="tags"><span class="tag p3">Später</span><span class="tag eff">S · ein PR</span><span class="tag rule">Regel</span></div>
+  <p>Satteres Grading, stärkeres Bloom, Abendrot als Stimmung für Events. Die Detailtiefe bleibt.</p>
+  <p class="base"><span>Baut auf</span> post/postFx.ts, daylight.ts</p>
+  <p class="warn">Kein Low-Poly: nur Farbe und Licht ändern sich.</p>
+</article>
+  </div>
+</section>
+
+<section>
+  <h2>Wo es mit bestehenden Regeln reibt</h2>
+  <p class="sec-intro">Diese Liste lockert die Realismusvorgaben für Maßstab und Straßenbreite. Alles andere gilt weiter.</p>
+  <div class="rules"><div><b>Straßen-Anschlussregel</b><p>Betrifft S1, S2, S6, S7, W2, W3 und alle Eventrouten. Breitere Straßen und neue Kreuzungsflächen ändern genau die Stellen, an denen heute Lücken geprüft werden. Vorschlag: jede Stufe mit Drivetest über 200 Routen, Lückenprüfung mit neu eingemessener Schwelle und einer neuen Hochtempo-Variante. Gesetzte Schanzen und Event-Absperrungen bekommen ausdrückliche Ausnahmen.</p></div><div><b>Maßstab 1:1</b><p>Wird nur bei Straßen- und Gehwegbreiten gelockert. Ein globaler Faktor würde Luftbild, LiDAR-Bäume, Häuser und Adressen gegeneinander verschieben. Breiter werden kann eine Straße nur bis zur Hauskante; in der Altstadt geht das über schmalere Gehwege.</p></div><div><b>Realismusregeln vom 24.10.</b><p>Bleiben bestehen: keine Bordsteine an Schnellstraßen, Fußgängergeländer auf jeder Brücke (rücken mit dem breiteren Querschnitt mit), Wasser immer flach, kein Low-Poly-Look.</p></div><div><b>Fahrmodell</b><p>Grip bleibt der Standard. Drift gibt es nur auf Knopfdruck (F2), das Sim-Modell bleibt wählbar.</p></div><div><b>Debug-Konsole</b><p>Jeder Punkt bekommt Befehle, etwa road.profile, event.list, event.start, event.win, xp.add, credits.add, police.wanted, cam.preset, score.combo, rivals.level.</p></div><div><b>Nur privat</b><p>Online-Teile erst, wenn Cloudflare Access das Spiel schützt.</p></div></div>
+</section>
+
+<section>
+  <h2>Offene Fragen an dich</h2>
+  <ol class="q"><li>Straßen nur über schmalere Gehwege verbreitern, oder auch Häuser in engen Gassen zurückschieben?</li><li>Welches Gebiet zuerst nach 66740: Landkreis Saarlouis oder gleich bis Saarbrücken?</li><li>Soll es Polizei und Verfolgungen geben, oder lieber ein friedliches Spiel ohne Fahndung?</li></ol>
+</section>
+
+</div></main>
+
+<script>
+(() => {
+  const chips = [...document.querySelectorAll('.chip')];
+  const items = [...document.querySelectorAll('.it')];
+  const areas = [...document.querySelectorAll('section.area')];
+  const apply = (f) => {
+    chips.forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.f === f)));
+    items.forEach((it) => { it.hidden = f === 'all' ? false : f === 'rule' ? !it.querySelector('.warn') : it.dataset.prio !== f; });
+    areas.forEach((s) => { s.hidden = !s.querySelector('.it:not([hidden])'); });
+    try { localStorage.setItem('fr-filter', f); } catch (e) {}
+  };
+  chips.forEach((c) => c.addEventListener('click', () => apply(c.dataset.f)));
+  document.querySelectorAll('.sign a').forEach((a) => a.addEventListener('click', () => apply('all')));
+  let saved = 'all';
+  try { saved = localStorage.getItem('fr-filter') || 'all'; } catch (e) {}
+  apply(saved);
+})();
+</script>

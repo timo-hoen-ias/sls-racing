@@ -79,6 +79,18 @@ registerCommand({ name: 'gear.set', help: 'Gang einlegen', args: '<gang>', run: 
 
 Namen sind klein geschrieben mit Namensraum (`car.*`, `gear.*`, `cam.*`, `fx.*`, `weather.*`, `world.*` …), Hilfetexte auf Deutsch. `run` gibt den Ausgabetext zurück oder wirft einen Fehler.
 
+## Fun-Racer
+
+Seit Oktober 2026 geht Spielgefühl vor Realismus (Vorschlagsliste `docs/fun-racer-vorschlaege.html`). `feel fun|real` schaltet alles auf einmal um (Menü: Fahren → Spielgefühl), `feel.info` zeigt die Werte. Fun ist Standard:
+
+- **Fahrgefühl** (`src/game/feel.ts`, `CarPhysics.feel`): mehr Drehmoment, mehr Abtrieb, weniger Luftwiderstand, das Auto richtet sich in der Luft selbst aus und landet weich. Befehle `feel.torque|downforce|drag|airlevel|landing`.
+- **Nitro**: kurz antippen gibt einen Stoß (`feel.burst`, `feel.burstkick`, `feel.burstcost`), halten den Dauerschub. Nachgefüllt wird vor allem durch Stil (`nitro.refill` für das langsame Nachfüllen).
+- **Stilpunkte** (`src/game/style.ts`, `src/game/score.ts`): knapp vorbei, Windschatten, Gegenverkehr, Drift, Sprung, Umfahren, Rammen und Vollgas geben Nitro und Punkte. Moves stapeln sich zu einer Kombo mit Multiplikator, die nach einigen Sekunden ohne neuen Move gutgeschrieben wird; ein harter Crash kostet die laufende Kombo. Befehle `score.info|bank|add|window|step`.
+- **Verzeihende Kollisionen**: an Wänden und Planken gleitet das Auto bei streifenden Treffern weiter (`forgive`, `forgive.keep|angle`). Verkehr lässt sich rammen: das getroffene Fahrzeug fliegt als Wrack aus dem Verkehr (`traffic.punt`, `traffic.mass`, `traffic.wreck`, `traffic.wrecktime`). Parkende Autos werden ab 25 km/h weggeschoben.
+- **Weniger im Weg**: nur die Hälfte der parkenden Autos und keine an Straßen unter 6 m (`props.parkdensity`, `props.parkwidth`), flache Bordsteine (8 cm) mit kleinem Stoß (`kerb.bump`), Fußgänger springen immer rechtzeitig weg (`peds.safe`).
+- **Kamera und Tempo**: die Verfolgerkamera fällt beim Beschleunigen zurück und schaut in Kurven mit (`cam.style arcade|ruhig`, `cam.lag|swing|height|dist`), das Sichtfeld weitet sich bis 280 km/h, Tempo-Linien am Bildrand (`fx.speedlines`, `fx.speedlines.from|strength`).
+- **Spiel-Sounds** (`src/audio/gameSfx.ts`, ohne Sample-Dateien): `sfx on|off`, `sfx.volume`, `sfx.play <name>`.
+
 ## Stadtleben
 
 KI-Verkehr (Autos, Lieferwagen, Busse, Lkw) fährt auf dem Straßengraph rechts, folgt mit Abstand (Intelligent Driver Model), bremst vor Kurven und Abbiegungen, lässt an Kreuzungen die größere Straße zuerst, sonst gilt rechts vor links, Linksabbieger warten auf Gegenverkehr. Vor dir bremsen die Autos und hupen, wenn du im Weg stehst; nach einem Rempler bleiben sie mit Warnblinker stehen. Im Nahbereich sind sie fest (Kollision), die nächsten fünf haben Motor- und Reifengeräusch mit Doppler-Effekt.

@@ -143,10 +143,13 @@ export function bollardedEntry(tags: Record<string, string>): boolean {
   const v = tags.motorcar ?? tags.motor_vehicle ?? tags.vehicle ?? tags.access;
   return v === 'no';
 }
-/** Kerb and pavement dimensions (RASt 06: Hochbord 10–12 cm, abgesenkt 3 cm at crossings and driveways). */
+/**
+ * Kerb and pavement dimensions (RASt 06: Hochbord 10–12 cm, abgesenkt 3 cm at crossings and driveways).
+ * The game keeps the kerb low (8 cm, like a Rundbord) so the car can cut across pavements and squares.
+ */
 export const KERB = {
   /** Raised kerb above the carriageway, metres. */
-  height: 0.12,
+  height: 0.08,
   /** Lowered kerb (Bordsteinabsenkung) at crossings and where the pavement ends at a junction. */
   lowered: 0.03,
   /** Pavement width beside the carriageway. */

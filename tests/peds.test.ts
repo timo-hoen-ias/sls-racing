@@ -47,6 +47,7 @@ describe('PedSim', () => {
     const g = graph();
     const sim = new PedSim(g, { rng: rng(4) });
     sim.density = 0;
+    sim.safe = false;
     const p = sim.spawn(g.edges[0], 1, 50, 1);
     p.state = 'stand';
     p.timer = 99;
@@ -69,10 +70,28 @@ describe('PedSim', () => {
     p.timer = 99;
     let knocked = 0;
     sim.events.knocked = () => knocked++;
+    sim.safe = false;
     sim.update(1 / 30, undefined, { x: p.x - 1, z: p.z, vx: 15, vz: 0, halfWidth: 0.95 });
     expect(knocked).toBe(1);
     expect(p.state).toBe('down');
     for (let i = 0; i < 30 * 8; i++) sim.update(1 / 30, undefined);
+    expect(p.state).not.toBe('down');
+  });
+
+  it('in safe mode leaps clear instead of being knocked over', () => {
+    const g = graph();
+    const sim = new PedSim(g, { rng: rng(5) });
+    sim.density = 0;
+    const p = sim.spawn(g.edges[0], 1, 50, 1);
+    p.state = 'stand';
+    p.timer = 99;
+    let knocked = 0, dodged = 0;
+    sim.events.knocked = () => knocked++;
+    sim.events.dodged = () => dodged++;
+    const car = { x: p.x - 1, z: p.z, vx: 15, vz: 0, halfWidth: 0.95 };
+    for (let i = 0; i < 20; i++) { sim.update(1 / 30, undefined, car); car.x += 0.5; }
+    expect(knocked).toBe(0);
+    expect(dodged).toBeGreaterThan(0);
     expect(p.state).not.toBe('down');
   });
 

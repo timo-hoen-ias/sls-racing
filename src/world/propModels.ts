@@ -331,6 +331,11 @@ export function buildPropGeometries(): Record<string, Geo> {
     // Maschendrahtzaun: galvanised post at the piece's end, top rail and bottom tension wire; the mesh itself is
     // chainLinkPanel() with chainLinkMaterial(). Posts are thin since the piece is stretched along z.
     [Prop.chainLink]: merge([box(0.06, 1.75, 0.014, 0, 0.875, 0.493, CHAIN), box(0.042, 0.042, 1, 0, 1.68, 0, CHAIN), box(0.012, 0.012, 1, 0, 0.06, 0, CHAIN)]),
+    // Andreaskreuz (Z 201): red-white boards crossed at 2.2 m on a grey post.
+    [Prop.railCross]: merge([pole(2.6), ...[-1, 1].flatMap((s) => {
+      const arm = (hex: number, y: number) => box(1.0, 0.18, 0.02, 0, 0, 0, hex).rotateZ((s * Math.PI) / 4).translate(0, y, 0.04);
+      return [arm(WHITE, 2.2), box(0.25, 0.185, 0.022, 0, 0, 0, RED).translate(-0.33, 0, 0).rotateZ((s * Math.PI) / 4).translate(0, 2.2, 0.04), box(0.25, 0.185, 0.022, 0, 0, 0, RED).translate(0.33, 0, 0).rotateZ((s * Math.PI) / 4).translate(0, 2.2, 0.04)];
+    })]),
     [Prop.wall]: merge([box(0.3, 1.6, 1, 0, 0.8, 0, 0xb3a58e), box(0.36, 0.08, 1, 0, 1.64, 0, 0x9a8e7a)]),
     [Prop.hedge]: merge([box(0.9, 1.3, 1, 0, 0.65, 0, 0x34572a), box(0.7, 0.2, 1, 0, 1.4, 0, 0x3d6431)]),
     [Prop.guardRail]: merge([box(0.05, 0.32, 1, 0, 0.6, 0, 0xb4b9bd), box(0.12, 0.75, 0.12, 0.06, 0.375, 0, 0x8f969c)]),

@@ -22,6 +22,7 @@ import { CARS } from '../vehicle/cars.ts';
 import type { CarPhysics } from '../vehicle/carPhysics.ts';
 import { BUST, type PlayerNow, type Police } from './police.ts';
 import { WantedHud } from '../ui/wantedHud.ts';
+import { applySignal, type DailySignal, describeTask, drawDaily, taskGoal, today } from './daily.ts';
 import { Discovery, DISTRICT_REWARD, type District, type Viewpoint, VIEWPOINT_REWARD } from './discovery.ts';
 import { GhostRecorder, type GhostRun, ghostStore, GhostView, type Pose } from './ghost.ts';
 
@@ -208,6 +209,27 @@ export class Game {
     this.title.open = false;
     this.d.start.hidden = true;
     this.d.onPlay();
+    const tasks = this.daily();
+    if (tasks.some((t) => !t.done)) this.d.toast(`Tagesaufgaben: ${tasks.filter((t) => !t.done).map((t) => describeTask(t)).join(' · ')}`, 4);
+  }
+
+  /** Today's three challenges (P6), drawn on the first call of the day. */
+  daily() {
+    const dd = this.save.data.daily;
+    if (dd.day !== today()) {
+      this.save.data.daily = { day: today(), tasks: drawDaily(today(), this.discovery.districts.map((x) => x.name)) };
+      this.save.touch();
+    }
+    return this.save.data.daily.tasks;
+  }
+
+  private signal(s: DailySignal) {
+    for (const { task, xp, credits } of applySignal(this.daily(), s)) {
+      this.d.toast(`Tagesaufgabe geschafft: ${describeTask(task)}`, 2.5);
+      this.d.sfx.play('medal', 0.6);
+      this.progress.reward(xp, credits, 'Tagesaufgabe');
+      this.save.touch();
+    }
   }
 
   openList() {
@@ -279,6 +301,8 @@ export class Game {
 
   style(e: StyleEvent) {
     this.runner.style(e);
+    const at = this.prev ? this.discovery.at(this.prev.x, this.prev.z)?.name : undefined;
+    this.signal({ kind: 'style', style: e.kind, points: e.points, value: e.value, district: at });
   }
 
   /** Called on 'interact' (F / pad →). */
@@ -316,6 +340,7 @@ export class Game {
       this.trackPlace(car);
       this.updateGhost();
       if (!this.runner.busy) this.discovery.update(car.x, car.z, car.speed);
+      if (car.speed * 3.6 > 200 && (this.speedTick -= dt) <= 0) { this.speedTick = 0.5; this.signal({ kind: 'speed', kmh: car.speed * 3.6 }); }
       if (this.runner.racing && this.runner.state === 'running' && this.runner.event?.path && distanceToPath(this.runner.event.path, car.x, car.z) > 150) this.runner.abort('Strecke verlassen');
       this.prev = { x: car.x, z: car.z };
     } else if (!ready) { this.prev = undefined; this.runner.skip(); this.retrack = true; }
@@ -370,6 +395,7 @@ export class Game {
   }
 
   private wantedHud?: WantedHud;
+  private speedTick = 0;
   /** Districts and viewpoints to find (W5). */
   readonly discovery = new Discovery();
 
@@ -427,6 +453,7 @@ export class Game {
       toast(`Entkommen! ${'★'.repeat(h)} · ${Math.round(t)} s Verfolgung`, 2.5);
       sfx.play('levelup', 0.6);
       this.progress.reward(xp, credits, 'Polizei entkommen');
+      this.signal({ kind: 'escape', heat: h });
     };
     w.onBust = (h) => {
       const fine = Math.min(this.progress.credits, 500 * h);
@@ -518,6 +545,7 @@ export class Game {
         runs: (rec?.runs ?? 0) + 1,
       };
       if (res.medal) this.save.stat(`medal${res.medal}`);
+      this.signal({ kind: 'medal', medal: res.medal, type: e.type });
       if (res.best && this.ghostEvent(e)) ghostStore.save(e.id, this.ghostRec.finish(res.value));
       this.progress.reward(res.xp, res.credits, e.name);
       const part = this.workshop?.reward(e, res.medal);
@@ -604,6 +632,12 @@ export class Game {
       return `${this.events.length} Events`;
     } });
     registerToggle('events', 'Events in der freien Fahrt (Tore, Marker, Start-Hinweise)', () => this.enabled, (v) => (this.enabled = v));
+    registerCommand({ name: 'daily', help: 'Tagesaufgaben von heute mit Fortschritt', run: () => this.daily().map((t) => `${t.done ? '✓' : '·'} ${describeTask(t)} (${Math.round(t.progress)}/${taskGoal(t)})`).join('\n') });
+    registerCommand({ name: 'daily.reroll', help: 'Tagesaufgaben neu ziehen (Debug: anderer Tag)', args: '[tag]', run: ([day]) => {
+      this.save.data.daily = { day: today(), tasks: drawDaily(day ?? String(Math.random()), this.discovery.districts.map((x) => x.name)) };
+      this.save.touch();
+      return this.daily().map((t) => describeTask(t)).join('\n');
+    } });
     registerCommand({ name: 'discover.list', help: 'Stadtteile und Aussichtspunkte: gefunden oder offen', run: () => {
       const disc = this.discovery;
       const row = (id: string, name: string) => `${disc.found.has(id) ? '✓' : '·'} ${name}`;

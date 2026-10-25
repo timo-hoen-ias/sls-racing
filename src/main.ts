@@ -101,6 +101,9 @@ import { Rivals } from './game/rivals.ts';
 import { Police } from './game/police.ts';
 import { distanceToPath } from './game/events/runner.ts';
 import { BarrierView } from './game/events/barriers.ts';
+import { Online } from './net/online.ts';
+import { NetPlay } from './net/netPlay.ts';
+import { PoseFlag } from './net/protocol.ts';
 import { JumpRampView, placeJumpRamps, registerJumpCommands } from './world/jumpRamps.ts';
 import type { PropHit } from './world/props.ts';
 
@@ -516,8 +519,11 @@ async function boot() {
   view.scene.add(jumpRamps.root);
   for (const r of jumpRamps.ramps) traffic.sim.closed.add(r.edge);
   registerJumpCommands(jumpRamps, () => ip, (x, z, h) => teleport(x, z, h));
+  // Leaderboards with friends (O1): only when the Worker API answers (behind Cloudflare Access).
+  const online = new Online();
+  void online.connect().then((ok) => console.info(ok ? `[online] verbunden als ${online.name}` : `[online] offline: ${online.reason}`));
   const game = new Game({
-    rivals, barriers, police, ramps: jumpRamps.ramps,
+    rivals, barriers, police, online, ramps: jumpRamps.ramps,
     destination: async (near, min, max) => {
       addressBook ??= loadAddresses(`${import.meta.env.BASE_URL}data/addresses.json`);
       const book = await addressBook;
@@ -539,7 +545,7 @@ async function boot() {
     graph, scene: view.scene, hud: $('hud'), start: startBtn, nav, sfx, tilesUrl: TILES_URL,
     toast: (t, sec) => navHud.toast(t, sec), rumble: (k, ms) => input.rumble(k, ms),
     teleport: (x, z, heading) => teleport(x, z, heading), ready: () => worldReady && !hold,
-    onPlay: () => void startAudio(), openOptions: () => menu.toggle(true),
+    onPlay: () => void startAudio(), openOptions: () => menu.toggle(true), openOnline: () => net.toggleMenu(true),
     cars: {
       current: () => garage.current.id,
       select: (id) => garage.select(id),
@@ -561,8 +567,26 @@ async function boot() {
   if (game.save.data.car !== garage.current.id) void garage.select(game.save.data.car);
   else garage.retune();
   game.registerCommands(() => ip);
+  // Online play (O2): servers with up to 8 players, free roam together and shared races (net.*).
+  let lastDrive = { brake: 0 };
+  const net = new NetPlay({
+    R: RAPIER, world, scene: view.scene, hud: $('hud'), graph, game,
+    pose: () => {
+      const v = car.body.linvel();
+      const flags = (lastDrive.brake > 0 && Math.abs(car.speed) > 1 ? PoseFlag.brake : 0) | (car.boosting ? PoseFlag.boost : 0) | (car.gear === -1 ? PoseFlag.reverse : 0);
+      return [ip.x, ip.y, ip.z, iq.x, iq.y, iq.z, iq.w, v.x, v.y, v.z, car.steer, flags];
+    },
+    pos: () => ({ x: ip.x, z: ip.z }),
+    look: () => ({ car: garage.current.id, color: `#${carView.paintColor.getHexString()}` }),
+    makeModel: (url, color) => loadSportsCar(color, url),
+    toast: (t, sec) => navHud.toast(t, sec),
+    print: (t) => debug.print(t, 'info'),
+    teleport: (x, z, heading) => teleport(x, z, heading, true),
+  });
+  net.registerCommands();
+  online.registerCommands(() => game.currentEventId(), (t) => debug.print(t, 'info'), (id, v) => game.formatResult(id, v));
   void game.load();
-  minimap.markers = bigMap.markers = () => game.markers();
+  minimap.markers = bigMap.markers = () => [...game.markers(), ...net.markers()];
   bigMap.areas = () => game.areas();
   bigMap.stats = () => game.mapStats();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
@@ -621,7 +645,7 @@ async function boot() {
       if (photo.active) { if (e === 'photo') photo.toggle(false); continue; }
       if (e === 'photo' && !menu.open && !game.overlay && !replay.active) { photo.toggle(true, ip); continue; }
       // The open menu reads the gamepad itself and eats the keyboard.
-      if (menu.open || game.overlay) { if (e === 'interact' && game.hud.cardOpen) game.interact(); continue; }
+      if (menu.open || game.overlay) { if (e === 'interact' && game.hud.cardOpen) game.interact(); if (e === 'online' && net.browser.open) net.toggleMenu(false); continue; }
       if (e === 'menu' && !debug.open) menu.toggle(true);
       if (e === 'reset') {
         // In a race the car goes back to the last checkpoint.
@@ -631,6 +655,8 @@ async function boot() {
         rescue.clear(car);
       }
       if (e === 'interact') game.interact();
+      if (e === 'online') net.toggleMenu();
+      if (e === 'chat' && !bigMap.open && !debug.open) net.openChat();
       if (e === 'events') game.openList();
       if (e === 'rewind') rewind();
       if (e === 'camera') cam.next();
@@ -707,6 +733,7 @@ async function boot() {
       }
       car.update(drive, STEP);
       game.stepRivals(STEP, curr.p);
+      net.step(STEP);
       if (worldReady && !hold) {
         const v = car.body.linvel();
         game.stepPolice(STEP, { x: curr.p.x, z: curr.p.z, vx: v.x, vz: v.z, speed: Math.hypot(v.x, v.z), heading: car.heading() }, car);
@@ -761,6 +788,9 @@ async function boot() {
       carView.pose(car, replay.pos, replay.quat, rs.steer, replayLengths, replayRot, rs.brake > 0 && rs.speed > 1, rs.boost > 0.5, now / 1000);
     } else carView.sync(car, ip, iq, braking, now / 1000);
     rivals.render(alpha, now / 1000, night);
+    lastDrive = drive;
+    net.update(dt, night, now / 1000, view.camera.position);
+    if (!menu.open && !debug.open) net.browser.poll(dt);
     police.render(alpha, now / 1000, night);
     {
       const n = police.heat ? police.nearest({ x: ip.x, z: ip.z, vx: 0, vz: 0, speed: 0, heading: car.heading() }) : undefined;

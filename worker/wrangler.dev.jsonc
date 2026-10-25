@@ -1,0 +1,13 @@
+// Local test of the leaderboard API and the online servers (npm run online:dev): the real Worker with a local D1
+// database, local Durable Objects and a test player instead of Cloudflare Access (?as=name@x.de picks another
+// one). Serves the last `npm run build`; `npm run online:vite` runs the dev server against it instead.
+{
+  "name": "sls-racing-dev",
+  "compatibility_date": "2026-10-01",
+  "main": "index.ts",
+  "assets": { "directory": "../dist", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  "vars": { "ACCESS_TEAM": "", "ACCESS_AUD": "", "DEV_NO_AUTH": "1" },
+  "durable_objects": { "bindings": [{ "name": "LOBBY", "class_name": "Lobby" }, { "name": "DIRECTORY", "class_name": "Directory" }] },
+  "migrations": [{ "tag": "v1-online", "new_sqlite_classes": ["Lobby", "Directory"] }],
+  "d1_databases": [{ "binding": "DB", "database_name": "sls-racing-dev", "database_id": "00000000-0000-0000-0000-000000000000" }]
+}

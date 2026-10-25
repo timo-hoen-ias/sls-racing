@@ -12,7 +12,7 @@ import type { JumpRamp } from '../world/jumpRamps.ts';
 import { generateEvents, mergeEvents } from './events/generate.ts';
 import { GateView, TYPE_COLORS } from './events/gates.ts';
 import { distanceToPath, EventRunner } from './events/runner.ts';
-import { crossed, EVENT_LABELS, formatValue, type GameEvent, type Gate, RACE_TYPES } from './events/types.ts';
+import { crossed, EVENT_LABELS, type EventResult, formatValue, type GameEvent, type Gate, RACE_TYPES } from './events/types.ts';
 import { Progress } from './progress.ts';
 import { MEDAL_NAMES, SaveGame } from './save.ts';
 import { LineTracker, RIVAL_LEVELS, type RivalLevel, type Rivals } from './rivals.ts';
@@ -28,6 +28,7 @@ import { Collectibles, DISTRICT_BONUS, placeTokens, TOKEN_REWARD } from './colle
 import { STEPS, Tutorial } from './tutorial.ts';
 import { type Destination, makeDelivery } from './delivery.ts';
 import { Discovery, DISTRICT_REWARD, type District, type Viewpoint, VIEWPOINT_REWARD } from './discovery.ts';
+import { Online } from '../net/online.ts';
 import { GhostRecorder, type GhostRun, ghostStore, GhostView, type Pose } from './ghost.ts';
 
 // The game around the driving (G1): spielstand, level and credits, the events in town with their gates and
@@ -52,6 +53,8 @@ export interface GameDeps {
   onPlay(): void;
   openOptions(): void;
   openGarage?(): void;
+  /** The online menu (O2). */
+  openOnline?(): void;
   /** AI rivals for races (V3). */
   rivals?: Rivals;
   /** Fences across side streets during races (S6). */
@@ -60,6 +63,8 @@ export interface GameDeps {
   ramps?: JumpRamp[];
   /** The player car's garage (vehicle/garage.ts): parts, dealer and home garage need it (P3, P4). */
   cars?: CarControl;
+  /** Leaderboards and friends' ghosts (O1); absent or unavailable = offline. */
+  online?: Online;
   /** Where the home garage goes (beside the start). */
   home?: { x: number; z: number };
   /** Ground height for markers. */
@@ -123,6 +128,12 @@ export class Game {
   private retrack = false;
   /** Rivals per race; undefined: as the event says. */
   rivalCount?: number;
+  /** Online play (O2): another open overlay, a claim on the interact key, and the end of every race run. */
+  overlayHook?: () => boolean;
+  interactHook?: () => boolean;
+  onRaceEnd?: (e: GameEvent, result?: EventResult) => void;
+  /** Online race waiting for its start: milliseconds to the shared start signal. */
+  private netStart?: () => number;
   /** Parts, dealer and home garage (P3, P4); without a car control (tests) there are none. */
   readonly workshop?: Workshop;
   readonly garageMenu?: GarageMenu;
@@ -140,6 +151,7 @@ export class Game {
       play: () => this.play(),
       events: () => this.openList(),
       garage: () => { this.play(); this.openGarage('home'); },
+      online: () => { this.play(); d.openOnline?.(); },
       options: () => d.openOptions(),
     });
     this.list = new EventList(d.hud, {
@@ -209,7 +221,7 @@ export class Game {
 
   get inGame() { return !this.title.open; }
   /** Overlays that take the input (title, list, result card). */
-  get overlay() { return this.title.open || this.list.open || this.hud.cardOpen || !!this.garageMenu?.open; }
+  get overlay() { return this.title.open || this.list.open || this.hud.cardOpen || !!this.garageMenu?.open || !!this.overlayHook?.(); }
   /** Controls locked: countdown, or waiting to put the car on a race start. */
   get locked() { return this.runner.state === 'countdown' || !!this.pending; }
   get racing() { return this.runner.racing; }
@@ -322,12 +334,27 @@ export class Game {
     if (!force && e.level > this.progress.level) { this.d.toast(`${e.name}: ab Stufe ${e.level}`, 1.8); return; }
     if (this.title.open) this.play();
     if (this.runner.busy) this.runner.abort('Abgebrochen');
+    this.netStart = undefined;
     const back = RACE_TYPES.has(e.type) ? (this.fieldOf(e) ? 14 : 6) : 60;
     // Speed traps start at their run-up, far enough back to reach the gold speed.
     const r = e.extra?.runup;
     if (r) this.d.teleport(r.x, r.z, headingOf(r));
     else this.d.teleport(e.start.x - e.start.dx * back, e.start.z - e.start.dz * back, headingOf(e.start));
     this.pending = RACE_TYPES.has(e.type) ? e : undefined;
+    this.prev = undefined;
+  }
+
+  /**
+   * An online race (O2): the car goes onto its grid slot and the countdown ends at the server's start signal
+   * (remaining() ms from now). No AI rivals: the other players are the field.
+   */
+  startNetRace(e: GameEvent, slot: { x: number; z: number; heading: number }, remaining: () => number) {
+    if (this.title.open) this.play();
+    if (this.runner.busy) this.runner.abort('Abgebrochen');
+    this.list.hide();
+    this.d.teleport(slot.x, slot.z, slot.heading);
+    this.pending = e;
+    this.netStart = remaining;
     this.prev = undefined;
   }
 
@@ -348,6 +375,7 @@ export class Game {
   /** Called on 'interact' (F / pad →). */
   interact() {
     if (this.hud.cardOpen) { this.hud.onClose?.(); return; }
+    if (this.interactHook?.()) return;
     if (this.garageMenu?.open) return;
     if (this.promptPlace?.id === 'courier' && !this.runner.busy) { void this.startDelivery(); return; }
     if (this.promptPlace && !this.runner.busy && this.promptPlace.id !== 'courier') { this.openGarage(this.promptPlace.id); return; }
@@ -371,8 +399,19 @@ export class Game {
       const e = this.pending;
       this.pending = undefined;
       this.lastRace = e;
-      this.runner.startRace(e);
-      this.startRivals(e);
+      const net = this.netStart;
+      this.netStart = undefined;
+      if (net) {
+        // Online: count down to the shared start; a late car starts with the time already running.
+        const left = net() / 1000;
+        this.d.rivals?.clear();
+        this.track = undefined;
+        this.runner.startRace(e, Math.max(0.01, left));
+        if (left < 0) this.runner.time = -left;
+      } else {
+        this.runner.startRace(e);
+        this.startRivals(e);
+      }
       if (e.path && d.barriers && e.type !== 'delivery') d.barriers.show(findBarriers(d.graph, e.path));
     }
     if (ready && this.inGame) {
@@ -615,6 +654,40 @@ export class Game {
     }
   }
 
+  /** The running event, else the last race (online.board). */
+  currentEventId() { return this.runner.event?.id ?? this.lastRace?.id; }
+
+  /** A result as the event shows it (time, km/h, m …). */
+  formatResult(id: string, v: number) {
+    const ev = this.events.find((x) => x.id === id);
+    return ev ? formatValue(ev, v) : String(v);
+  }
+
+  /** In races: the fastest friend's ghost replaces your own when it beats it (O1). */
+  private async friendGhost(e: GameEvent) {
+    const on = this.d.online;
+    if (!on?.available || !on.friendGhosts || !this.ghosts || !this.ghostEvent(e)) return;
+    try {
+      const rival = Online.rivalOf(await on.board(e.id), this.ghostRun?.value);
+      if (!rival) return;
+      const run = await on.ghost(e.id, rival.name);
+      if (this.runner.event?.id !== e.id || this.runner.state === 'done') return;
+      this.ghostRun = run;
+      this.d.toast(`Geist: ${rival.name} ${formatValue(e, run.value)}`, 1.8);
+    } catch (err) { console.info('[online] kein Geist', (err as Error).message); }
+  }
+
+  /** Sends the result (and the run's ghost) to the friends' leaderboard and tells the rank (O1). */
+  private async sendResult(e: GameEvent, value: number) {
+    const on = this.d.online;
+    if (!on?.available || !on.send) return;
+    try {
+      const ghost = this.ghostEvent(e) ? this.ghostRec.finish(value) : undefined;
+      const r = await on.submit(e.id, value, e.higher, this.d.cars?.current(), ghost);
+      this.d.toast(`Bestenliste: Platz ${r.rank}${r.best ? ' · neue Bestleistung' : ''}`, 2);
+    } catch (err) { console.info('[online] Ergebnis nicht gesendet', (err as Error).message); }
+  }
+
   private wireRunner() {
     const r = this.runner;
     const { sfx, toast, rumble } = this.d;
@@ -622,6 +695,7 @@ export class Game {
       this.ghostRec.start();
       this.ghostRun = this.ghostEvent(e) ? ghostStore.load(e.id) : undefined;
       if (this.ghostRun && this.ghosts) toast(`Geist: deine Bestzeit ${formatValue(e, this.ghostRun.value)}`, 1.6);
+      void this.friendGhost(e);
       if (!RACE_TYPES.has(e.type)) { sfx.play('go', 0.6); toast(`${EVENT_LABELS[e.type]}: ${e.name}`, 1.4); } };
     r.onCountdown = (n) => { this.hud.countdown(n); sfx.play('beep'); };
     r.onGo = () => { this.hud.countdown(0); sfx.play('go'); rumble(0.5, 200); };
@@ -630,7 +704,7 @@ export class Game {
       if (i < e.gates.length - 1 || (e.laps && lap < e.laps)) sfx.play('checkpoint');
     };
     r.onLap = (lap) => toast(`Runde ${lap}/${r.event?.laps}`, 1.2);
-    r.onFail = (e, why) => { this.hud.fail(e, why); sfx.play('fail'); this.endRivals(); };
+    r.onFail = (e, why) => { this.hud.fail(e, why); sfx.play('fail'); this.endRivals(); this.onRaceEnd?.(e); };
     r.onFinish = (res) => {
       const e = res.event;
       const rec = this.save.data.events[e.id];
@@ -644,6 +718,7 @@ export class Game {
       this.signal({ kind: 'medal', medal: res.medal, type: e.type });
       this.tutorial.mark('event');
       if (res.best && this.ghostEvent(e)) ghostStore.save(e.id, this.ghostRec.finish(res.value));
+      void this.sendResult(e, res.value);
       this.progress.reward(res.xp, res.credits, e.name);
       const part = this.workshop?.reward(e, res.medal);
       if (part) { toast(`Neues Teil: ${part}`, 2.5); sfx.play('discover', 0.7); }
@@ -652,6 +727,7 @@ export class Game {
       sfx.play('cash', 0.5);
       this.hud.result(res, RACE_TYPES.has(e.type), after > before ? ` · Stufe ${after}!` : '');
       if (!RACE_TYPES.has(e.type)) r.close();
+      this.onRaceEnd?.(e, res);
     };
   }
 
@@ -718,7 +794,7 @@ export class Game {
       r.finish(v);
       return `${e.name}: ${MEDAL_NAMES[k]}`;
     } });
-    registerCommand({ name: 'event.abort', help: 'Laufendes Event abbrechen', run: () => { this.pending = undefined; this.runner.abort('Abgebrochen'); return 'abgebrochen'; } });
+    registerCommand({ name: 'event.abort', help: 'Laufendes Event abbrechen', run: () => { this.pending = undefined; this.netStart = undefined; this.runner.abort('Abgebrochen'); return 'abgebrochen'; } });
     registerCommand({ name: 'event.info', help: 'Zustand des laufenden Events', run: () => {
       const r = this.runner;
       if (!r.event) return `kein Event · ${this.events.length} in der Stadt`;

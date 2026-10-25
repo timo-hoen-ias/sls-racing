@@ -9,7 +9,16 @@
   // vite copies public/tiles into dist, so they are served as static assets next to the game (unchanged files
   // are not uploaded again). Move them to R2 once the world outgrows asset limits.
   "build": { "command": "npm run world:deploy && npm run build" },
-  "assets": { "directory": "./dist" },
+  // The Worker (worker/index.ts) only answers /api/* (leaderboards, O1); every other path is a static file.
+  "main": "worker/index.ts",
+  "assets": { "directory": "./dist", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  // Cloudflare Access in front of the game (team domain and AUD tag of the Access application) and the D1
+  // database of the leaderboards. Until they are filled in the API answers 503 and the game plays offline.
+  "vars": { "ACCESS_TEAM": "", "ACCESS_AUD": "" },
+  // Online play (O2): one Durable Object per server (worker/lobby.ts) and the server list (worker/directory.ts).
+  // They only answer behind Cloudflare Access like the rest of /api.
+  "durable_objects": { "bindings": [{ "name": "LOBBY", "class_name": "Lobby" }, { "name": "DIRECTORY", "class_name": "Directory" }] },
+  "migrations": [{ "tag": "v1-online", "new_sqlite_classes": ["Lobby", "Directory"] }],
   // Required by `wrangler preview`, which Workers Builds runs for non-main branches.
   "previews": {}
 }

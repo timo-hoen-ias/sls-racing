@@ -111,15 +111,19 @@ export class RailLayer {
       },
     });
     registerCommand({
-      name: 'rails.tp', help: 'Zur n-ten nächsten Schutzplanke teleportieren (auf die Fahrbahn daneben)', args: '[n]',
-      run: ([k = '1']) => {
+      name: 'rails.tp', help: 'Zur n-ten nächsten Schutzplanke teleportieren (auf die Fahrbahn daneben), mittel: nur beidseitige Mittelschutzplanken', args: '[n] [mittel]',
+      complete: () => ['1', 'mittel'],
+      run: (args) => {
+        const median = args.includes('mittel');
+        const [k = '1'] = args.filter((a) => a !== 'mittel');
         const p = player();
-        const list = this.near(p.x, p.z).filter((e) => e.d > 15);
+        const list = this.near(p.x, p.z).filter((e) => e.d > 15 && (!median || e.run.flags & RAIL_FLAGS.double));
         const n = list[Math.max(0, Math.round(parseNum(k, 'n', 1, 500)) - 1)];
         if (!n) throw new Error('keine Schutzplanke geladen');
-        // 3 m to the traffic side (left of the run).
+        // 3 m to the traffic side (left of the run); from the middle of a median past its half width.
         const lx = Math.cos(n.heading), lz = -Math.sin(n.heading);
-        teleport(n.x + lx * 3, n.z + lz * 3, n.heading);
+        const off = n.run.flags & RAIL_FLAGS.double ? 6 : 3;
+        teleport(n.x + lx * off, n.z + lz * off, n.heading);
         return `Teleport an Schutzplanke in ${n.d.toFixed(0)} m`;
       },
     });

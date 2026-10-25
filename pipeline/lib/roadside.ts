@@ -29,6 +29,14 @@ export const ROADSIDE = {
   drop: 3,
   /** Rails continue this far onto the road beyond a bridge (m). */
   approach: 20,
+  /**
+   * Median (Mittelstreifen) between two motorway carriageways side by side: one double rail stands in its middle
+   * (RPS: doppelte Distanzschutzplanke) where at least `medianMin` lies between the inner lanes and at most
+   * `medianMax` between the paved edges; wider medians keep a single rail beside each carriageway. OSM often maps
+   * the two carriageways closer than their full cross-sections, so the paved inner strips may overlap.
+   */
+  medianMin: 0.8,
+  medianMax: 8,
 };
 
 /**
@@ -46,7 +54,7 @@ export interface RoadsideOptions {
   dressed?: Set<number>;
 }
 
-export interface RoadsideCounts { posts: number; chevrons: number; railKm: number; mapped: number; bridges: number; embankments: number; motorway: number }
+export interface RoadsideCounts { posts: number; chevrons: number; railKm: number; mapped: number; bridges: number; embankments: number; motorway: number; medianKm: number }
 
 /** Junction nodes (three or more road ends meet), from the drivable ways. */
 function junctionNodes(roads: Way[]) {
@@ -64,7 +72,7 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
   const T = o.world.tileSize;
   const props = new Map<string, number[]>();
   const rails = new GuardRails(o.world);
-  const counts: RoadsideCounts = { posts: 0, chevrons: 0, railKm: 0, mapped: 0, bridges: 0, embankments: 0, motorway: 0 };
+  const counts: RoadsideCounts = { posts: 0, chevrons: 0, railKm: 0, mapped: 0, bridges: 0, embankments: 0, motorway: 0, medianKm: 0 };
   const roads = ways.filter((w) => isDrivable(w.tags));
   const profiles = new Map(roads.map((w) => [w, roadProfile(w, o.height, o.world) as ProfileSample[]]));
   // Road samples with their height: bridge rails must not stand on a road alongside at deck level (the 2D lane
@@ -82,7 +90,7 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
    * Another road's carriageway near (e, n) at about this height, within reach of its edge. Samples on this road's
    * own centreline (the road continuing beyond the bridge end) do not count.
    */
-  const roadAtLevel = (self: Way, e: number, n: number, y: number, reach = 2.5) => {
+  const roadAtLevel = (self: Way, e: number, n: number, y: number, reach = 2.5, also?: Way) => {
     const near = (ce: number, cn: number) => {
       const out = [];
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) out.push(...(sgrid.get(`${ce + a}_${cn + b}`) ?? []));
@@ -106,7 +114,7 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
       return false;
     };
     for (const q of list)
-      if (q.w !== self && Math.abs(q.y - y) < 2.5 && Math.hypot(q.e - e, q.n - n) < q.hw + reach && !straightOn(q)) return true;
+      if (q.w !== self && q.w !== also && Math.abs(q.y - y) < 2.5 && Math.hypot(q.e - e, q.n - n) < q.hw + reach && !straightOn(q)) return true;
     return false;
   };
   const degree = junctionNodes(roads);
@@ -145,6 +153,8 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
   const bridgeEnds = new Set<number>();
   for (const w of roads) if (isBridge(w.tags) && !o.dressed?.has(w.id) && railed(w)) { bridgeEnds.add(w.ids[0]); bridgeEnds.add(w.ids[w.ids.length - 1]); }
 
+  const medians = medianRails(roads, profiles);
+
   for (const way of roads) {
     const hw = way.tags.highway;
     const cls = ROAD_CLASSES[hw];
@@ -173,7 +183,8 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     for (const side of [1, -1] as const) {
       const want = new Array<boolean>(ring.length).fill(false);
       if (bridge) { if (!o.dressed?.has(way.id) && railed(way)) want.fill(true); }
-      else if (motorway) want.fill(true);
+      // The median rail takes the left side where the other carriageway runs close beside.
+      else if (motorway) ring.forEach((_, i) => { want[i] = side > 0 || !medians.get(way)?.[i]; });
       else if (!urban && !link) {
         // Embankments: the ground falls away steeply beside the road.
         const hazard = ring.map((p) => {
@@ -222,6 +233,22 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     }
 
     if (embankment) counts.embankments++;
+
+    // --- Median rail: one double rail, built by the carriageway that owns the pair ---
+    const median = medians.get(way);
+    if (median) {
+      const ok = median.map((m) => !!m && m.owner && !nearJunction(m.e, m.n, 8) && !roadAtLevel(way, m.e, m.n, m.y, 0.3, m.partner));
+      for (let i = 0; i < ring.length; i++) {
+        if (!ok[i] || ok[i - 1]) continue;
+        let j = i;
+        while (ok[j + 1]) j++;
+        // Where the other carriageway takes over the pair, carry on to its first point, without a terminal.
+        const before = !!median[i - 1] && !median[i - 1]!.owner, after = !!median[j + 1] && !median[j + 1]!.owner;
+        const run = median.slice(before ? i - 1 : i, after ? j + 2 : j + 1).map((m) => ({ e: m!.e, n: m!.n, y: m!.y }));
+        if (rails.add(run, { double: true, terminals: [!before, !after] })) counts.medianKm += railLength(run);
+        i = j;
+      }
+    }
 
     // --- Delineators and chevron boards: rural roads, motorways and ramps, not on bridges ---
     if (urban || bridge) continue;
@@ -297,7 +324,64 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
     flush();
   }
   counts.railKm = Math.round(rails.length / 100) / 10;
+  counts.medianKm = Math.round(counts.medianKm / 100) / 10;
   return { props, rails, counts };
+}
+
+const railLength = (pts: { e: number; n: number }[]) => pts.reduce((s, p, i) => (i ? s + Math.hypot(p.e - pts[i - 1].e, p.n - pts[i - 1].n) : s), 0);
+
+/** A sample's point in the middle of the median, and whether this carriageway builds the rail there. */
+export interface MedianPoint { e: number; n: number; y: number; owner: boolean; partner: Way }
+
+/**
+ * Median rail points for each motorway carriageway (one-way, not a ramp, not a bridge: those have parapets), per
+ * profile sample: the middle of the median where the opposite carriageway runs alongside at about the same height
+ * with a median as ROADSIDE.medianMin and medianMax allow, else null. Of each pair the way with
+ * the lower id owns the rail, so it is built once.
+ */
+export function medianRails(roads: Way[], profiles: Map<Way, ProfileSample[]>) {
+  const carriageway = (w: Way) => !!roadSection(w.tags)?.oneway && isExpressway(w.tags) && !/_link$/.test(w.tags.highway) && !isBridge(w.tags);
+  const ways = roads.filter(carriageway);
+  const G = 16;
+  // Per sample: distance from the centreline to the leftmost lane edge, and the paved strip beyond it.
+  const grid = new Map<string, { p: ProfileSample; left: number; inner: number; w: Way }[]>();
+  const lefts = new Map<Way, number[]>();
+  for (const w of ways) {
+    const section = roadSection(w.tags)!;
+    const left = profiles.get(w)!.map((p) => carriagewayEdges(w, section, p.dist).left - section.inner);
+    lefts.set(w, left);
+    profiles.get(w)!.forEach((p, i) => {
+      const k = `${Math.floor(p.e / G)}_${Math.floor(p.n / G)}`;
+      if (!grid.has(k)) grid.set(k, []);
+      grid.get(k)!.push({ p, left: left[i], inner: section.inner, w });
+    });
+  }
+  const out = new Map<Way, (MedianPoint | null)[]>();
+  for (const w of ways) {
+    const left = lefts.get(w)!;
+    const inner = roadSection(w.tags)!.inner;
+    const list = profiles.get(w)!.map((p, i) => {
+      const ce = Math.floor(p.e / G), cn = Math.floor(p.n / G);
+      let best: { q: ProfileSample; gap: number; w: Way; along: number } | null = null;
+      for (let a = -1; a <= 1; a++)
+        for (let b = -1; b <= 1; b++)
+          for (const c of grid.get(`${ce + a}_${cn + b}`) ?? []) {
+            const q = c.p;
+            if (c.w === w || p.dx * q.dx + p.dy * q.dy > -0.9 || Math.abs(q.y - p.y) > 1) continue;
+            const de = q.e - p.e, dn = q.n - p.n;
+            const along = Math.abs(de * p.dx + dn * p.dy);
+            // Left of the direction: (-dy, dx). The other carriageway runs the other way, so its left side faces us.
+            const gap = -de * p.dy + dn * p.dx - left[i] - c.left;
+            if (along > 3 || gap < ROADSIDE.medianMin || gap - inner - c.inner > ROADSIDE.medianMax) continue;
+            if (!best || along < best.along) best = { q, gap, w: c.w, along };
+          }
+      if (!best) return null;
+      const m = left[i] + best.gap / 2;
+      return { e: p.e - p.dy * m, n: p.n + p.dx * m, y: (p.y + best.q.y) / 2, owner: w.id < best.w.id, partner: best.w };
+    });
+    if (list.some(Boolean)) out.set(w, list);
+  }
+  return out;
 }
 
 /**

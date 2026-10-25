@@ -16,7 +16,14 @@ export interface Peer {
   ready: boolean;
   send(m: ServerMsg): void;
   close?(why: string): void;
+  /** Flood limits (public servers): messages this second, last chat line, last race announced. */
+  rate?: { t: number; n: number; chat: number; race: number };
 }
+
+/** Messages per second a player may send (poses at up to 30 Hz, pings, the odd chat line). */
+export const MAX_MSG_PER_SEC = 60;
+export const CHAT_GAP_MS = 1000;
+export const RACE_GAP_MS = 10_000;
 
 export class LobbyCore {
   readonly players = new Map<number, Peer>();
@@ -79,6 +86,18 @@ export class LobbyCore {
     const p = this.players.get(id);
     const m = parseClient(raw);
     if (!p || !m) return;
+    const now = this.now();
+    const r = (p.rate ??= { t: now, n: 0, chat: -Infinity, race: -Infinity });
+    if (now - r.t >= 1000) { r.t = now; r.n = 0; }
+    if (++r.n > MAX_MSG_PER_SEC) return;
+    if (m.t === 'chat') {
+      if (now - r.chat < CHAT_GAP_MS) { p.send({ t: 'error', text: 'Nicht so schnell schreiben' }); return; }
+      r.chat = now;
+    }
+    if (m.t === 'race') {
+      if (now - r.race < RACE_GAP_MS) { p.send({ t: 'error', text: 'Kurz warten, bevor du das nächste Rennen ankündigst' }); return; }
+      r.race = now;
+    }
     this.tick();
     this.handle(p, m);
   }

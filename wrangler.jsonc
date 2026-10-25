@@ -14,9 +14,11 @@
   "assets": { "directory": "./dist", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
   // Cloudflare Access in front of the game (team domain and AUD tag of the Access application) and the D1
   // database of the leaderboards. Until they are filled in the API answers 503 and the game plays offline.
-  "vars": { "ACCESS_TEAM": "", "ACCESS_AUD": "" },
+  // ONLINE_PUBLIC: online play (/api/net) open to everyone without Access (timo, 2026-10-25), with a name
+  // filter and flood limits; the leaderboards keep their own rules.
+  "vars": { "ACCESS_TEAM": "", "ACCESS_AUD": "", "ONLINE_PUBLIC": "1" },
   // Online play (O2): one Durable Object per server (worker/lobby.ts) and the server list (worker/directory.ts).
-  // They only answer behind Cloudflare Access like the rest of /api.
+  // Public with ONLINE_PUBLIC=1, otherwise only behind Cloudflare Access like the rest of /api.
   "durable_objects": { "bindings": [{ "name": "LOBBY", "class_name": "Lobby" }, { "name": "DIRECTORY", "class_name": "Directory" }] },
   "migrations": [{ "tag": "v1-online", "new_sqlite_classes": ["Lobby", "Directory"] }],
   // Required by `wrangler preview`, which Workers Builds runs for non-main branches.

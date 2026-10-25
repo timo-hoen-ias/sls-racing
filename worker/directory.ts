@@ -1,4 +1,5 @@
 import { MAX_PLAYERS, type RoomSummary, validRoomId } from '../src/net/protocol.ts';
+import { hasBlocked } from '../src/net/names.ts';
 import type { DurableObjectState } from './cf.ts';
 
 // The server list (O2): one Durable Object that knows every online server, its player count and the race
@@ -13,6 +14,9 @@ export const FIXED_ROOMS: { id: string; name: string }[] = [
 /** Player-made servers at most, and how long an empty one stays listed. */
 const MAX_ROOMS = 24;
 const EMPTY_MS = 15 * 60_000;
+/** Servers one address may open per ten minutes (public play). */
+const CREATE_PER_IP = 3;
+const CREATE_WINDOW = 10 * 60_000;
 
 interface Room { name: string; players: number; race?: string; updated: number }
 
@@ -27,6 +31,7 @@ export class Directory {
   private ctx: DurableObjectState;
   private rooms: Record<string, Room> = {};
   private loaded = false;
+  private created = new Map<string, number[]>();
 
   constructor(ctx: DurableObjectState) {
     this.ctx = ctx;
@@ -75,8 +80,14 @@ export class Directory {
     }
     if (parts[0] === 'create' && req.method === 'POST') {
       const body = (await req.json().catch(() => ({}))) as { name?: unknown };
-      if (!validName(body.name)) return Response.json({ error: 'Name: 2 bis 30 Zeichen' }, { status: 400 });
+      if (!validName(body.name) || hasBlocked(body.name)) return Response.json({ error: 'Name: 2 bis 30 Zeichen' }, { status: 400 });
       this.prune();
+      const ip = req.headers.get('x-sls-ip') ?? '';
+      const now = Date.now();
+      const recent = (this.created.get(ip) ?? []).filter((t) => now - t < CREATE_WINDOW);
+      if (recent.length >= CREATE_PER_IP) return Response.json({ error: 'Gerade schon genug Server eröffnet, bitte später' }, { status: 429 });
+      recent.push(now);
+      this.created.set(ip, recent);
       if (Object.keys(this.rooms).filter((id) => !FIXED_ROOMS.some((f) => f.id === id)).length >= MAX_ROOMS) return Response.json({ error: 'Zu viele Server offen' }, { status: 429 });
       const name = body.name.trim();
       let id = slug(name);

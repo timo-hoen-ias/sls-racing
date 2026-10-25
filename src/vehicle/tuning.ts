@@ -49,6 +49,8 @@ export const CAR = {
   halfExtents: { x: 0.94, y: 0.38, z: 2.25 },
   /** Chassis collider centre above the body origin. */
   colliderY: 0.28,
+  /** Centre of mass offset from the body origin (lowered for stability). */
+  com: { y: -0.25, z: 0.05 },
   wheel: { radius: ENGINE.wheelRadius, x: 0.8, front: 1.27, rear: -1.2, y: 0.3, rest: 0.28, travel: 0.18, width: 0.3 },
   /**
    * Springs in N/m per kg of car (Rapier scales by the chassis mass): 50 ≈ 2.2 Hz ride.
@@ -77,6 +79,27 @@ export const CAR = {
   steer: { lowSpeed: 0.6, highSpeed: 0.045, fadeSpeed: 14, rate: 3.8, rateSpeed: 35, drift: 0.3 },
   airControl: 2200,
 } as const;
+
+/**
+ * Size of every vehicle against its real dimensions (car.scale): the player's cars, rivals, traffic and parked cars.
+ * The engine and gearing keep their real values, so speeds and acceleration do not change with it.
+ */
+export const VEHICLE = { scale: 0.8 };
+
+/**
+ * Shrinks or grows CAR's dimensions in place by k: chassis box, wheels and suspension, centre of mass.
+ * Mass, springs per kg and the drivetrain (ENGINE.wheelRadius) stay, so the car drives the same.
+ * The high-speed steering lock follows the wheelbase, so the yaw rate at speed stays the same.
+ */
+export function scaleCar(k: number) {
+  const c = CAR as unknown as { halfExtents: Record<'x' | 'y' | 'z', number>; colliderY: number; com: Record<'y' | 'z', number>; wheel: Record<string, number>; steer: { highSpeed: number } };
+  for (const a of ['x', 'y', 'z'] as const) c.halfExtents[a] *= k;
+  c.colliderY *= k;
+  c.com.y *= k;
+  c.com.z *= k;
+  for (const key of ['radius', 'x', 'front', 'rear', 'y', 'rest', 'travel', 'width']) c.wheel[key] *= k;
+  c.steer.highSpeed *= k;
+}
 
 /** Driving aids, each 0 (off) .. 1 (full). Arcade turns all on, sim keeps only ABS. */
 export interface Assists {

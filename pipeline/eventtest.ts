@@ -17,10 +17,14 @@ import { GUIDE_SIGN_NAMES, type SignsFile } from '../src/world/signSpec.ts';
 import { PROP_NAMES, PROP_STRIDE, type PropKind } from '../src/world/propKinds.ts';
 import { RoadGraph } from '../src/world/roadGraph.ts';
 import { CarPhysics } from '../src/vehicle/carPhysics.ts';
+import { scaleCar, VEHICLE } from '../src/vehicle/tuning.ts';
 import { generateEvents } from '../src/game/events/generate.ts';
 import { crossed, type GameEvent, RACE_TYPES } from '../src/game/events/types.ts';
 import { RaceLine, RIVAL_LEVELS, type RivalLevel, RivalDriver } from '../src/game/rivals.ts';
 import { paths } from './lib/region.ts';
+
+// The test car at the game's vehicle scale (smaller wheels meet the same road steps).
+scaleCar(VEHICLE.scale);
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
 const ONLY = arg('only', '');

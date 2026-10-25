@@ -23,8 +23,10 @@ import { BigMap } from './ui/bigMap.ts';
 import { Minimap } from './ui/minimap.ts';
 import { NavHud } from './ui/navHud.ts';
 import { Tacho } from './ui/tacho.ts';
-import { CAR, ENGINE, ENGINE_SOUND } from './vehicle/tuning.ts';
-import { registerCommand, runCommand } from './debug/registry.ts';
+import { CAR, ENGINE, ENGINE_SOUND, VEHICLE } from './vehicle/tuning.ts';
+import { applyCar, DEFAULT_CAR, findCar } from './vehicle/cars.ts';
+import { applyVehicleScale } from './traffic/trafficSim.ts';
+import { parseNum, registerCommand, runCommand } from './debug/registry.ts';
 import { PerfMonitor, registerPerfCommands } from './debug/perf.ts';
 import { registerVehicleCommands } from './vehicle/debugCommands.ts';
 import { Garage, registerGarageCommands } from './vehicle/garage.ts';
@@ -156,8 +158,11 @@ async function boot() {
   const joints = await BridgeJoints.fetch(TILES_URL, index.world);
 
   const spawn = index.spawn;
+  // The coupé's dimensions from its model, at the game's vehicle scale (car.scale).
+  const firstModel = await carModel;
+  applyCar(findCar(DEFAULT_CAR)!, firstModel?.geometry);
   const car = new CarPhysics(RAPIER, world, spawn, spawn.heading);
-  const carView = new CarView(undefined, await carModel);
+  const carView = new CarView(undefined, firstModel);
   view.scene.add(carView.root);
   if (view.post) markCar(carView.root);
   const carLights = new CarLights(carView.root, carView.headlights, carView.exhausts);
@@ -397,6 +402,20 @@ async function boot() {
   registerScaleCommands({ world: index.world, graph, cam, camera: view.camera, carModel: () => carView.model.getObjectByName('bodyLod') ?? carView.model, pos: () => ip });
   const garage = new Garage({ car, view: carView, sound: () => sound, notify: (t) => navHud.toast(t, 1.5), onChange: () => tacho.setRange(ENGINE.maxRpm, ENGINE.shiftRpm) });
   registerGarageCommands(garage);
+  registerCommand({
+    name: 'car.scale',
+    help: 'Größe aller Fahrzeuge gegenüber echt (0,8 = Standard): eigenes Auto, Rivalen, Verkehr, Parker. Kollisionen von Parkern gelten ab neu geladenen Kacheln',
+    args: '[faktor]',
+    run: ([v]) => {
+      if (v === undefined) return `Fahrzeuge ×${VEHICLE.scale} · Auto ${(2 * CAR.halfExtents.z).toFixed(2)} × ${(2 * CAR.halfExtents.x).toFixed(2)} m · Rad ${(2 * CAR.wheel.radius).toFixed(2)} m`;
+      VEHICLE.scale = parseNum(v, 'Faktor', 0.4, 1.5);
+      applyVehicleScale();
+      props.refresh();
+      // Reloads the current car: dimensions, physics and body at the new scale.
+      garage.select(garage.current.id).then((m) => console.info(`[car] ${m}`), (e) => console.warn('[car]', e));
+      return `Fahrzeuge ×${VEHICLE.scale} (Auto wird neu geladen)`;
+    },
+  });
   void garage.probe();
   // Fun-racer feel (feel fun|real): engine, landings, wall gliding, traffic punts, camera, speed lines …
   const glide = new WallGlide();

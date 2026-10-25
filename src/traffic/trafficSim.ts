@@ -4,6 +4,7 @@
 // Pure simulation without three.js, so it runs in tests.
 
 import { type Edge, type RoadGraph, pointAt, project } from '../world/roadGraph.ts';
+import { VEHICLE } from '../vehicle/tuning.ts';
 import { Signals } from './signals.ts';
 
 export type VehicleKind = 'car' | 'van' | 'bus' | 'truck';
@@ -19,12 +20,27 @@ export interface KindSpec {
   speed: number;
 }
 
-export const KINDS: Record<VehicleKind, KindSpec> = {
+/** Real dimensions; the procedural models are built at this size and drawn at VEHICLE.scale. */
+export const REAL_KINDS: Readonly<Record<VehicleKind, Readonly<KindSpec>>> = {
   car: { length: 4.4, width: 1.8, height: 1.45, accel: 2.2, decel: 3, speed: 1 },
   van: { length: 5.3, width: 2, height: 2.25, accel: 1.6, decel: 2.6, speed: 0.95 },
   bus: { length: 12, width: 2.55, height: 3.1, accel: 1, decel: 2.2, speed: 0.85 },
   truck: { length: 10.5, width: 2.5, height: 3.6, accel: 0.8, decel: 2.2, speed: 0.75 },
 };
+
+/** Vehicle kinds at the game's vehicle scale (spacing, colliders, parked cars); applyVehicleScale updates them in place. */
+export const KINDS = structuredClone(REAL_KINDS) as Record<VehicleKind, KindSpec>;
+
+/** Sizes KINDS to VEHICLE.scale (after car.scale changed it); running vehicles share the specs, so they follow. */
+export function applyVehicleScale() {
+  for (const k of Object.keys(KINDS) as VehicleKind[]) {
+    const r = REAL_KINDS[k];
+    KINDS[k].length = r.length * VEHICLE.scale;
+    KINDS[k].width = r.width * VEHICLE.scale;
+    KINDS[k].height = r.height * VEHICLE.scale;
+  }
+}
+applyVehicleScale();
 
 /** German car park: lots of grey, black, white and silver, a few colours (parked cars use the same). */
 export const CAR_PALETTE = [0x1c1d20, 0x1c1d20, 0x9ea2a6, 0x9ea2a6, 0xd8d8d6, 0xf0f0ee, 0x4a4e54, 0x5d6168, 0x23365e, 0x6e1a1a, 0x30492f, 0xa8a090, 0x8a5a2b, 0x2a6f9b];

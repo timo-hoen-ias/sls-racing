@@ -22,7 +22,7 @@ export interface FacadeMaterial extends THREE.MeshStandardMaterial {
       uNight: { value: number };
       uWindows: { value: number };
       uForce: { value: number };
-      uShops: { value: number };
+      uShops: { value: number }; uAlbedo: { value: number };
       litMap: { value: THREE.Texture };
       facadeNrm: { value: THREE.Texture };
     };
@@ -37,7 +37,7 @@ const BC = (n: string) => `${cellIndex(BUILDING, n)}.0`;
 export function createFacadeMaterial(): FacadeMaterial {
   const { map, lit, nrm } = drawAtlas();
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, map, roughness: 1 }) as FacadeMaterial;
-  const uniforms = { uNight: { value: 0 }, uWindows: { value: 1 }, uForce: { value: -1 }, uShops: { value: 1 }, litMap: { value: lit }, facadeNrm: { value: nrm } };
+  const uniforms = { uNight: { value: 0 }, uWindows: { value: 1 }, uForce: { value: -1 }, uShops: { value: 1 }, uAlbedo: { value: 0.8 }, litMap: { value: lit }, facadeNrm: { value: nrm } };
   mat.userData.uniforms = uniforms;
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -47,6 +47,7 @@ uniform float uNight;
 uniform float uWindows;
 uniform float uForce;
 uniform float uShops;
+uniform float uAlbedo;
 uniform sampler2D litMap;
 uniform sampler2D facadeNrm;
 float facadeHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
@@ -109,6 +110,8 @@ float facadeWin = 0.0;
     vec3 mean = pbrBuildingMean(dcell);
     float l = dot(d.a, vec3(0.2126, 0.7152, 0.0722)) / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 0.01);
     if (uPbrOn > 0.5) diffuseColor.rgb *= mix(1.0, clamp(l, 0.55, 1.5), 0.7 * (1.0 - glass));
+    // The wall colours are pastel; real plaster reflects about 60 % (bld.albedo).
+    diffuseColor.rgb *= uAlbedo;
     // Window recesses from the drawn atlas, whiteout-blended with the plaster relief (none on glass).
     vec2 wxy = fn.rg * 2.0 - 1.0;
     vec3 dn = pbrDecodeN(d.n);
@@ -166,6 +169,15 @@ export class FacadeControl {
           u.uForce.value = i;
         }
         return `Fassade: ${t}`;
+      },
+    });
+    registerCommand({
+      name: 'bld.albedo',
+      help: 'Helligkeit der Hauswände (Albedo-Faktor, Standard 0.8). Kleiner = weniger weiße Wände in der Sonne',
+      args: '[0..1.5]',
+      run: ([v]) => {
+        if (v !== undefined) u.uAlbedo.value = parseNum(v, 'Albedo', 0, 1.5);
+        return `bld.albedo = ${u.uAlbedo.value}`;
       },
     });
     registerToggle('bld.windows', 'Fensterlicht in der Nacht', () => u.uWindows.value > 0, (v) => (u.uWindows.value = v ? 1 : 0));

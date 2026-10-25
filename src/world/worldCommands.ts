@@ -1,6 +1,7 @@
-// world.* and terrain.* debug commands: road gaps found by the pipeline's gap check, terrain under the car,
-// bumps on the road ahead (road.bumps), the plazas the pipeline flattened (plaza) and where the tiles come
-// from (world.build).
+// world.* and terrain.* debug commands: road gaps found by the pipeline's gap check (world.gaps) and its
+// full-coverage surface check (world.surface), the same scan live around the car (road.scan), terrain under
+// the car, bumps on the road ahead (road.bumps), the plazas the pipeline flattened (plaza) and where the tiles
+// come from (world.build).
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { addTeleportPlace } from '../debug/gameCommands.ts';
@@ -8,14 +9,21 @@ import { registerCommand, registerToggle } from '../debug/registry.ts';
 import type { Landmarks } from './landmarks.ts';
 import type { Materials } from '../render/materials.ts';
 import { TERRAIN_STEP, type TileContent, type WorldIndex } from './format.ts';
+import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
+import {
+  SURFACE_KINDS, cellCentre, clusterIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
+} from './surfaceScan.ts';
 
 /** [name, x, z, plane height, area m², RMS cm, tilt %] per flattened plaza (pipeline/lib/plazas.ts). */
 type PlazaRow = [string, number, number, number, number, number, number];
 
 interface Gaps { kinds: string[]; issues: [number, number, number, number, number, number][] }
 
-const KIND_DE: Record<string, string> = { hole: 'Loch', bump: 'Kante/Hindernis', dip: 'Senke', step: 'Stufe' };
-const KIND_COLOR: Record<string, number> = { hole: 0xff2020, bump: 0xff9900, dip: 0x3399ff, step: 0xffee00 };
+const KIND_DE: Record<string, string> = {
+  hole: 'Loch', bump: 'Kante/Hindernis', dip: 'Senke', step: 'Stufe', snag: 'Aufsetzer', seam: 'Kachelnaht', gap: 'Spalt',
+  terrain: 'Gelände', road: 'Fahrbahn', bridge: 'Fahrbahnkollision/Brücke', building: 'Gebäude', rail: 'Leitplanke', tree: 'Baum', lamp: 'Laterne', solid: 'Bauwerk',
+};
+const KIND_COLOR: Record<string, number> = { hole: 0xff2020, bump: 0xff9900, dip: 0x3399ff, step: 0xffee00, snag: 0xff00cc, seam: 0x00ffcc, gap: 0x8a2be2 };
 
 export interface WorldCommandContext {
   R: typeof RAPIER_NS;
@@ -46,71 +54,19 @@ const ALKIS_FN: Record<number, string> = {
 const BLD_STRIDE = 5;
 
 export function registerWorldCommands(g: WorldCommandContext) {
-  let gaps: Gaps | null = null;
-  let markers: THREE.Group | null = null;
-  let cursor = -1;
-  const load = async () => {
-    if (gaps) return gaps;
-    const res = await fetch(`${g.baseUrl}/gaps.json`);
-    if (!res.ok) throw new Error(`gaps.json fehlt (HTTP ${res.status}), "npm run world:gaps" ausführen`);
-    gaps = (await res.json()) as Gaps;
-    return gaps;
-  };
-  const describe = (i: number) => {
-    const [x, y, z, k, size, way] = gaps!.issues[i];
-    const kind = gaps!.kinds[k];
-    const p = g.pos();
-    return `#${i + 1} ${KIND_DE[kind] ?? kind} ${size.toFixed(2)} m bei ${x.toFixed(0)} / ${y.toFixed(1)} / ${z.toFixed(0)} (OSM-Weg ${way}, ${Math.hypot(x - p.x, z - p.z).toFixed(0)} m entfernt)`;
-  };
-  const show = (on: boolean) => {
-    if (!on) { if (markers) markers.visible = false; return; }
-    if (!markers) {
-      markers = new THREE.Group();
-      markers.name = 'gaps';
-      const geo = new THREE.CylinderGeometry(0.4, 0.4, 12, 6);
-      for (const [kind, color] of Object.entries(KIND_COLOR)) {
-        const list = gaps!.issues.filter(([, , , k]) => gaps!.kinds[k] === kind);
-        if (!list.length) continue;
-        const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.8 }), list.length);
-        const m = new THREE.Matrix4();
-        list.forEach(([x, y, z], n) => mesh.setMatrixAt(n, m.makeTranslation(x, y + 6, z)));
-        mesh.renderOrder = 998;
-        mesh.frustumCulled = false;
-        markers.add(mesh);
-      }
-      g.scene.add(markers);
-    }
-    markers.visible = true;
-  };
+  registerIssueList(g, {
+    name: 'world.gaps', file: 'gaps.json', script: 'world:gaps',
+    help: 'Lücken und Stufen auf Straßen (Gap-Check der Pipeline, Mittellinie und Radspuren alle 2 m): show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe), list die nächsten, next/prev teleportiert hin',
+  });
+  registerIssueList(g, {
+    name: 'world.surface', file: 'surface.json', script: 'world:surface',
+    help: 'Flächenprüfung der Pipeline: jede 0,5-m-Zelle jeder Fahrbahn als Rad und Unterboden geprüft. show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe, magenta Aufsetzer, türkis Kachelnaht, lila Spalt zwischen Fahrbahnen), list die nächsten, next/prev/<nr> teleportiert hin, <art> filtert (z. B. "world.surface step")',
+  });
 
   registerCommand({
-    name: 'world.gaps',
-    help: 'Lücken und Stufen auf Straßen (aus dem Pipeline-Check): show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe), list die nächsten, next/prev teleportiert hin',
-    args: '[show|hide|list|next|prev|<nr>]',
-    complete: () => ['show', 'hide', 'list', 'next', 'prev'],
-    run([a = 'list']) {
-      if (gaps) return runGaps(a);
-      load().then(() => g.print(runGaps(a))).catch((e) => g.print(`Fehler: ${(e as Error).message}`));
-      return 'Lade gaps.json …';
-    },
+    name: 'road.profile', help: 'Straßenprofil der Kacheln: game (breitere Fahrbahnen, Fun-Racer) oder real. Neu bauen mit SLS_ROAD_PROFILE=real npm run world:build',
+    run: () => `${g.index.roadProfile ?? 'real (Kacheln älter als das Profil)'}${g.index.roadProfile === 'game' ? ' · Fahrstreifen 13–20 % breiter, Gehwege bis 1,2 m schmaler, wo Häuser stehen' : ''}${g.index.roadShape ? ` · ${g.index.roadShape.corners} Kreuzungsecken ausgerundet, ${g.index.roadShape.bends} Knicke zu Bögen` : ''}`,
   });
-  const runGaps = (a: string): string => {
-    const n = gaps!.issues.length;
-    if (!n) return 'Keine Lücken oder Stufen gefunden.';
-    if (a === 'show' || a === 'hide') { show(a === 'show'); return `${n} Stellen ${a === 'show' ? 'markiert' : 'ausgeblendet'}`; }
-    if (a === 'next' || a === 'prev' || /^\d+$/.test(a)) {
-      cursor = /^\d+$/.test(a) ? Math.min(n, Math.max(1, +a)) - 1 : (cursor + (a === 'next' ? 1 : n - 1)) % n;
-      const [x, , z] = gaps!.issues[cursor];
-      g.teleport(x, z + 12, 0);
-      show(true);
-      return describe(cursor);
-    }
-    const p = g.pos();
-    const counts = gaps!.kinds.map((k, i) => `${gaps!.issues.filter((s) => s[3] === i).length} ${KIND_DE[k] ?? k}`).join(', ');
-    const nearest = gaps!.issues.map((s, i) => [i, Math.hypot(s[0] - p.x, s[2] - p.z)] as const).sort((x, y) => x[1] - y[1]).slice(0, 8);
-    return [`${n} Stellen: ${counts}`, ...nearest.map(([i]) => describe(i))].join('\n');
-  };
-
   // Where the deployed tiles come from (pipeline/deploy-tiles.ts, world build on GitHub).
   registerCommand({
     name: 'world.build',
@@ -120,11 +76,63 @@ export function registerWorldCommands(g: WorldCommandContext) {
       Promise.all([get('deploy.json'), get('build.json')]).then(([d, b]) => {
         if (!d && !b) return g.print('Keine Bauinfo (lokal gebaute Kacheln?)');
         const lines: string[] = [];
-        if (d) lines.push(`Deploy: ${d.source === 'download' ? 'fertige Kacheln geladen' : 'Welt im Deploy gebaut'} · Schlüssel ${d.key} · ${d.at}`);
+        if (d) lines.push(`Deploy: ${d.source === 'download' ? 'fertige Kacheln geladen' : 'Welt im Deploy gebaut'}${d.source === 'download' && d.events === 'build' ? ', Eventtest neu gefahren' : ''} · Schlüssel ${d.key} · ${d.at}`);
         if (b) lines.push(`Weltbau: ${b.event} ${String(b.commit).slice(0, 7)} · ${b.at} · ${b.run}`);
         g.print(lines.join('\n'));
       });
       return 'Lade Bauinfo …';
+    },
+  });
+
+  // The same scan as the pipeline's surface check, live on the loaded tiles around the car.
+  let scanMarks: THREE.Group | null = null;
+  registerCommand({
+    name: 'road.scan',
+    help: 'Prüft jede 0,5-m-Zelle der Fahrbahnen um das Auto wie world:surface (Loch, Kante, Senke, Stufe, Aufsetzer, Spalt zwischen Fahrbahnen) und markiert Fundstellen; "hide" blendet aus',
+    args: '[radius m, Standard 40] [hide]',
+    complete: () => ['hide'],
+    run(a) {
+      if (scanMarks) { g.scene.remove(scanMarks); scanMarks = null; }
+      if (a[0] === 'hide') return 'Markierungen ausgeblendet';
+      const radius = Math.min(150, Math.max(5, +(a.find((v) => /^\d+$/.test(v)) ?? 40)));
+      const p = g.pos();
+      const C = 0.5;
+      const grid: CellGrid = {
+        cell: C, c0: Math.floor((p.x - radius) / C), c1: Math.ceil((p.x + radius) / C), r0: Math.floor((p.z - radius) / C), r1: Math.ceil((p.z + radius) / C),
+      };
+      const levels = new Map<number, number[]>();
+      g.tiles((t) => {
+        const pos = t.f32('roads.pos');
+        if (pos) rasterizeMesh(pos, t.u32('roads.idx'), grid, levels);
+      });
+      for (const k of [...levels.keys()]) {
+        const [x, z] = cellCentre(grid, k);
+        if (Math.hypot(x - p.x, z - p.z) > radius) levels.delete(k);
+      }
+      const what = (c: RAPIER_NS.Collider) => c.shape.type === g.R.ShapeType.HeightField ? 'terrain'
+        : c.collisionGroups() === ROAD_GROUPS ? 'road' : 'solid';
+      // Only the world: the car and traffic are left out.
+      const cells = probeCells(g.R, g.world, levels, grid, what, (c) => !!c.parent() && !c.parent()!.isFixed());
+      const slots = probeCells(g.R, g.world, slotCells(levels, grid), grid, what, (c) => !!c.parent() && !c.parent()!.isFixed());
+      const found = clusterIssues([...surfaceIssues(cells, gridCols(grid)), ...gapIssues(slots, gridCols(grid))].map((s) => {
+        const [x, z] = cellCentre(grid, s.key);
+        return { ...s, x, z };
+      }), 3);
+      if (found.length) {
+        scanMarks = new THREE.Group();
+        scanMarks.name = 'road.scan';
+        const geo = new THREE.CylinderGeometry(0.2, 0.2, 4, 6);
+        for (const s of found) {
+          const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: KIND_COLOR[s.kind], depthTest: false, transparent: true, opacity: 0.85 }));
+          m.position.set(s.x, s.y + 2, s.z);
+          m.renderOrder = 998;
+          scanMarks.add(m);
+        }
+        g.scene.add(scanMarks);
+      }
+      const count = SURFACE_KINDS.map((k) => [k, found.filter((s) => s.kind === k).length] as const).filter(([, n]) => n);
+      const head = `${levels.size} Fahrbahnzellen im Umkreis von ${radius} m geprüft: ${found.length ? count.map(([k, n]) => `${n} ${KIND_DE[k]}`).join(', ') : 'alles befahrbar'}`;
+      return [head, ...found.slice(0, 8).map((s) => `  ${KIND_DE[s.kind]} ${s.size.toFixed(2)} m (${KIND_DE[s.what] ?? s.what}) bei ${s.x.toFixed(1)} / ${s.y.toFixed(1)} / ${s.z.toFixed(1)}, ${Math.hypot(s.x - p.x, s.z - p.z).toFixed(0)} m entfernt`)].join('\n');
     },
   });
 
@@ -318,6 +326,82 @@ export function registerLandmarkCommands(l: Landmarks, pos: () => { x: number; z
         .sort((a, b) => a[1] - b[1])
         .map(([m, d]) => `${m.info.id}${m.info.name ? ` (${m.info.name})` : ''}: ${d.toFixed(0)} m${m.root ? ', geladen' : ''}${m.body ? ', Kollision' : ''}${m.failed ? ', FEHLER' : ''}`);
       return [`${l.list.length} Modelle, ${l.loadedCount} geladen · tp <id> fährt hin`, ...rows].join('\n');
+    },
+  });
+}
+
+/**
+ * A pipeline report of road problems (gaps.json, surface.json: kinds and rows of x, y, z, kind, size, way)
+ * as a command: list, show/hide markers, next/prev/<nr> teleport, <kind> filters.
+ */
+function registerIssueList(g: WorldCommandContext, o: { name: string; file: string; script: string; help: string }) {
+  let data: Gaps | null = null;
+  let markers: THREE.Group | null = null;
+  let cursor = -1;
+  let only: string | null = null;
+  const load = async () => {
+    if (data) return data;
+    const res = await fetch(`${g.baseUrl}/${o.file}`);
+    if (!res.ok) throw new Error(`${o.file} fehlt (HTTP ${res.status}), "npm run ${o.script}" ausführen`);
+    data = (await res.json()) as Gaps;
+    return data;
+  };
+  const rows = () => data!.issues.filter(([, , , k]) => !only || data!.kinds[k] === only);
+  const describe = (list: Gaps['issues'], i: number) => {
+    const [x, y, z, k, size, way] = list[i];
+    const kind = data!.kinds[k];
+    const p = g.pos();
+    return `#${i + 1} ${KIND_DE[kind] ?? kind} ${size.toFixed(2)} m bei ${x.toFixed(0)} / ${y.toFixed(1)} / ${z.toFixed(0)} (OSM-Weg ${way}, ${Math.hypot(x - p.x, z - p.z).toFixed(0)} m entfernt)`;
+  };
+  const show = (on: boolean) => {
+    if (markers && (!on || markers.userData.only !== only)) { g.scene.remove(markers); markers = null; }
+    if (!on) return;
+    if (!markers) {
+      markers = new THREE.Group();
+      markers.name = o.name;
+      markers.userData.only = only;
+      const geo = new THREE.CylinderGeometry(0.4, 0.4, 12, 6);
+      for (const [kind, color] of Object.entries(KIND_COLOR)) {
+        const list = rows().filter(([, , , k]) => data!.kinds[k] === kind);
+        if (!list.length) continue;
+        const mesh = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.8 }), list.length);
+        const m = new THREE.Matrix4();
+        list.forEach(([x, y, z], n) => mesh.setMatrixAt(n, m.makeTranslation(x, y + 6, z)));
+        mesh.renderOrder = 998;
+        mesh.frustumCulled = false;
+        markers.add(mesh);
+      }
+      g.scene.add(markers);
+    }
+  };
+  const run = (a: string): string => {
+    if ((data!.kinds as string[]).includes(a)) { only = a; cursor = -1; a = 'list'; }
+    else if (a === 'all') { only = null; cursor = -1; a = 'list'; }
+    const list = rows();
+    const n = list.length;
+    if (!n) return only ? `Keine Stellen der Art ${KIND_DE[only] ?? only}.` : 'Keine Lücken oder Stufen gefunden.';
+    if (a === 'show' || a === 'hide') { show(a === 'show'); return `${n} Stellen ${a === 'show' ? 'markiert' : 'ausgeblendet'}`; }
+    if (a === 'next' || a === 'prev' || /^\d+$/.test(a)) {
+      cursor = /^\d+$/.test(a) ? Math.min(n, Math.max(1, +a)) - 1 : (cursor + (a === 'next' ? 1 : n - 1)) % n;
+      const [x, , z] = list[cursor];
+      g.teleport(x, z + 12, 0);
+      show(true);
+      return describe(list, cursor);
+    }
+    const p = g.pos();
+    const counts = data!.kinds.map((k, i) => `${data!.issues.filter((s) => s[3] === i).length} ${KIND_DE[k] ?? k}`).join(', ');
+    const nearest = list.map((s, i) => [i, Math.hypot(s[0] - p.x, s[2] - p.z)] as const).sort((x, y) => x[1] - y[1]).slice(0, 8);
+    return [`${data!.issues.length} Stellen: ${counts}${only ? ` · Filter ${KIND_DE[only] ?? only} (${n}), "all" hebt auf` : ''}`, ...nearest.map(([i]) => describe(list, i))].join('\n');
+  };
+  registerCommand({
+    name: o.name,
+    help: o.help,
+    args: '[show|hide|list|next|prev|<nr>|<art>|all]',
+    complete: () => ['show', 'hide', 'list', 'next', 'prev', 'all', ...(data?.kinds ?? [])],
+    run([a = 'list']) {
+      if (data) return run(a);
+      load().then(() => g.print(run(a))).catch((e) => g.print(`Fehler: ${(e as Error).message}`));
+      return `Lade ${o.file} …`;
     },
   });
 }

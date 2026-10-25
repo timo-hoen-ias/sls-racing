@@ -34,6 +34,27 @@ const SECTIONS: Record<string, ClassSection> = {
   track: { lane: 1.5, outer: 0, inner: 0, lanes: 2, min: 2.5 },
 };
 
+/**
+ * Road profile (S1, fun racer): "game" widens every carriageway by a factor per class (residential lanes 3.0 →
+ * 3.6 m, main roads 3.5 → 4.0 m, motorways 3.75 → 4.25 m); "real" keeps the guideline widths. The data stays
+ * 1:1, only the carriageways grow, up to the street space between the houses (tag sls:street from ALKIS)
+ * minus narrow sidewalks. The pipeline builds with one profile (useRoadProfile in pipeline/lib/region.ts) and
+ * writes it into index.json.
+ */
+export type RoadProfile = 'game' | 'real';
+export const GAME_WIDEN: Record<string, number> = {
+  motorway: 1.13, trunk: 1.14, primary: 1.14, secondary: 1.16, tertiary: 1.18,
+  motorway_link: 1.1, trunk_link: 1.1, primary_link: 1.12, secondary_link: 1.12, tertiary_link: 1.12,
+  unclassified: 1.2, residential: 1.2, living_street: 1.15, service: 1.1,
+};
+/** Narrowest sidewalk left beside a widened carriageway, metres. */
+export const MIN_SIDEWALK = 1.2;
+let profile: RoadProfile = 'real';
+export const activeRoadProfile = () => profile;
+export function setRoadProfile(p: RoadProfile) {
+  profile = p;
+}
+
 /** Cross-section of one OSM way. Offsets are metres to the right of the centreline, looking along the way. */
 export interface RoadSection {
   width: number;
@@ -83,7 +104,8 @@ function placementShift(placement: string | undefined, lanes: number, lane: numb
 
 export const hasSection = (highway: string | undefined) => !!highway && highway in SECTIONS;
 
-export function roadSection(tags: Record<string, string>): RoadSection | undefined {
+/** `as` picks a profile other than the active one (the measured widths are 1:1, pipeline/lib/alkis.ts). */
+export function roadSection(tags: Record<string, string>, as: RoadProfile = profile): RoadSection | undefined {
   const s = SECTIONS[tags.highway];
   if (!s) return undefined;
   const oneway = tags.oneway === 'yes' || tags.oneway === '1' || tags.junction === 'roundabout' || tags.highway === 'motorway';
@@ -92,7 +114,11 @@ export function roadSection(tags: Record<string, string>): RoadSection | undefin
   const natural = lanes * s.lane + (oneway ? s.outer + s.inner : 2 * s.outer);
   const w = parseFloat(tags.width);
   const explicit = w > 2 && w < 40;
-  const width = explicit ? w : Math.max(s.min, natural);
+  const base = explicit ? w : Math.max(s.min, natural);
+  // Game profile: wider, but within the street space (keeping sidewalks of MIN_SIDEWALK), never narrower.
+  const street = parseFloat(tags['sls:street']);
+  const room = street > 0 ? street - 2 * MIN_SIDEWALK : Infinity;
+  const width = as === 'game' ? Math.max(base, Math.min(base * (GAME_WIDEN[tags.highway] ?? 1), room)) : base;
   // Spread the extra (or missing) width evenly over lanes and edge strips.
   const k = width / natural;
   const lane = s.lane * k;

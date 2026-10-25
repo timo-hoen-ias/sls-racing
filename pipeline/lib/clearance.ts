@@ -1,3 +1,4 @@
+import { type Fillet, inFillet } from './fillets.ts';
 import { pointInRing, type Way } from './osm.ts';
 import { densify, isDrivable, roadWidth } from './roads.ts';
 import { roadSection } from '../../src/world/roadSpec.ts';
@@ -7,8 +8,11 @@ export class RoadMask {
   private cells = new Set<number>();
   private static readonly CELL = 2;
 
+  private margin: number;
+
   constructor(ways: Way[], margin = 1.5, only: (tags: Record<string, string>) => boolean = () => true) {
     const C = RoadMask.CELL;
+    this.margin = margin;
     for (const w of ways) {
       if (!isDrivable(w.tags) || !only(w.tags)) continue;
       // Carriageways placed off the OSM line (motorway junction lanes) reach further to one side.
@@ -20,6 +24,17 @@ export class RoadMask {
           for (let dy = -k; dy <= k; dy++)
             if (Math.hypot(dx * C, dy * C) <= r + C * 0.5) this.cells.add(RoadMask.key(ce + dx, cn + dy));
       }
+    }
+  }
+
+  /** Rounded junction corners (fillets.ts) count as carriageway too, with the same margin. */
+  addFillets(fillets: Fillet[]) {
+    const C = RoadMask.CELL, m = this.margin;
+    for (const f of fillets) {
+      const pad = Math.max(0, m) + C;
+      for (let cx = Math.floor((Math.min(...f.e) - pad) / C); cx <= Math.ceil((Math.max(...f.e) + pad) / C); cx++)
+        for (let cy = Math.floor((Math.min(...f.n) - pad) / C); cy <= Math.ceil((Math.max(...f.n) + pad) / C); cy++)
+          if (inFillet(f, cx * C, cy * C, m + C * 0.5)) this.cells.add(RoadMask.key(cx, cy));
     }
   }
 

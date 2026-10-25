@@ -38,6 +38,10 @@ export interface WorldIndex {
   /** Road network for the minimap, street names and routing, relative to the index. */
   graph?: string;
   attribution: string[];
+  /** Road profile the tiles were built with (roadSpec.ts); missing in builds before it existed (real widths). */
+  roadProfile?: 'game' | 'real';
+  /** Game profile (S2): rounded junction corners and smoothed kinks in the build. */
+  roadShape?: { corners: number; bends: number };
 }
 
 /** A packed mesh. Arrays are base64-encoded little-endian typed arrays. */
@@ -78,6 +82,9 @@ export interface TileData {
   shops?: string;
   /** Petrol stations (fuelKinds.ts). */
   fuel?: string;
+  /** Freely designed houses (houseKinds.ts HOUSE_STRIDE records) and their front-garden parts. */
+  houses?: string;
+  gardens?: string;
   /** Float32 x, y, z, scale, kind per bush. */
   bushes?: string;
   /** Street furniture and parked cars, Float32 records of PROP_STRIDE values (see propKinds.ts). */
@@ -192,7 +199,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', fuel: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32', roofInfo: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', fuel: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32', roofInfo: 'f32', houses: 'f32', gardens: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

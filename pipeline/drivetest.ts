@@ -22,8 +22,10 @@ import { readOsm } from './lib/osm.ts';
 import { applyMeasuredWidths, loadAlkisRoads } from './lib/alkis.ts';
 import { roadHeights, terrainHeight } from './lib/heights.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
+import { matchLevels } from './lib/levels.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
-import { loadRegion, loadWorld, paths, unproject } from './lib/region.ts';
+import { smoothBends } from './lib/smooth.ts';
+import { loadRegion, loadWorld, paths, unproject, useRoadProfile } from './lib/region.ts';
 import { densify, isMotorRoad, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
 
 // The test car at the game's vehicle scale (smaller wheels meet the same road steps).
@@ -51,6 +53,8 @@ const NARROW = +arg('narrow', '0.6');
 const SPACING = 4;
 
 const index: WorldIndex = JSON.parse(readFileSync(`${paths.out}index.json`, 'utf8'));
+// The same road widths as the build.
+useRoadProfile({ index });
 const W = index.world;
 const tileCache = new Map<string, TileContent | null>();
 function tile(k: string): TileContent | null {
@@ -217,11 +221,14 @@ async function main() {
   // Road heights as the build computes them, so the car starts on its road (which may be lifted).
   const regions = [loadRegion(region)];
   const height = terrainHeight(regions, unproject(cfg.zone), undefined, osm.polygons);
+  // The same rounded bends as the build (game road profile).
+  smoothBends(osm.ways, new Set(osm.points.map((p) => p.id)));
   applyMeasuredWidths(osm.ways, loadAlkisRoads(region));
   separateCarriageways(osm.ways);
   const ramps = planRamps(osm.ways);
   roadHeights(osm.ways, regions, height);
   matchRampHeights(ramps);
+  matchLevels(osm.ways, height);
   const T = W.tileSize;
   const inWorld = new Set(index.tiles.map(([x, y]) => tileKey(x, y)));
   let candidates = osm.ways.filter((w) =>

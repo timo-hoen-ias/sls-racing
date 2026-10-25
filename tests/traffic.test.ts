@@ -184,4 +184,24 @@ describe('TrafficSim', () => {
     run(sim, 10, undefined, { x: 0, z: 0, vx: 0, vz: 0, halfLength: 2.25, halfWidth: 0.95 });
     expect(sim.agents.length).toBe(10);
   });
+
+  it('thins traffic on the route of a running race (V1)', () => {
+    const g = gridGraph();
+    const sim = new TrafficSim(g, { rng: rng(6), maxAgents: 40 });
+    sim.density = 1;
+    sim.spawnMin = 30;
+    const player = { x: 0, z: 0, vx: 0, vz: 0, halfLength: 2.25, halfWidth: 0.95 };
+    // The race runs along the middle east-west street.
+    const onRoute = (a: { x: number; z: number }) => Math.abs(a.z) < 10;
+    run(sim, 10, undefined, player);
+    const before = sim.agents.filter(onRoute).length;
+    expect(before).toBeGreaterThan(3);
+    sim.thinOut = (x, z) => Math.abs(z) < 10;
+    sim.thinKeep = 0;
+    sim.thinRoute(player, 0);
+    expect(sim.agents.filter((a) => onRoute(a) && a.state !== 'player').length).toBe(0);
+    run(sim, 10, undefined, player);
+    expect(sim.agents.filter((a) => onRoute(a) && Math.hypot(a.x, a.z) > 40).length).toBeLessThan(before);
+    expect(sim.target).toBe(28);
+  });
 });

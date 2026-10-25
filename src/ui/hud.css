@@ -168,3 +168,62 @@ body:has(#event-hud:not([hidden])) #style-feed { top: calc(150px + env(safe-area
 #event-result button { font: 700 17px/1 inherit; font-family: inherit; color: #fff; background: #1d2736; border: 0; border-radius: 6px; padding: 11px 18px; cursor: pointer; }
 #event-result button.primary { background: var(--accent); }
 #event-result button:focus-visible, #event-result button:hover { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* Home garage and dealer (P3, P4, A3) */
+#garage-menu { pointer-events: auto; position: absolute; inset: 5vh 50% auto auto; transform: translateX(50%); width: min(980px, 95vw); max-height: 90vh; display: flex; flex-direction: column; background: #0b1520f4; border: 1px solid #ffffff22; border-radius: 10px; box-shadow: 0 20px 60px #000a; }
+#garage-menu .gm-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px 6px; }
+#garage-menu h2 { margin: 0; font-size: 28px; font-weight: 900; font-style: italic; text-transform: uppercase; }
+#garage-menu .gm-sub { font-size: 14px; opacity: .75; }
+#garage-menu h3 { margin: 6px 0; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; opacity: .8; display: flex; gap: 12px; align-items: center; }
+#garage-menu button { font: 700 14px/1 inherit; font-family: inherit; color: #fff; background: #1d2736; border: 0; border-radius: 5px; padding: 8px 12px; cursor: pointer; white-space: nowrap; }
+#garage-menu button.primary { background: var(--accent); }
+#garage-menu button:disabled { opacity: .35; cursor: default; }
+#garage-menu button:focus-visible, #garage-menu button:hover:not(:disabled) { outline: 2px solid #fff; outline-offset: 1px; }
+#garage-menu .gm-body { overflow-y: auto; padding: 0 16px 16px; display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; }
+#garage-menu .gm-car { display: grid; grid-template-columns: 1fr 180px auto; gap: 12px; align-items: center; padding: 10px; border-radius: 6px; background: #ffffff0c; margin-bottom: 6px; border-left: 4px solid #ffffff22; }
+#garage-menu .gm-car.current { border-left-color: var(--accent); }
+#garage-menu .gm-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+#garage-menu .gm-info b { font-size: 17px; }
+#garage-menu .gm-info span { font-size: 12px; opacity: .7; }
+#garage-menu .gm-info .gm-ls { font-size: 15px; font-weight: 800; opacity: 1; color: var(--accent); }
+#garage-menu .gm-bars { display: flex; flex-direction: column; gap: 3px; }
+#garage-menu .gm-bar { display: grid; grid-template-columns: 100px 1fr; gap: 6px; align-items: center; font-size: 11px; opacity: .85; }
+#garage-menu .gm-bar i { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--accent) calc(var(--v) * 100%), #ffffff1a 0); }
+#garage-menu .gm-slot { display: grid; grid-template-columns: 90px 70px 1fr; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 6px; background: #ffffff0c; margin-bottom: 5px; font-size: 14px; }
+#garage-menu .gm-spares { display: flex; gap: 5px; flex-wrap: wrap; }
+#garage-menu .gm-specs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+#garage-menu .gm-none, #garage-menu .gm-hint { font-size: 12px; opacity: .55; }
+#garage-menu .p1 { color: #9be37a; } #garage-menu .p2 { color: #59b8ff; } #garage-menu .p3 { color: #c58bff; } #garage-menu .p4 { color: #ffb000; } #garage-menu .p5 { color: #ff5e5e; }
+#garage-menu button.p1, #garage-menu button.p2, #garage-menu button.p3, #garage-menu button.p4, #garage-menu button.p5 { background: #1d2736; }
+@media (max-width: 760px) { #garage-menu .gm-body { grid-template-columns: 1fr; } #garage-menu .gm-car { grid-template-columns: 1fr auto; } #garage-menu .gm-bars { grid-column: 1 / -1; } }
+#event-list .el-info span.el-weak { color: #ffb000; opacity: .95; }
+
+/* Wanted level (V4) */
+#wanted { position: absolute; top: calc(52px + env(safe-area-inset-top, 0px)); right: calc(16px + env(safe-area-inset-right, 0px)); width: 150px; text-align: center; background: #0b1520d0; border-radius: 8px; padding: 6px 10px 8px; animation: wd-flash 0.5s steps(2) infinite; }
+#wanted .wd-stars { font-size: 22px; letter-spacing: .08em; color: #ffd23f; text-shadow: 0 1px 3px #000; }
+#wanted .wd-bar { height: 4px; margin-top: 4px; background: #ffffff22; border-radius: 2px; overflow: hidden; }
+#wanted .wd-fill { height: 100%; width: 0; }
+#wanted .wd-escape .wd-fill { background: #4bd37b; }
+#wanted .wd-bust .wd-fill { background: #ff4b4b; }
+@keyframes wd-flash { 0% { box-shadow: 0 0 0 2px #2a5bffaa; } 100% { box-shadow: 0 0 0 2px #ff3030aa; } }
+
+/* First-minutes hints (E8) */
+#tutorial-hint { position: absolute; left: 50%; top: calc(12px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); max-width: min(520px, 52vw); text-align: center; background: #0b1520e0; border: 1px solid #38b6ff88; border-radius: 8px; padding: 6px 12px; font-size: 14px; font-weight: 600; text-shadow: 0 1px 3px #000; }
+#tutorial-hint b { color: #38b6ff; margin-right: 6px; }
+
+/* Big map filter chips (U2) */
+#map-bar .map-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+#map-bar .map-chip { font: 600 13px system-ui, sans-serif; padding: 5px 10px; border-radius: 14px; border: 1px solid #3d4a5c; background: transparent; color: #8b97a6; cursor: pointer; }
+#map-bar .map-chip.on { background: #1f6feb33; border-color: #3d8bff; color: #e8f1ff; }
+
+/* Photo mode (K3): only the picture and the hint bar. */
+body.photo > :not(#game):not(#photo-bar):not(#console) { visibility: hidden !important; }
+#photo-bar {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 60;
+  max-width: calc(100vw - 32px); font: 12px/1.4 system-ui, sans-serif; color: #fff;
+  background: #000a; padding: 6px 12px; border-radius: 6px; text-align: center; pointer-events: none;
+}
+#garage-menu .gm-swatch { width: 26px; height: 26px; min-width: 26px; padding: 0; border-radius: 50%; background: var(--c, #333); border: 2px solid #fff3; }
+#garage-menu .gm-swatch:not([style]) { width: auto; border-radius: 13px; padding: 0 10px; }
+#garage-menu .gm-swatch.on { border-color: #fff; box-shadow: 0 0 0 2px #3aa0ff; }
+#garage-menu .gm-look .gm-slot { grid-template-columns: 100px 1fr; }

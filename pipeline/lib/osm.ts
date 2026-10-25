@@ -24,6 +24,8 @@ export interface Way {
   deck?: number[];
   /** Roads: smoothed terrain height along the way (see profiles.ts), by distance from the first node. */
   profile?: { dist: Float32Array; y: Float32Array };
+  /** Extra height by distance from the first node where the road was matched to an overlapping one (levels.ts). */
+  level?: { dist: Float32Array; dy: Float32Array };
   /** Roads: pavement with a raised kerb on each side (kerbs.ts); unset means the old default by class. */
   sidewalks?: { left: boolean; right: boolean };
   /** Roads: inside a built-up area (kerbs.ts). */

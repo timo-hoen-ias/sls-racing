@@ -4,6 +4,7 @@ import type { CarPhysics } from './carPhysics.ts';
 import { applyCar, CARS, type CarSpec, DEFAULT_CAR, enginePeak, findCar } from './cars.ts';
 import type { CarView } from './carView.ts';
 import { loadSportsCar } from './sportsCarGlb.ts';
+import type { CarGeometry } from './sportsCarModel.ts';
 import { CAR, ENGINE, ENGINE_SOUND } from './tuning.ts';
 
 // Switches the player car at runtime: loads the GLB, retunes physics, engine and sound, swaps the body.
@@ -16,6 +17,10 @@ export interface GarageContext {
   notify?(text: string): void;
   /** After a switch (rev counter range …). */
   onChange?(spec: CarSpec): void;
+  /** After a new body is in place: paint, rims … (vehicle/looks.ts). */
+  onModel?(spec: CarSpec): void;
+  /** Right after applyCar, before the physics takes the tuning over: fitted parts (game/workshop.ts). */
+  afterApply?(spec: CarSpec): void;
 }
 
 export class Garage {
@@ -24,6 +29,8 @@ export class Garage {
   readonly available = new Set<string>([DEFAULT_CAR]);
   private c: GarageContext;
   private pending = 0;
+  /** Dimensions (and source credit) of the loaded model. */
+  geometry?: CarGeometry;
 
   constructor(c: GarageContext) {
     this.c = c;
@@ -57,17 +64,41 @@ export class Garage {
       return msg;
     }
     this.available.add(spec.id);
+    this.geometry = model.geometry;
     applyCar(spec, model.geometry);
+    this.c.afterApply?.(spec);
     car.rebuild();
     // A bigger wheel must not start inside the road.
     const p = car.body.translation();
     car.body.setTranslation({ x: p.x, y: p.y + 0.15, z: p.z }, true);
     view.setModel(model, 'glb');
+    this.c.onModel?.(spec);
     this.c.sound()?.setProfile(ENGINE_SOUND);
     this.current = spec;
     this.c.onChange?.(spec);
     this.c.notify?.(spec.label);
     return `${spec.label} · ${describe()}`;
+  }
+
+  /** Runs fn with another car's tuning (and parts) in CAR/ENGINE, for its key figures; the current car comes back. */
+  measure<T>(spec: CarSpec, fn: () => T): T {
+    applyCar(spec);
+    this.c.afterApply?.(spec);
+    try {
+      return fn();
+    } finally {
+      applyCar(this.current, this.geometry);
+      this.c.afterApply?.(this.current);
+    }
+  }
+
+  /** Applies the current car's tuning again (fitted parts changed), keeping body and position. */
+  retune() {
+    applyCar(this.current, this.geometry);
+    this.c.afterApply?.(this.current);
+    this.c.car.rebuild();
+    this.c.sound()?.setProfile(ENGINE_SOUND);
+    this.c.onChange?.(this.current);
   }
 }
 
@@ -90,6 +121,19 @@ export function registerGarageCommands(g: Garage) {
     run: () => {
       void g.probe();
       return CARS.map((c) => `${c.id === g.current.id ? '▶' : ' '} ${c.id.padEnd(10)} ${c.label} · ${c.info}${g.available.has(c.id) ? '' : ' (Modell nicht gefunden)'}`).join('\n');
+    },
+  });
+  registerCommand({
+    name: 'car.source',
+    help: 'Herkunft und Lizenz des Automodells (importierte CC-BY-Modelle) und seine Maße',
+    run: () => {
+      const geo = g.geometry;
+      if (!geo) return `${g.current.label}: eigenes Modell, keine Maße im GLB`;
+      const w = geo.wheel;
+      return [
+        `${g.current.label}: ${geo.source ?? 'eigenes Modell (tools/blender)'}`,
+        `${geo.length} × ${geo.width} m, Radstand ${(w.front - w.rear).toFixed(2)} m, Rad ⌀ ${(w.radius * 2).toFixed(2)} m`,
+      ].join('\n');
     },
   });
   registerCommand({

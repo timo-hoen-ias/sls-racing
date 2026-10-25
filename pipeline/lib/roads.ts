@@ -3,7 +3,7 @@ import { utmToLocal } from '../../src/world/format.ts';
 import { edgeLineWidth, encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
 import type { RoadCarve } from './carve.ts';
 import type { HalfWidths } from './overlap.ts';
-import { noCars, roadSection, type RoadSection } from '../../src/world/roadSpec.ts';
+import { MIN_SIDEWALK, noCars, roadSection, type RoadSection } from '../../src/world/roadSpec.ts';
 import type { Junction } from './graph.ts';
 import type { Way } from './osm.ts';
 import { KERB } from './kerbs.ts';
@@ -89,6 +89,16 @@ export const isMotorRoad = (tags: Record<string, string>) => isDrivable(tags) &&
 
 export const isBridge = (tags: Record<string, string>) => !!tags.bridge && tags.bridge !== 'no';
 
+/**
+ * Sidewalk width beside a way: the full KERB.width, narrower where the game profile widened the carriageway
+ * into the street space between the houses (never below MIN_SIDEWALK).
+ */
+export function sidewalkWidth(way: Way): number {
+  const street = parseFloat(way.tags['sls:street']);
+  if (!(street > 0)) return SIDEWALK.width;
+  return Math.max(MIN_SIDEWALK, Math.min(SIDEWALK.width, (street - roadWidth(way.tags)!) / 2));
+}
+
 /** Pavement sides as kerbs.ts planned them (left = positive offsets), else the old default for streets. */
 export function sidewalkSides(way: Way): { left: boolean; right: boolean } {
   if (isBridge(way.tags)) return { left: false, right: false };
@@ -105,6 +115,19 @@ export function densify(pts: [number, number][], step = STEP): [number, number][
     for (let k = 1; k <= n; k++) out.push([ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n]);
   }
   return out;
+}
+
+/** Extra height along a way where it was matched to an overlapping road (levels.ts), 0 elsewhere. */
+export function levelAt(way: Way, dist: number): number {
+  const l = way.level;
+  if (!l) return 0;
+  const d = l.dist;
+  let i = 0, j = d.length - 1;
+  if (dist <= d[0]) return l.dy[0];
+  if (dist >= d[j]) return l.dy[j];
+  while (j - i > 1) { const m = (i + j) >> 1; if (d[m] <= dist) i = m; else j = m; }
+  const t = (dist - d[i]) / (d[j] - d[i] || 1);
+  return l.dy[i] + (l.dy[j] - l.dy[i]) * t;
 }
 
 /** Road surface height along a way: draped on the terrain, or a straight span for bridges, plus any lift. */
@@ -147,8 +170,8 @@ function surface(way: Way, height: (e: number, n: number) => number) {
     return deck[dseg] + (deck[dseg + 1] - deck[dseg]) * t + ROAD_LIFT;
   };
   return isBridge(way.tags)
-    ? (_e: number, _n: number, dist: number) => span(dist) + raised(dist)
-    : (e: number, n: number, dist: number) => ground(e, n, dist) + lift + raised(dist);
+    ? (_e: number, _n: number, dist: number) => span(dist) + raised(dist) + levelAt(way, dist)
+    : (e: number, n: number, dist: number) => ground(e, n, dist) + lift + raised(dist) + levelAt(way, dist);
 }
 
 /** Surface height at each original node of a way (for the road graph). */
@@ -235,6 +258,33 @@ export class CarriagewayIndex {
     }
     return false;
   }
+  /** Whether (x, z) lies on the carriageway of another road at about height y (within `tol`). */
+  level(self: Way, x: number, z: number, y: number, tol: number) {
+    for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
+      if (s.way === self) continue;
+      const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+      const t = Math.min(1, Math.max(0, ((x - s.x0) * dx + (z - s.z0) * dz) / (dx * dx + dz * dz || 1)));
+      if (Math.abs(s.y0 + (s.y1 - s.y0) * t - y) > tol) continue;
+      if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw) return true;
+    }
+    return false;
+  }
+  /**
+   * Lowest surface of another road under (x, z) that lies below height y (by less than `within`, so a car could
+   * not pass between them), or undefined.
+   */
+  below(self: Way, x: number, z: number, y: number, within = 3): number | undefined {
+    let low: number | undefined;
+    for (const s of this.cells.get(`${Math.floor(x / 16)}_${Math.floor(z / 16)}`) ?? []) {
+      if (s.way === self) continue;
+      const dx = s.x1 - s.x0, dz = s.z1 - s.z0;
+      const t = Math.min(1, Math.max(0, ((x - s.x0) * dx + (z - s.z0) * dz) / (dx * dx + dz * dz || 1)));
+      const sy = s.y0 + (s.y1 - s.y0) * t;
+      if (sy >= y || sy < y - within) continue;
+      if (Math.hypot(s.x0 + dx * t - x, s.z0 + dz * t - z) < s.hw + 0.3 && (low === undefined || sy < low)) low = sy;
+    }
+    return low;
+  }
 }
 
 /**
@@ -313,7 +363,7 @@ export function buildRoads(
 
     // Pavement segments per side (segment i runs from sample i - 1 to i), decided first so the kerb can be
     // lowered where a stretch ends (junctions, driveways) and at mapped crossings.
-    const hw0 = width / 2, sw0 = SIDEWALK.width;
+    const hw0 = width / 2, sw0 = sidewalkWidth(way);
     const paved = new Map<number, boolean[]>();
     for (const side of [1, -1] as const) {
       const on: boolean[] = new Array(ring.length).fill(false);
@@ -380,12 +430,24 @@ export function buildRoads(
         if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted);
         else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted);
         const c = (p: typeof a, d: number) => p.y - d;
-        const extra = lifted ? 0.5 : 0;
-        const lw = (p: typeof a) => left(p) + extra, rw = (p: typeof a) => right(p) - extra;
+        // Another road just below beside this one (a junction arm, a road alongside at another height): the
+        // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.
+        const lower = (p: typeof a, o: number) => carriageways.below(way, ...off(p, o), p.y - STRIP_DROP);
+        // Decks and lifted roads reach 0.5 m wider, so a wheel at the edge has ground; where another deck or road
+        // runs alongside at the same height with a slot of up to 1.5 m between them, across the slot.
+        const reach = (p: typeof a, side: number) => {
+          if (!lifted) return 0;
+          const edge = side > 0 ? left(p) : -right(p);
+          for (const o of [0.5, 1, 1.5]) if (carriageways.level(way, ...off(p, side * (edge + o)), p.y, 0.5)) return o + 0.25;
+          return 0.5;
+        };
+        const lw = (p: typeof a) => left(p) + reach(p, 1), rw = (p: typeof a) => right(p) - reach(p, -1);
         strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
         if (!lifted) {
-          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), c(a, ROAD_LIFT + 0.1)], [c(b, STRIP_DROP), c(b, ROAD_LIFT + 0.1)]);
-          strip(tile.collide, (p) => rw(p) - 1, rw, [c(a, ROAD_LIFT + 0.1), c(a, STRIP_DROP)], [c(b, ROAD_LIFT + 0.1), c(b, STRIP_DROP)]);
+          // Bevel 1 m out and down under the terrain, but never above a lower road there.
+          const skirt = (p: typeof a, o: number) => Math.min(c(p, ROAD_LIFT + 0.1), (lower(p, o) ?? Infinity) - STRIP_DROP);
+          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), skirt(a, lw(a) + 1)], [c(b, STRIP_DROP), skirt(b, lw(b) + 1)]);
+          strip(tile.collide, (p) => rw(p) - 1, rw, [skirt(a, rw(a) - 1), c(a, STRIP_DROP)], [skirt(b, rw(b) - 1), c(b, STRIP_DROP)]);
         }
       }
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
@@ -433,7 +495,7 @@ export function buildRoads(
 
       // Bridge caps run through the nodes where the road continues; a road branching off stops them below.
       if (walkway || sidewalk) {
-        const sw = walkway ? BRIDGE_CAP.width : SIDEWALK.width;
+        const sw = walkway ? BRIDGE_CAP.width : sw0;
         const from = walkway ? capFrom : 0;
         const ground = (p: typeof a, o: number) => {
           // On a bridge the skirt ends at the underside of the deck slab.
@@ -494,7 +556,9 @@ export function buildRoads(
         const grade = (p.y - q.y) / (Math.abs(p.dist - q.dist) || 1);
         const y = p.y - STRIP_DROP, yt = y + grade * Math.abs(ext);
         const t = tiles.at(p.e, p.n).collide;
-        const v = [corner(p, -hr), corner(p, hl), corner(tip, -hr), corner(tip, hl)].map(([x, z], i) => t.vertex(x, i < 2 ? y : yt, z, {}));
+        // Never above another road it reaches over (the road it ends on, lower there): its wheels would hit the cap.
+        const capY = (x: number, z: number, h: number) => Math.min(h, (carriageways.below(way, x, z, h + STRIP_DROP) ?? Infinity) - STRIP_DROP);
+        const v = [corner(p, -hr), corner(p, hl), corner(tip, -hr), corner(tip, hl)].map(([x, z], i) => t.vertex(x, capY(x, z, i < 2 ? y : yt), z, {}));
         // Upward-facing whichever way the cap points.
         if (dir > 0) { t.tri(v[0], v[2], v[1]); t.tri(v[1], v[2], v[3]); }
         else { t.tri(v[0], v[1], v[2]); t.tri(v[1], v[3], v[2]); }
@@ -510,7 +574,7 @@ export function buildRoads(
         side = -side;
         if ((side > 0 ? L : R).get(r)! < width / 2 - 0.05) continue;
         const pav = sidewalk && (side > 0 ? sides.left : sides.right);
-        const o = side * (width / 2 + (pav ? SIDEWALK.width - 0.5 : 0.8));
+        const o = side * (width / 2 + (pav ? sw0 - 0.5 : 0.8));
         const [x, z] = utmToLocal(world, r.e - r.dy * o, r.n + r.dx * o);
         if (jIndex.near(x, z, 4)) continue;
         // Heading of the lamp arm: towards the road centre.

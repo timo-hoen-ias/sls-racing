@@ -78,6 +78,7 @@ import { patchWorldMaterials } from './weather/weatherMaterials.ts';
 import { FacadeControl } from './render/facades.ts';
 import { WeatherSystem } from './weather/weatherSystem.ts';
 import { Mixer } from './audio/mixer.ts';
+import { Radio } from './audio/radio.ts';
 import { helpLine } from './input/bindings.ts';
 import { registerSettingsCommands } from './settings/commands.ts';
 import { registerGameSettings } from './settings/gameSettings.ts';
@@ -235,11 +236,15 @@ async function boot() {
   sfx.registerCommands();
   const startBtn = $('start') as HTMLButtonElement;
   let started = false;
+  // Generative music (T2), louder and busier in races and chases.
+  const radio = new Radio();
+  radio.registerCommands();
   const startAudio = async () => {
     if (started) return;
     started = true;
     sound ??= await EngineSound.create(ENGINE_SOUND, quality.reverb);
     sfx.attach(sound.context, sound.world);
+    radio.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
@@ -842,6 +847,8 @@ async function boot() {
     perf.gpuEnd();
     perf.end('render');
 
+    radio.setIntensity(game.racing || police.heat ? 1 : 0.3 + Math.min(0.3, Math.abs(car.speed) / 150));
+    radio.update(dt, paused || !game.inGame);
     mixer.update({ engine: sound, traffic: traffic.sound, ambience: worldAudio.ambience, weather: weather.sound });
     const dtr = car.drivetrain;
     if (sound && soundCmds.view === 'auto') sound.view = cam.mode;

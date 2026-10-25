@@ -1,12 +1,13 @@
 // Measures single trees from the LVGL Saarland LiDAR point cloud for a region.
 //   node pipeline/lidar.ts saarlouis            all 1 km tiles around the region boundary
 //   node pipeline/lidar.ts saarlouis --tiles=336_5464,337_5464   only these tiles (km grid, UTM 32N)
+//   node pipeline/lidar.ts landkreis-saarlouis --reuse=saarlouis  takes the tiles another region measured already
 // Needs data/raw/<region>/osm.json (pipeline/fetch.ts) for the boundary.
 // Output: data/raw/<region>/lidar.json (see LidarFile in lib/lidar.ts); per-tile results are cached in
 // data/raw/<region>/lidar/, so a rerun only processes new tiles. The LAZ files themselves are not kept.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { readLaz } from './lib/laz.ts';
-import { writeDerived } from './lib/derived.ts';
+import { readDerived, writeDerived } from './lib/derived.ts';
 import { CLS_BUILDING, CLS_GROUND, CLS_VEG, LIDAR_ATTRIBUTION, dedupeBorders, extractTrees, reclassifyPoplars, type LidarFile, type LidarTree } from './lib/lidar.ts';
 import { pointInRing, readOsm } from './lib/osm.ts';
 import { loadRegion, loadWorld, paths } from './lib/region.ts';
@@ -62,6 +63,19 @@ async function main() {
 
   const cache = `${dir}lidar/`;
   mkdirSync(cache, { recursive: true });
+  // Tiles a smaller region inside this one measured already (committed results): seeded into the tile cache.
+  for (const other of process.argv.find((a) => a.startsWith('--reuse='))?.slice(8).split(',') ?? []) {
+    const prev = readDerived<LidarFile>(other, 'lidar');
+    if (!prev) throw new Error(`--reuse=${other}: no LiDAR results for that region`);
+    let seeded = 0;
+    for (const [e0, n0, e1, n1] of prev.coverage) {
+      const file = `${cache}${e0 / 1000}_${n0 / 1000}.json`;
+      if (existsSync(file)) continue;
+      writeFileSync(file, JSON.stringify(prev.trees.filter((t) => t[0] >= e0 && t[0] < e1 && t[1] >= n0 && t[1] < n1)));
+      seeded++;
+    }
+    console.log(`  ${seeded} km tiles taken over from ${other}`);
+  }
   const todo = [...where.keys()];
   let done = 0;
   const work = async () => {

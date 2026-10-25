@@ -2,5 +2,5 @@
   "zone": 32,
   "origin": { "lat": 49.31335, "lon": 6.75165, "name": "Saarlouis, Großer Markt" },
   "tileSize": 256,
-  "regions": ["saarlouis"]
+  "regions": ["landkreis-saarlouis"]
 }

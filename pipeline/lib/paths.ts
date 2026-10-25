@@ -7,6 +7,7 @@ import { PATH_KINDS, type PathKind, pathWidth } from '../../src/world/roadSpec.t
 import { densify, isBridge } from './roads.ts';
 import type { Way } from './osm.ts';
 import type { TileBuild, TileMap } from './tilebuf.ts';
+import { CellSet } from './cellset.ts';
 
 /** Path surface above the terrain mesh: enough that the mesh never shows through between samples. */
 export const PATH_LIFT = 0.06;
@@ -130,7 +131,7 @@ export function buildPaths(
 
 /** Marks the drawn path surfaces on a 1 m grid, so generated and measured trees keep off them. */
 export class PathMask {
-  private cells = new Set<number>();
+  private cells = new CellSet();
   constructor(ways: Way[], margin = 0.3) {
     for (const w of ways) {
       if (!isPath(w.tags)) continue;
@@ -140,12 +141,12 @@ export class PathMask {
         const ce = Math.round(e), cn = Math.round(n);
         for (let dx = -k; dx <= k; dx++)
           for (let dy = -k; dy <= k; dy++)
-            if (Math.hypot(ce + dx - e, cn + dy - n) <= r) this.cells.add((ce + dx) * 4_000_000 + cn + dy);
+            if (Math.hypot(ce + dx - e, cn + dy - n) <= r) this.cells.add(ce + dx, cn + dy);
       }
     }
   }
 
   has(e: number, n: number) {
-    return this.cells.has(Math.round(e) * 4_000_000 + Math.round(n));
+    return this.cells.has(Math.round(e), Math.round(n));
   }
 }

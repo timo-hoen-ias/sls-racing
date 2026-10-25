@@ -32,7 +32,7 @@ import { densify, isMotorRoad, roadSurfaceHeights, roadWidth, ROAD_CLASSES } fro
 scaleCar(VEHICLE.scale);
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
-const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
+const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'landkreis-saarlouis';
 const ROUTES = +arg('routes', '60');
 const SEED = +arg('seed', '1');
 const ONLY = arg('way', '');

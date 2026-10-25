@@ -4,14 +4,18 @@ export interface AddressData {
   v: 1;
   attribution: string;
   streets: string[];
-  /** [street index, house number with suffix, UTM east, UTM north, postal code] */
-  a: [number, string, number, number, string][];
+  /** Town names (Ortsname), since the world spans several towns that share street names. */
+  towns?: string[];
+  /** [street index, house number with suffix, UTM east, UTM north, postal code, town index] */
+  a: [number, string, number, number, string, number?][];
 }
 
 export interface Address {
   street: string;
   number: string;
   plz: string;
+  /** Town, when the data has it. */
+  town?: string;
   e: number;
   n: number;
   label: string;
@@ -38,19 +42,27 @@ export class AddressBook {
   readonly attribution: string;
   constructor(data: AddressData) {
     this.attribution = data.attribution;
-    this.list = data.a.map(([s, number, e, n, plz]) => {
+    this.towns = data.towns ?? [];
+    this.list = data.a.map(([s, number, e, n, plz, t]) => {
       const street = data.streets[s];
-      return { street, number, plz, e, n, label: `${street} ${number}` };
+      const town = t !== undefined ? data.towns?.[t] : undefined;
+      return { street, number, plz, town, e, n, label: town ? `${street} ${number}, ${town}` : `${street} ${number}` };
     });
   }
+  readonly towns: string[];
 
-  /** Best matches for a query, exact street and number first; at most `limit`. */
+  /** Best matches for a query, exact street and number first; at most `limit`. A town may follow a comma. */
   find(query: string, limit = 10): Address[] {
-    const { street, number } = parseAddress(query);
+    // "Hauptstraße 5, Lebach": a last part after a comma that is not a house number names the town.
+    const cut = query.lastIndexOf(',');
+    const tail = cut >= 0 ? query.slice(cut + 1).trim() : '';
+    const town = tail && !/^\d/.test(tail) ? normalizeStreet(tail) : '';
+    const { street, number } = parseAddress(town ? query.slice(0, cut) : query);
     const q = normalizeStreet(street);
     if (!q) return [];
     const scored: { a: Address; score: number }[] = [];
     for (const a of this.list) {
+      if (town && !(a.town && normalizeStreet(a.town).startsWith(town)) && !a.plz.startsWith(town)) continue;
       const s = normalizeStreet(a.street);
       const streetScore = s === q ? 0 : s.startsWith(q) ? 1 : s.includes(q) ? 2 : -1;
       if (streetScore < 0) continue;

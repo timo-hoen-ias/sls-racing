@@ -21,7 +21,7 @@ import {
 } from '../src/world/surfaceScan.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
-const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
+const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'landkreis-saarlouis';
 const MAX = +arg('max', 'Infinity');
 const MAX_CRITICAL = +arg('max-critical', 'Infinity');
 /** Critical places allowed on main roads (motorway, trunk, primary, secondary, tertiary and their links). */
@@ -64,7 +64,12 @@ async function main() {
     // Colliders of the 3 × 3 neighbourhood, as the game has them around the car.
     for (const [k, b] of bodies) {
       const [bx, by] = k.split('_').map(Number);
-      if (Math.abs(by - iy) > 1 || Math.abs(bx - ix) > 1) { world.removeRigidBody(b); bodies.delete(k); }
+      if (Math.abs(by - iy) > 1 || Math.abs(bx - ix) > 1) {
+        // Forget their kinds too: a Landkreis has more colliders than a Map holds.
+        for (let i = 0; i < b.numColliders(); i++) kinds.delete(b.collider(i).handle);
+        world.removeRigidBody(b);
+        bodies.delete(k);
+      }
     }
     const near: TileContent[] = [];
     for (let dx = -1; dx <= 1; dx++)

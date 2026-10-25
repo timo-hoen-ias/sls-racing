@@ -9,10 +9,13 @@ const CELL = 16;
 /** Vertices this far beyond the road edge still take the road's height, so the verge meets the road. */
 const FLAT = 2;
 
+/** Numeric cell key (UTM metres / CELL stay far below 2^20 east and 2^22 north): no string per lookup. */
+const cellKey = (cx: number, cy: number) => cx * 4_194_304 + cy;
+
 interface Seg { e0: number; n0: number; y0: number; e1: number; n1: number; y1: number; hw: number; cw: number; drape: boolean }
 
 export class RoadCarve {
-  private cells = new Map<string, Seg[]>();
+  private cells = new Map<number, Seg[]>();
   /** Reach beyond the road edge where the mesh is kept below the road: one mesh cell diagonal. */
   readonly reach: number;
 
@@ -31,7 +34,7 @@ export class RoadCarve {
     const r = cw + this.reach;
     for (let cx = Math.floor((Math.min(e0, e1) - r) / CELL); cx <= Math.floor((Math.max(e0, e1) + r) / CELL); cx++)
       for (let cy = Math.floor((Math.min(n0, n1) - r) / CELL); cy <= Math.floor((Math.max(n0, n1) + r) / CELL); cy++) {
-        const k = `${cx}_${cy}`;
+        const k = cellKey(cx, cy);
         if (!this.cells.has(k)) this.cells.set(k, []);
         this.cells.get(k)!.push(s);
       }
@@ -40,7 +43,7 @@ export class RoadCarve {
   /** Terrain height at a mesh vertex after fitting it to nearby roads. */
   apply(e: number, n: number, h: number): number {
     let flat = Infinity, near = Infinity, cap = Infinity;
-    for (const s of this.cells.get(`${Math.floor(e / CELL)}_${Math.floor(n / CELL)}`) ?? []) {
+    for (const s of this.cells.get(cellKey(Math.floor(e / CELL), Math.floor(n / CELL))) ?? []) {
       const dx = s.e1 - s.e0, dy = s.n1 - s.n0;
       const len2 = dx * dx + dy * dy || 1;
       const t = Math.min(1, Math.max(0, ((e - s.e0) * dx + (n - s.n0) * dy) / len2));

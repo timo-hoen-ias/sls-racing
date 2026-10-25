@@ -38,6 +38,10 @@ export interface WorldIndex {
   /** Road network for the minimap, street names and routing, relative to the index. */
   graph?: string;
   attribution: string[];
+  /** Road profile the tiles were built with (roadSpec.ts); missing in builds before it existed (real widths). */
+  roadProfile?: 'game' | 'real';
+  /** Game profile (S2): rounded junction corners and smoothed kinks in the build. */
+  roadShape?: { corners: number; bends: number };
 }
 
 /** A packed mesh. Arrays are base64-encoded little-endian typed arrays. */

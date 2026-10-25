@@ -1,13 +1,14 @@
 // Puts the Saarlouis tiles into public/tiles for the Cloudflare deploy (wrangler.jsonc build command).
 // The world build on GitHub (.github/workflows/world.yml) publishes finished tiles as release assets
 // world-tiles/tiles-<key>.tar.gz, keyed by pipeline/worldkey.ts. This script downloads the asset for the
-// current key in a few seconds; while the world build for this very commit is still running it waits for it
-// (up to WORLD_TILES_WAIT minutes, default 20). Only when there is nothing to wait for does it fall back to
+// current key in a few seconds and re-runs only the event test when car physics or events changed since.
+// While the world build for this very commit is still running it waits for it (up to WORLD_TILES_WAIT
+// minutes, default 20). Only when there is nothing to wait for does it fall back to
 // building the world here (world:fetch, world:build, world:eventtest --write), which takes about half an hour
 // on the Cloudflare build machine.
 //   node pipeline/deploy-tiles.ts [--no-download]
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { worldKey } from './worldkey.ts';
 
@@ -94,12 +95,25 @@ async function tiles(key: string): Promise<boolean> {
 
 async function main() {
   const key = worldKey();
-  log(`world key ${key}`);
+  const eventsKey = worldKey('events');
+  log(`world key ${key}, events key ${eventsKey}`);
   const t0 = Date.now();
   const downloaded = await tiles(key);
   log(`${downloaded ? `tiles-${key} downloaded` : 'world built'} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  // Car physics, rivals or events changed since the world build: only the drop list needs redoing.
+  let events = 'build';
+  if (downloaded) {
+    const built = existsSync(`${OUT}/build.json`) ? JSON.parse(readFileSync(`${OUT}/build.json`, 'utf8')).eventsKey : undefined;
+    if (built === eventsKey) events = 'download';
+    else {
+      log(`events key ${built ?? '?'} → ${eventsKey}: re-running the event test`);
+      const t1 = Date.now();
+      execSync('npm run world:eventtest -- --write', { stdio: 'inherit' });
+      log(`event test in ${((Date.now() - t1) / 1000).toFixed(0)} s`);
+    }
+  }
   // Shown in game by the world.build debug command.
-  writeFileSync(`${OUT}/deploy.json`, JSON.stringify({ key, source: downloaded ? 'download' : 'build', at: new Date().toISOString() }));
+  writeFileSync(`${OUT}/deploy.json`, JSON.stringify({ key, eventsKey, source: downloaded ? 'download' : 'build', events, at: new Date().toISOString() }));
 }
 
 main().catch((e) => {

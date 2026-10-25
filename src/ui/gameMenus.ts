@@ -1,5 +1,6 @@
 import { EVENT_LABELS, formatValue, type GameEvent } from '../game/events/types.ts';
 import { MEDAL_NAMES, type SaveData } from '../game/save.ts';
+import { recommendedLs } from '../game/workshop.ts';
 import { PadNav } from './padNav.ts';
 
 // Title screen (U1), event list (E1/U2) and the level/credits badge. Plain DOM over the game, usable with
@@ -79,7 +80,7 @@ export class EventList {
   private nav: PadNav;
   private filter = 0;
   private a: EventListActions;
-  private last: { events: GameEvent[]; save: SaveData; x: number; z: number; level: number } | undefined;
+  private last: { events: GameEvent[]; save: SaveData; x: number; z: number; level: number; ls?: number } | undefined;
 
   constructor(parent: HTMLElement, a: EventListActions) {
     this.a = a;
@@ -105,8 +106,9 @@ export class EventList {
     this.nav.onBack = () => a.close();
   }
 
-  show(events: GameEvent[], save: SaveData, x: number, z: number, level: number) {
-    this.last = { events, save, x, z, level };
+  /** ls: the car's performance level, against each event's recommended one. */
+  show(events: GameEvent[], save: SaveData, x: number, z: number, level: number, ls?: number) {
+    this.last = { events, save, x, z, level, ls };
     this.root.hidden = false;
     this.render();
     this.nav.focusFirst();
@@ -128,12 +130,14 @@ export class EventList {
       .map((e) => ({ e, d: Math.hypot(e.start.x - s.x, e.start.z - s.z) }))
       .sort((a, b) => a.d - b.d);
     this.list.replaceChildren(...rows.map(({ e, d }) => {
-      const rec = s.save.events[e.id];
+      const done = s.save.events[e.id];
       const row = el('div', `el-row type-${e.type}`);
       const locked = e.level > s.level;
       const info = el('div', 'el-info');
-      info.append(el('b', '', e.name), el('span', '', `${EVENT_LABELS[e.type]} · ${d < 1000 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1).replace('.', ',')} km`}${locked ? ` · ab Stufe ${e.level}` : ''}`));
-      const medal = el('div', `el-medal m${rec?.medal ?? 0}`, rec ? `${MEDAL_NAMES[rec.medal]} · ${formatValue(e, rec.best)}` : 'neu');
+      const rec = recommendedLs(e);
+      const weak = s.ls !== undefined && s.ls < rec;
+      info.append(el('b', '', e.name), el('span', weak ? 'el-weak' : '', `${EVENT_LABELS[e.type]} · ${d < 1000 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1).replace('.', ',')} km`}${locked ? ` · ab Stufe ${e.level}` : ''} · empf. LS ${rec}`));
+      const medal = el('div', `el-medal m${done?.medal ?? 0}`, done ? `${MEDAL_NAMES[done.medal]} · ${formatValue(e, done.best)}` : 'neu');
       const nav = el('button', '', 'Navi');
       const go = el('button', 'primary', 'Hin & los');
       nav.type = go.type = 'button';

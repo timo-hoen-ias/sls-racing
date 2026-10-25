@@ -5,6 +5,7 @@ import { StreetArea, measureStreets, measuredWidth, streetSpace, type AlkisRoads
 import { categorize } from '../pipeline/lib/mapillary.ts';
 import { readDbf, readShpPolygons } from '../pipeline/lib/shp.ts';
 import type { Way } from '../pipeline/lib/osm.ts';
+import { setRoadProfile } from '../src/world/roadSpec.ts';
 
 /** Synthetic 100 m tile: flat ground at 200 m, optional building block, and crowns given as height functions. */
 function cloud(crowns: { e: number; n: number; h: number; r: number; cone?: boolean }[], building?: [number, number, number, number]) {
@@ -79,6 +80,13 @@ describe('ALKIS street space', () => {
     expect(measuredWidth(way(2, 'residential', []), data)).toBe(9); // capped at 150 % of the OSM width (6 m)
     expect(streetSpace(way(3, 'residential', []), data)).toBeUndefined();
     expect(measuredWidth(way(1, 'motorway', []), data)).toBeUndefined();
+    // Measured against the mapped width also with the game profile, which widens the result only once.
+    setRoadProfile('game');
+    try {
+      expect(measuredWidth(way(2, 'residential', []), data)).toBe(9);
+    } finally {
+      setRoadProfile('real');
+    }
   });
 });
 

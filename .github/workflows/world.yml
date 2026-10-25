@@ -19,8 +19,10 @@ on:
     paths: ['pipeline/**', 'src/**', 'data/derived/**', 'package-lock.json', '.github/workflows/world.yml']
 permissions:
   contents: write
+# PR runs replace each other; every push to main gets its own run right away, so a waiting deploy is not
+# held up behind the previous commit's world build.
 concurrency:
-  group: world-${{ github.ref }}
+  group: world-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
@@ -73,7 +75,7 @@ jobs:
         if: steps.key.outputs.skip != 'true' && steps.key.outputs.publish == 'true'
         run: |
           key=${{ steps.key.outputs.key }}
-          echo "{\"key\":\"$key\",\"commit\":\"$GITHUB_SHA\",\"event\":\"$GITHUB_EVENT_NAME\",\"at\":\"$(date -u +%FT%TZ)\",\"run\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > public/tiles/build.json
+          echo "{\"key\":\"$key\",\"eventsKey\":\"$(node pipeline/worldkey.ts --events)\",\"commit\":\"$GITHUB_SHA\",\"event\":\"$GITHUB_EVENT_NAME\",\"at\":\"$(date -u +%FT%TZ)\",\"run\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > public/tiles/build.json
           tar -czf "tiles-$key.tar.gz" -C public tiles
           gh release view world-tiles >/dev/null 2>&1 || gh release create world-tiles --prerelease --title "Welt-Kacheln" \
             --notes "Fertige Saarlouis-Kacheln für den Cloudflare-Deploy, je Welt-Schlüssel (pipeline/worldkey.ts). Wird automatisch gepflegt." || true

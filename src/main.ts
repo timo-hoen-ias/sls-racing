@@ -265,6 +265,7 @@ async function boot() {
     radio.attach(sound.context, sound.world);
     sound.onBackfire = () => { effects.backfire(ip, iq, car.body.linvel()); carLights.backfire(); };
     traffic.attachAudio(sound.context, sound.world);
+    net.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
     joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});

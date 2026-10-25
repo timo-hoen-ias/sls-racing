@@ -97,11 +97,19 @@ Schilder mit echtem Text (`pipeline/lib/guideSigns.ts` → `public/tiles/signs.j
 
 Ladenfronten (`pipeline/lib/shops.ts`, `src/world/shops.ts`): Läden, Cafés, Restaurants, Apotheken und Banken aus OSM sitzen an der Straßenseite ihres Hauses mit Ladenschild, Markise (ausgefahren oder nur Kasten, sieben Stofffarben), Nasenschild, Cafétischen (nur wo Gehweg ist) und Aufstellern; Fassaden mit Schaufenstern ohne gemappten Laden bekommen in der Altstadt meist eine allgemeine Front. Die Teile und Schildbilder je Ladenart kommen aus `shops.glb` (zwei Detailstufen ab 120 m, bis 450 m sichtbar). Befehle: `props.shops on|off`, `shops.info`, `shops.near [n]` (mit Lage und Blickrichtung), `shops.tp [n] [abstand]` (vor die n-nächste Front stellen), `shops.night auto|0..1` (Ladenschilder leuchten nach Einbruch der Dunkelheit).
 
-Vegetation: Bäume haben Arten (Laubbaum, Nadelbaum, Pappel, Birke, Obstbaum) aus den OSM-Tags oder passend zur Fläche (Mischwald, Nadelwald, Friedhof, Streuobstwiese, Kleingärten), dazu Büsche in Parks und Gebüsch statt Wald auf `natural=scrub`. In Stadt, Gärten, Parks und an Straßen stehen die Bäume der LiDAR-Befliegung (LVGL Saarland 2025, `pipeline/lib/lidarTrees.ts`) mit echter Position, Höhe und Kronenbreite; ein OSM-Baum an derselben Stelle gibt ihm seine Art. Wälder bleiben gestreut, weil die Befliegung dichte Kronen zusammenfasst. In Stadt, Gärten, Parks und an Straßen stehen die Bäume der LiDAR-Befliegung (LVGL Saarland 2025, `pipeline/lib/lidarTrees.ts`) mit echter Position, Höhe und Kronenbreite; ein OSM-Baum an derselben Stelle gibt ihm seine Art. Wälder bleiben gestreut, weil die Befliegung dichte Kronen zusammenfasst. Die Bäume kommen aus Blender (`vegetation.glb`: Platane, Linde, Kastanie, Ahorn, Fichte, Kiefer, Pappel, Birke, Obstbaum), mit drei Stufen: detailliert nah, einfach in mittlerer Entfernung, Billboards in der Ferne; ohne GLB gibt es prozedurale Bäume. Wind wiegt Kronen und Gras, stärker bei Regen und Schnee. Um die Kamera wachsen Grasbüschel, Äcker haben Furchen und je Feld eine eigene Frucht. Befehle: `veg.density 0..1`, `veg.wind auto|0..1`, `veg.lod <m>`, `veg.lod.force 0|1|2|auto`, `veg.models glb|procedural`, `veg.lidar on|off`, `veg.grass on|off`, `veg.grass.radius`, `veg.fields 0..1`, `veg.info`.
+Vegetation: Bäume haben Arten (Laubbaum, Nadelbaum, Pappel, Birke, Obstbaum) aus den OSM-Tags oder passend zur Fläche (Mischwald, Nadelwald, Friedhof, Streuobstwiese, Kleingärten), dazu Büsche in Parks und Gebüsch statt Wald auf `natural=scrub`. In Stadt, Gärten, Parks und an Straßen stehen die Bäume der LiDAR-Befliegung (LVGL Saarland 2025, `pipeline/lib/lidarTrees.ts`) mit echter Position, Höhe und Kronenbreite; ein OSM-Baum an derselben Stelle gibt ihm seine Art. Wälder bleiben gestreut, weil die Befliegung dichte Kronen zusammenfasst. In Stadt, Gärten, Parks und an Straßen stehen die Bäume der LiDAR-Befliegung (LVGL Saarland 2025, `pipeline/lib/lidarTrees.ts`) mit echter Position, Höhe und Kronenbreite; ein OSM-Baum an derselben Stelle gibt ihm seine Art. Wälder bleiben gestreut, weil die Befliegung dichte Kronen zusammenfasst. Die Bäume kommen aus Blender (`vegetation.glb`: Platane, Linde, Kastanie, Ahorn, Fichte, Kiefer, Pappel, Birke, Obstbaum), mit drei Stufen: detailliert nah, einfach in mittlerer Entfernung, Billboards in der Ferne; ohne GLB gibt es prozedurale Bäume. Wind wiegt Kronen und Gras, stärker bei Regen und Schnee. Um die Kamera wachsen Grasbüschel. Befehle: `veg.density 0..1`, `veg.wind auto|0..1`, `veg.lod <m>`, `veg.lod.force 0|1|2|auto`, `veg.models glb|procedural`, `veg.lidar on|off`, `veg.grass on|off`, `veg.grass.radius`, `veg.fields 0..1`, `veg.info`.
 
 Der Hall folgt der Umgebung: Raycasts links, rechts und nach oben messen Hauswände und Brücken, daraus werden offene Straße, Häuserschlucht und Unterführung überblendet, dazu ein Echo von der nächsten Wand je Seite. Die Geräuschkulisse mischt Stadtgemurmel (bebaut), Vögel und Blätter (grün), Autobahnrauschen und die Saar von dort, wo sie wirklich sind; Aufprallgeräusche klingen nach Material (Gebäude, Baum, Mast, Fahrzeug).
 
 Befehle: `sound.reverb auto|off|0..1`, `sound.reverb.debug` (Messstrahlen), `amb.zone [auto|stadt|gruen|autobahn|wasser]`, `amb.mix`, `amb.layer <schicht> on|off`, `amb.volume`, `amb.impact <material>`, `amb on|off`.
+
+## Boden aus dem Luftbild
+
+Was auf dem Boden liegt, kommt aus dem Luftbild TrueDOP20 (20 cm, Farbe und nahes Infrarot) des LVGL Saarland, der ALKIS-Nutzung (Acker, Grünland, Gartenbau, Wald, Wohnbau, Sport …), den ALKIS-Gebäudeumrissen und der Höhe über Grund aus DOM1 minus DGM1. `npm run world:landcover` liest die 2-km-Kacheln per Range-Request aus dem 40-GB-Archiv, rechnet sie auf 2 m herunter und klassifiziert jede Zelle (`pipeline/lib/landcover.ts`): Vegetation über den NDVI, Baumkronen über die Höhe (darunter Waldboden oder Rasen mit Laub), kahle Flächen je nach Nutzung als gepflügter Acker, Asphalt, Kies, Gleisschotter oder Tennisplatz-Sand, Äcker als grün, reif/Stoppel oder Erde, Gartenbauland als Gemüsereihen. Das Ergebnis liegt als PNG in `data/derived/saarlouis/landcover/` im Repo (Klassen 2 m, Bodenfarbe 4 m mit gefüllten Schatten, Reihenrichtung je Flurstück, Dachfarbe je Gebäude), der Weltbau braucht also keinen Download.
+
+Jeder 4-m-Geländepunkt bekommt daraus Texturanteile (Rasen, Wiese, lückiges Gras, Waldboden, Ackerboden, Asphalt, Kies, Uferschlamm), die Richtung der Ackerreihen und die echte Luftbildfarbe. Der Shader tönt die Farbe jeder Textur relativ dazu, wie sie im Luftbild typisch aussieht: ein reifes Feld wird gelblich, ein abgetretener Rasen fahler, ein Tennenplatz rot. Ackerreihen laufen entlang der Längsseite des Flurstücks, mit Fahrgassen alle 21 m.
+
+Befehle: `ground.aerial 0..2` (0 = nur Klassenfarben), `ground.rows 0..1`, `ground.view normal|cover|aerial`, `ground.at` (Bodenbedeckung unter dem Auto).
 
 ## 3D-Modelle (Blender)
 
@@ -135,11 +143,13 @@ pipeline/            Offline-Pipeline: OSM + Gelände → Kacheln
   world.json         Weltursprung (Großer Markt), UTM-Zone, Liste der Regionen
   regions/*.json     eine Datei pro Stadt/Gebiet (PLZ-Grenze, Geländequelle, Spawn)
   fetch.ts build.ts  Download und Kachel-Build
+  landcover.ts       Bodenbedeckung aus Luftbild, ALKIS und Laserscan (Ergebnis im Repo)
 src/
   world/format.ts    Kachelformat und Koordinaten (geteilt von Pipeline und Spiel)
   world/streamer.ts  lädt Kacheln um das Auto, baut Meshes und Kollision
   world/props.ts     Straßenmöbel und Parker als Kachel-Layer (Modelle in propModels.ts)
-  world/vegetation.ts Bäume, Büsche, Gras, Wind und Ackerfurchen als Kachel-Layer
+  world/vegetation.ts Bäume, Büsche, Gras und Wind als Kachel-Layer
+  world/coverKinds.ts Bodenklassen und Texturkanäle des Geländes
   vehicle/           Rapier-Raycast-Fahrzeug mit Arcade-Tuning, Nitro, Drift
   input/             Tastatur, Gamepad, Touch → gemeinsame Fahraktionen
   world/roadGraph.ts Straßennetz: Straßennamen, Minimap, Routing (A*)

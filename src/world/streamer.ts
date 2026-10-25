@@ -424,6 +424,7 @@ export class WorldStreamer implements KnockableSource {
       geo.setAttribute('normal', new THREE.BufferAttribute(m.nrm, 3));
       if (m.uv) geo.setAttribute('uv', new THREE.BufferAttribute(m.uv, 2));
       if (m.col) geo.setAttribute('color', new THREE.BufferAttribute(m.col, 3));
+      for (const [k, a] of Object.entries(m.attrs ?? {})) geo.setAttribute(k, new THREE.BufferAttribute(a.array, a.size, true));
       if (m.idx) geo.setIndex(new THREE.BufferAttribute(m.idx, 1));
       geo.computeBoundingSphere();
       const o = new THREE.Mesh(geo, mat);

@@ -44,12 +44,9 @@ function patchWind(mat: THREE.MeshStandardMaterial, amp: number, key: string) {
   mat.customProgramCacheKey = () => `veg-${key}-${wx()}`;
 }
 
-/** Field rows on farmland and mottled grass, recognised by the ground's vertex colour (see tileBuild.ts). */
+/** Mottled grass: darker and lighter tufts on the lawn and meadow channels of the land cover (render/pbr/surfaces.ts). */
 function patchGroundDetail(mat: THREE.MeshStandardMaterial, uniforms: { uVegFields: { value: number } }) {
   const prev = mat.onBeforeCompile;
-  const farm = new THREE.Color('#8f8a55');
-  const grass = new THREE.Color('#5f7a3e');
-  const chroma = (c: THREE.Color) => { const s = c.r + c.g + c.b; return `vec3(${(c.r / s).toFixed(4)}, ${(c.g / s).toFixed(4)}, ${(c.b / s).toFixed(4)})`; };
   mat.onBeforeCompile = (shader, renderer) => {
     prev?.call(mat, shader, renderer);
     Object.assign(shader.uniforms, uniforms);
@@ -68,19 +65,8 @@ float vgNoise(vec2 p) {
 }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
   if (uVegFields > 0.0) {
-    vec3 cc = vColor.rgb / max(1e-4, vColor.r + vColor.g + vColor.b);
-    float isFarm = 1.0 - smoothstep(0.015, 0.05, distance(cc, ${chroma(farm)}));
-    float isGrass = 1.0 - smoothstep(0.02, 0.07, distance(cc, ${chroma(grass)}));
+    float isGrass = clamp((vSplatA.x + vSplatA.y) / max(1e-3, dot(vSplatA, vec4(1.0)) + dot(vSplatB, vec4(1.0))), 0.0, 1.0);
     vec2 wp = vVegPos.xz;
-    // Fields: patches of about 150 m with their own crop and row direction (warped so the borders are not a grid).
-    vec2 cell = floor((wp + 40.0 * vec2(vgNoise(wp * 0.004), vgNoise(wp * 0.004 + 7.0))) / 150.0);
-    float h = vgHash(cell);
-    float ang = h * 3.14159;
-    float rows = 0.5 + 0.5 * sin(dot(wp, vec2(cos(ang), sin(ang))) * 3.9);
-    vec3 crop = h < 0.3 ? vec3(0.42, 0.33, 0.12) : h < 0.55 ? vec3(0.17, 0.11, 0.06) : h < 0.85 ? vec3(0.14, 0.22, 0.06) : vec3(0.45, 0.42, 0.06);
-    vec3 fieldCol = crop * (0.78 + 0.3 * rows) * (0.9 + 0.2 * vgNoise(wp * 0.15));
-    diffuseColor.rgb = mix(diffuseColor.rgb, fieldCol, isFarm * uVegFields);
-    // Grass: darker and lighter tufts at two scales.
     float m = vgNoise(wp * 0.35) * 0.6 + vgNoise(wp * 1.7) * 0.4;
     diffuseColor.rgb *= mix(1.0, 0.78 + 0.4 * m, isGrass * uVegFields);
   }`);
@@ -601,7 +587,7 @@ export class Vegetation {
     registerToggle('veg.lidar', 'Bäume aus der LiDAR-Befliegung (echte Position, Höhe und Krone) zeigen', () => this.lidar, (v) => { this.lidar = v; if (this.ready) for (const t of this.tiles.values()) this.buildTile(t); });
     registerToggle('veg.grass', 'Grasbüschel um die Kamera', () => this.grassOn, (v) => { this.grassOn = v; this.grassAt.x = Infinity; });
     registerValue('veg.grass.radius', 'Radius der Grasbüschel in Metern', () => this.grassRadius, (v) => { this.grassRadius = v; this.grassAt.x = Infinity; }, [5, 120]);
-    registerValue('veg.fields', 'Ackerfurchen und Grasflecken im Boden 0..1', () => this.groundUniforms.uVegFields.value, (v) => (this.groundUniforms.uVegFields.value = v), [0, 1]);
+    registerValue('veg.fields', 'Grasflecken im Boden 0..1 (Ackerreihen: ground.rows)', () => this.groundUniforms.uVegFields.value, (v) => (this.groundUniforms.uVegFields.value = v), [0, 1]);
     registerCommand({
       name: 'veg.info', help: 'Bäume nach Art, Büsche, gezeichnete Bäume pro Detailstufe und Grasbüschel',
       run: () => {

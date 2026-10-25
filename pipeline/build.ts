@@ -41,6 +41,7 @@ import { areaDensity, areaTreeKind, areaTreeScale, isPark, treeKindOf } from './
 import { loadLidar } from './lib/lidar.ts';
 import { categorize, loadMapillary } from './lib/mapillary.ts';
 import { placeLidarTrees, type MeasuredTree } from './lib/lidarTrees.ts';
+import { LANDCOVER_ATTRIBUTION, loadLandcover, tileCover } from './lib/landcover.ts';
 import { waterLevels, type TileGrid } from './lib/waterLevel.ts';
 
 function main() {
@@ -135,6 +136,10 @@ function main() {
   }
 
   const ground = new GroundIndex(osm.polygons);
+  // Land cover from the aerial survey (pipeline/landcover.ts), where a region has it.
+  const landcover = regions.map((r) => (r.boundary.type === 'fixture' ? undefined : loadLandcover(r.id))).find((l) => l);
+  if (landcover) console.log(`Land cover: ${landcover.tiles} survey tiles of 2 km`);
+  let coverTiles = 0;
   const water = new WaterLines(osm.ways);
   const waterways = water.polylines(info, height);
   const onRoad = new RoadMask(osm.ways);
@@ -305,6 +310,13 @@ function main() {
       roads: b?.roads.pack(), markings: b?.markings.pack(), buildings: b?.buildings.pack(), collide: b?.collide.pack(),
       sidewalks: b?.sidewalks.pack(),
     };
+    const cover = landcover && tileCover(landcover, E0, N0, g);
+    if (cover) {
+      tile.splat = encode(cover.splat);
+      tile.rows = encode(cover.rows);
+      tile.tint = encode(cover.tint);
+      coverTiles++;
+    }
     const lamps = offLanes(b?.lamps ?? []);
     if (lamps.length) tile.lamps = encode(new Float32Array(lamps.map((v) => Math.round(v * 100) / 100)));
     const bi = lod2.info.get(k);
@@ -355,6 +367,7 @@ function main() {
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',
         ...(regions.some((r) => r.laser) ? ['Gelände und Brücken: © GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0'] : []),
         ...(lod2.count ? [LOD2_ATTRIBUTION] : []),
+        ...(coverTiles ? [LANDCOVER_ATTRIBUTION] : []),
         'Gelände außerhalb: Terrain Tiles (AWS Open Data, SRTM/EU-DEM)']
       : ['Synthetisches Testgelände'],
   };
@@ -390,6 +403,7 @@ function main() {
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);
   const nBushes = [...bushesByTile.values()].reduce((a, v) => a + v.length / BUSH_STRIDE, 0);
   console.log(`Vegetation: ${nTrees} trees (${lidar.trees.length} from LiDAR, ${lidar.merged.size} of them mapped in OSM), ${nBushes} bushes`);
+  if (landcover) console.log(`Land cover: ${coverTiles} tiles with survey colours and textures`);
   console.log(`Tiles: ${index.length} (${(bytes / 1e6).toFixed(1)} MB) in ${((Date.now() - t0) / 1000).toFixed(1)} s → ${paths.out}`);
 }
 

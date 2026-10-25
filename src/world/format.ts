@@ -82,6 +82,12 @@ export interface TileData {
   waterLevel?: string;
   /** Float32 x, z, height above ground, ALKIS function group and code (31001, 1000 = Wohnhaus) per LoD2 building, for `bld.info`. */
   bldInfo?: string;
+  /** Uint8 terrain texture weights per vertex, 8 channels (see SPLAT in coverKinds.ts), from the land cover. */
+  splat?: string;
+  /** Uint8 crop-row strength and direction per vertex (1..255 = 0..180° from east towards north, 0 = none). */
+  rows?: string;
+  /** Uint8 sRGB ground colour per vertex from the aerial survey (3 bytes). */
+  tint?: string;
   /** Guard rail runs, Float32 [count, flags, start, total, x0, y0, z0, …] (see guardRail.ts). */
   rails?: string;
 }

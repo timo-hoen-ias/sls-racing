@@ -61,6 +61,7 @@ import { WorldStreamer } from './world/streamer.ts';
 import { Knockdown, lampDebris, propDebris, propSource, registerKnockCommands } from './world/knockdown.ts';
 import { registerStreamCommands } from './world/streamCommands.ts';
 import { registerLandmarkCommands, registerWorldCommands } from './world/worldCommands.ts';
+import { registerGroundCommands } from './world/groundCommands.ts';
 import { registerRampCommands } from './world/rampCommands.ts';
 import { Landmarks } from './world/landmarks.ts';
 import { GuideSignLayer, loadSignFont } from './world/guideSignLayer.ts';
@@ -412,6 +413,7 @@ async function boot() {
     print: (t) => debug.print(t, 'info'),
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
+  registerGroundCommands({ index, pos: () => (hold ?? ip), tiles: (fn) => streamer.forEachContent(fn) });
   guideSigns.registerCommands(() => (hold ?? ip), (x, z, heading) => teleport(x, z, heading, true));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
   const mixer = new Mixer();

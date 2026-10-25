@@ -200,7 +200,9 @@ export class Drivetrain {
     let f = engineTorque * toForce;
     // Engine braking off throttle (only while rolling in the gear's direction).
     // The clutch opens near idle, so engine braking ends there instead of stalling.
-    if (thr < 0.05 && Math.abs(i.speed) > 1.5 && this.gearRpm(this.gear, i.speed) > s.idleRpm * 1.15) {
+    // Rolling against the gear (backwards in first after a crash) the clutch is open too: no force that would speed it up.
+    const withGear = this.gear < 0 ? i.speed < -1.5 : i.speed > 1.5;
+    if (thr < 0.05 && withGear && this.gearRpm(this.gear, i.speed) > s.idleRpm * 1.15) {
       f -= (s.engineBrake.base + s.engineBrake.perRpm * this.rpm) * toForce;
     }
     this.force = this.gear < 0 ? -f : f;

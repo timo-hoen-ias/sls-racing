@@ -43,13 +43,13 @@ interface Profile {
 
 export const FEEL: Record<FeelProfile, Profile> = {
   fun: {
-    car: { torque: 1.2, downforce: 1.7, drag: 0.85, airLevel: 0.7, landing: 0.8, brake: 1.1, stick: 1, step: 1, straight: 1 },
+    car: { torque: 1.2, downforce: 1.7, drag: 0.85, airLevel: 0.7, landing: 0.8, brake: 1.1, stick: 1, step: 1, straight: 1, coast: 0.22 },
     burst: true, drift: true, refill: 0.03, knockLoss: 0.04, glide: true, kerb: 0.1, punt: true, traffic: 0.5,
     park: 0.5, parkWidth: 6, lines: true,
     cam: { lag: 1, swing: 1, height: 1.8, dist: 5.8, speedFov: 0.06, boostFov: 9, maxKmh: 280 },
   },
   real: {
-    car: { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0, step: 0, straight: 0 },
+    car: { torque: 1, downforce: 1, drag: 1, airLevel: 0, landing: 0, brake: 0, stick: 0, step: 0, straight: 0, coast: 0 },
     burst: false, drift: false, refill: 0.05, knockLoss: 0.1, glide: false, kerb: 1, punt: false, traffic: 1,
     park: 1, parkWidth: 0, lines: false,
     cam: { lag: 0, swing: 0, height: 2.1, dist: 6, speedFov: 0.045, boostFov: 6, maxKmh: 220 },
@@ -96,7 +96,7 @@ export class GameFeel {
     const fe = c.car.feel;
     return [
       `Spielgefühl: ${this.profile === 'fun' ? 'Fun-Racer' : 'Realistisch'}`,
-      `Motor ×${fe.torque} · Abtrieb ×${fe.downforce} · Luftwiderstand ×${fe.drag} · Ausrichten in der Luft ${fe.airLevel} · weiche Landung ${fe.landing} · Arcade-Bremse +${fe.brake} g · Bodenhaftung ${fe.stick} · Kantenhilfe ${fe.step} · gerade bremsen ${fe.straight}`,
+      `Motor ×${fe.torque} · Abtrieb ×${fe.downforce} · Luftwiderstand ×${fe.drag} · Ausrichten in der Luft ${fe.airLevel} · weiche Landung ${fe.landing} · Arcade-Bremse +${fe.brake} g · Bodenhaftung ${fe.stick} · Kantenhilfe ${fe.step} · gerade bremsen ${fe.straight} · Ausrollbremse ${fe.coast} g`,
       `Nitro-Stoß ${c.car.burst.enabled ? 'an' : 'aus'} · Nachfüllen ${CAR.nitro.refill}/s · Gleiten an Wänden ${c.glide.enabled ? 'an' : 'aus'} · Bordsteinstoß ×${c.surface.kerbBump}`,
       `Verkehr rammen ${c.traffic.punt ? 'an' : 'aus'} (Masse ×${c.traffic.massScale}) · Parker ${Math.round(c.props.parkDensity * 100)} % ab ${c.props.parkMinWidth} m`,
       `Kamera: Nachziehen ${c.cam.feel.lag} · Kurvenblick ${c.cam.feel.swing} · Höhe ${c.cam.feel.height} m · Tempo-Linien ${c.speedLines.enabled ? 'an' : 'aus'}`,
@@ -123,6 +123,7 @@ export class GameFeel {
     registerValue('stick.hopvy', 'Bodenhaftung: ab diesem Steigtempo beim Abheben kann es ein Rampensprung sein (m/s)', () => st.hopVy, (v) => { st.hopVy = v; }, [0, 10]);
     registerValue('stick.ramprise', 'Bodenhaftung: so viel Höhe muss das Auto vor dem Abheben erklommen haben, damit es als Rampe zählt (m)', () => st.rampRise, (v) => { st.rampRise = v; }, [0, 5]);
     registerValue('feel.straight', 'Gerade bremsen 0..1: gleiche Bremskraft links/rechts, das Auto zieht beim Bremsen nicht zur Seite', () => fe.straight, (v) => { fe.straight = v; }, [0, 1]);
+    registerValue('feel.coast', 'Ausrollbremse in g ohne Gas und Bremse (gegen die Gangrichtung rollend dreifach)', () => fe.coast, (v) => { fe.coast = v; }, [0, 1.5]);
     registerValue('feel.step', 'Kantenhilfe 0..1: niedrige Kanten, an denen die Karosserie hängen bleibt, werden überklettert', () => fe.step, (v) => { fe.step = v; }, [0, 1]);
     const sa = c.car.stepAssist;
     registerValue('step.height', 'Kantenhilfe: höchste Kante über dem Unterboden, die überklettert wird (m)', () => sa.height, (v) => { sa.height = v; }, [0, 0.8]);

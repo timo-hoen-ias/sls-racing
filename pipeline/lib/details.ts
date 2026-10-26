@@ -1,6 +1,7 @@
 // Visual OSM details written into the tiles' "details" mesh: vertex colours (sRGB bytes) and flat normals,
 // no collision. Railway tracks, overhead wires, pitch markings, islands and the like are built from these
 // primitives (rail.ts, power.ts, leisure.ts, roadDetails.ts). Positions come in UTM with absolute heights.
+import earcut from 'earcut';
 import { type WorldInfo, utmToLocal } from '../../src/world/format.ts';
 import { MeshBuf, type TileMap } from './tilebuf.ts';
 
@@ -132,6 +133,39 @@ export class Details {
     };
     // Closed tube: outward faces only (this winding faces out in the local frame).
     for (let k = 0; k < sides; k++) this.quad(ring(a, k + 1), ring(b, k + 1), ring(b, k), ring(a, k), col);
+  }
+
+  /** Area with holes facing up, its corners at y(e, n): triangles split until no edge is longer than `maxEdge`,
+   * so a surface on the terrain follows it. */
+  surface(outer: [number, number][], holes: [number, number][][], y: (e: number, n: number) => number, col: Rgb, maxEdge = 3) {
+    const open = (r: [number, number][]) => (r.length > 1 && r[0][0] === r[r.length - 1][0] && r[0][1] === r[r.length - 1][1] ? r.slice(0, -1) : r);
+    const rings = [open(outer), ...holes.map(open)].filter((r) => r.length >= 3);
+    if (!rings.length) return;
+    const flat: number[] = [], starts: number[] = [];
+    for (const r of rings) {
+      if (flat.length) starts.push(flat.length / 2);
+      for (const [e, n] of r) flat.push(e, n);
+    }
+    const idx = earcut(flat, starts);
+    const pt = (i: number): [number, number] => [flat[i * 2], flat[i * 2 + 1]];
+    const split = (a: [number, number], b: [number, number], c: [number, number], depth: number) => {
+      const ab = Math.hypot(b[0] - a[0], b[1] - a[1]), bc = Math.hypot(c[0] - b[0], c[1] - b[1]), ca = Math.hypot(a[0] - c[0], a[1] - c[1]);
+      const m = Math.max(ab, bc, ca);
+      if (m > maxEdge && depth < 12) {
+        // Halve the longest edge.
+        const mid = (p: [number, number], q: [number, number]): [number, number] => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+        if (m === ab) { const d = mid(a, b); split(a, d, c, depth + 1); split(d, b, c, depth + 1); }
+        else if (m === bc) { const d = mid(b, c); split(a, b, d, depth + 1); split(a, d, c, depth + 1); }
+        else { const d = mid(c, a); split(a, b, d, depth + 1); split(d, b, c, depth + 1); }
+        return;
+      }
+      const P = (q: [number, number]): P3 => [q[0], q[1], y(q[0], q[1])];
+      const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+      const buf = this.buf((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3);
+      const [A, B, C] = (cross >= 0 ? [a, b, c] : [a, c, b]).map((q) => { const p3 = P(q); return this.local(p3[0], p3[1], p3[2]); });
+      this.triL(buf, A, B, C, col);
+    };
+    for (let i = 0; i < idx.length; i += 3) split(pt(idx[i]), pt(idx[i + 1]), pt(idx[i + 2]), 0);
   }
 
   /** Flat ribbon along a polyline (UTM e, n with a height each), `width` wide, lying on its points' heights. */

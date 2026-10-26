@@ -32,6 +32,7 @@ import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
 import { drawCalming, drawRoundaboutIslands, planTurningCircles } from './lib/roadDetails.ts';
 import { Details } from './lib/details.ts';
+import { buildLeisure } from './lib/leisure.ts';
 import { buildPower } from './lib/power.ts';
 import { TRACK, buildRail, isTrack } from './lib/rail.ts';
 import { fillSlots } from './lib/slots.ts';
@@ -129,7 +130,7 @@ function main() {
   drawFillets(fillets, info, tiles, carve);
   const calming = drawCalming(osm, info, tiles, height);
   console.log(`Traffic calming: ${calming.bumps} bumps, ${calming.tables} tables, ${calming.rings} mini roundabouts`);
-  // Visual OSM details (details.ts): roundabout islands, rail and power now, leisure later.
+  // Visual OSM details (details.ts): roundabout islands, rail, power and leisure grounds.
   const details = new Details(info, tiles);
   const islands = drawRoundaboutIslands(osm.ways, info, tiles, details, height);
   console.log(`Roundabout islands: ${islands.islands} raised, ${islands.spots.length - islands.islands} left open`);
@@ -137,6 +138,8 @@ function main() {
   console.log(`Rail: ${rail.km.toFixed(1)} km track (${rail.electrifiedKm.toFixed(1)} km electrified, ${rail.masts} masts), ${rail.bridges} bridges, ${rail.crossings} level crossings`);
   const power = buildPower(osm, details, height);
   console.log(`Power: ${power.pylons} pylons, ${power.poles} poles, ${power.spans} spans, ${power.kiosks} transformer kiosks, ${power.substations} substations, ${power.solarRows} solar rows`);
+  const leisure = buildLeisure(osm, details, height);
+  console.log(`Leisure: ${leisure.pitches} pitches (${leisure.goals} goals, ${leisure.nets} nets, ${leisure.floodlights} floodlights), ${leisure.playgrounds} playgrounds (${leisure.equipment} items), ${leisure.pools} pools, ${leisure.fountains} fountain basins, ${leisure.tracks} running tracks`);
   // Narrow slots left between carriageways get patched, so no wheel drops between two roads.
   const slots = fillSlots(tiles, info);
   console.log(`Road slots: ${slots} cells of 0.5 m patched between carriageways`);
@@ -630,7 +633,7 @@ function main() {
     return [p.name, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(p.y0 * 100) / 100, Math.round(p.area), Math.round(p.rms * 100), Math.round(Math.hypot(p.ge, p.gn) * 1000) / 10];
   }) }));
   // OSM details placed by the pipeline, for the osm.details command: [kind, x, z, note].
-  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots, ...rail.spots, ...power.spots].map((s) => {
+  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots, ...rail.spots, ...power.spots, ...leisure.spots].map((s) => {
     const [x, z] = utmToLocal(info, s.e, s.n);
     return [s.kind, Math.round(x * 10) / 10, Math.round(z * 10) / 10, s.note];
   }) }));

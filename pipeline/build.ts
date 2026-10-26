@@ -35,6 +35,7 @@ import { Details, along } from './lib/details.ts';
 import { buildIndustry } from './lib/industry.ts';
 import { buildLeisure } from './lib/leisure.ts';
 import { buildPower } from './lib/power.ts';
+import { buildSights } from './lib/sights.ts';
 import { TRACK, buildRail, isTrack } from './lib/rail.ts';
 import { fillSlots } from './lib/slots.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
@@ -640,6 +641,9 @@ function main() {
   writeFileSync(`${paths.out}fuel.json`, JSON.stringify({ v: 1, stations: fuel.list }));
   const districts = districtList(osm, (e, n) => utmToLocal(info, e, n));
   writeFileSync(`${paths.out}districts.json`, JSON.stringify({ v: 1, districts }));
+  const sights = buildSights(osm, info, height, (e, n) => tiles.has(e, n));
+  writeFileSync(`${paths.out}sights.json`, JSON.stringify(sights));
+  console.log(`Sights: ${sights.sights.length} to discover, ${sights.churches.length} church bells, ${sights.cameras.length} speed cameras`);
   console.log(`Districts: ${districts.map((d) => d.name).join(', ') || '–'}`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));

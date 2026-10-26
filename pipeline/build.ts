@@ -31,7 +31,8 @@ import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionCon
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
 import { drawCalming, drawRoundaboutIslands, planTurningCircles } from './lib/roadDetails.ts';
-import { Details } from './lib/details.ts';
+import { Details, along } from './lib/details.ts';
+import { buildIndustry } from './lib/industry.ts';
 import { buildLeisure } from './lib/leisure.ts';
 import { buildPower } from './lib/power.ts';
 import { TRACK, buildRail, isTrack } from './lib/rail.ts';
@@ -259,7 +260,8 @@ function main() {
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) want.add(tileKey(ix + dx, iy + dy));
   }
 
-  const ground = new GroundIndex(osm.polygons);
+  // Heath areas are extra features (osmTags.ts); they count as grass ground.
+  const ground = new GroundIndex([...osm.polygons, ...(osm.extra?.areas ?? []).filter((a) => a.tags.natural === 'heath')]);
   let coverTiles = 0;
   const water = new WaterLines(osm.ways);
   const waterways = water.polylines(info, height);
@@ -273,6 +275,8 @@ function main() {
   railBed.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
   treeLanes.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
   for (const m of [onRoad, onLanes, onMotorLanes, nearLanes, treeLanes]) m.addFillets(fillets);
+  const industry = buildIndustry(osm, details, height, (e, n) => onRoad.has(e, n), (e, n) => keptFoot.inside(e, n));
+  console.log(`Industry: ${industry.chimneys} chimneys, ${industry.masts} masts, ${industry.tanks} tanks, ${industry.waterTowers} water towers, ${industry.pipesKm.toFixed(1)} km pipelines, ${industry.conveyorsKm.toFixed(1)} km conveyors, ${industry.piers} piers, ${industry.weirs} weirs/dams/lock gates`);
   const offLanes = (lamps: number[]) => {
     const out: number[] = [];
     for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
@@ -344,6 +348,19 @@ function main() {
     addBush(e, n, s, Bush.round);
   }
   mapped.forEach((t, i) => { if (!lidar.merged.has(i) && !treeLanes.has(t.e, t.n)) addTree(t.e, t.n, 0.8 + rand(t.e, t.n) * 0.5, t.kind); });
+  // Mapped tree rows (natural=tree_row) outside the LiDAR survey: a tree every 9 m where none is mapped near.
+  let rowTrees = 0;
+  const lidarCovered = (e: number, n: number) => coverage.some(([e0, n0, e1, n1]) => e >= e0 && e < e1 && n >= n0 && n < n1);
+  for (const w of osm.extra?.ways ?? []) {
+    if (w.tags.natural !== 'tree_row') continue;
+    for (const p of along(w.pts, 9)) {
+      if (lidarCovered(p.e, p.n) || treeLanes.has(p.e, p.n) || onPaths.has(p.e, p.n) || nearMeasured(p.e, p.n, 2)) continue;
+      if (mapped.some((t) => Math.abs(t.e - p.e) < 4 && Math.abs(t.n - p.n) < 4)) continue;
+      addTree(p.e, p.n, 0.85 + rand(p.e, p.n) * 0.4, treeKindOf(w.tags, rand(p.e, p.n, 31)));
+      rowTrees++;
+    }
+  }
+  console.log(`Tree rows: ${rowTrees} trees added outside the LiDAR survey`);
   // Street furniture and traffic lights seen on Mapillary's street-level photos, on top of OSM.
   const DETECTED: Partial<Record<string, PropKind>> = { sign: Prop.sign, stopSign: Prop.stopSign, giveWay: Prop.giveWay, bench: Prop.bench, hydrant: Prop.hydrant };
   // Bins are left out: the photos mostly show household bins put out on collection day.
@@ -633,7 +650,7 @@ function main() {
     return [p.name, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(p.y0 * 100) / 100, Math.round(p.area), Math.round(p.rms * 100), Math.round(Math.hypot(p.ge, p.gn) * 1000) / 10];
   }) }));
   // OSM details placed by the pipeline, for the osm.details command: [kind, x, z, note].
-  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots, ...rail.spots, ...power.spots, ...leisure.spots].map((s) => {
+  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots, ...rail.spots, ...power.spots, ...leisure.spots, ...industry.spots].map((s) => {
     const [x, z] = utmToLocal(info, s.e, s.n);
     return [s.kind, Math.round(x * 10) / 10, Math.round(z * 10) / 10, s.note];
   }) }));

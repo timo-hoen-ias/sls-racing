@@ -427,15 +427,18 @@ export function buildRoads(
       // Feldwege: a grassy bank on both sides down to the terrain, so a way across a slope or in a hairpin
       // (where the mesh is kept below the lower leg, carve.ts) sits on an embankment instead of floating.
       if (field && !bridge && !(above > ROAD_LIFT + 0.1)) {
-        const foot = (p: typeof a, o: number) => Math.min(height(p.e - p.dy * o, p.n + p.dx * o) - ROAD_LIFT, p.y - 0.05) - FIELD_BANK.sink;
+        // Never above a lower road the bank reaches over (a junction arm, a way alongside): its wheels would hit it.
+        const foot = (p: typeof a, o: number) => Math.min(height(p.e - p.dy * o, p.n + p.dx * o) - ROAD_LIFT, p.y - 0.05,
+          (carriageways.below(way, ...off(p, o), p.y - STRIP_DROP) ?? Infinity) - STRIP_DROP) - FIELD_BANK.sink;
         const lo = (p: typeof a) => left(p) + FIELD_BANK.width, ro = (p: typeof a) => right(p) - FIELD_BANK.width;
-        strip(tile.roads, left, lo, [a.y, foot(a, lo(a))], [b.y, foot(b, lo(b))], () => [1, segLook]);
-        strip(tile.roads, ro, right, [foot(a, ro(a)), a.y], [foot(b, ro(b)), b.y], () => [0, segLook]);
+        // In the path mesh (road shader, wheels only), not the carriageway: the surface check scans only that.
+        strip(tile.paths, left, lo, [a.y, foot(a, lo(a))], [b.y, foot(b, lo(b))], () => [1, segLook]);
+        strip(tile.paths, ro, right, [foot(a, ro(a)), a.y], [foot(b, ro(b)), b.y], () => [0, segLook]);
         // A skirt under the foot closes the view under the way where the mesh lies lower still (hairpins,
         // ways side by side at different heights); under the terrain it is never seen.
         const lp = (p: typeof a) => off(p, lo(p)), rp = (p: typeof a) => off(p, ro(p));
-        wall(tile.roads, lp(a), lp(b), foot(a, lo(a)) - FIELD_BANK.skirt, foot(a, lo(a)), foot(b, lo(b)) - FIELD_BANK.skirt, foot(b, lo(b)), true);
-        wall(tile.roads, rp(a), rp(b), foot(a, ro(a)) - FIELD_BANK.skirt, foot(a, ro(a)), foot(b, ro(b)) - FIELD_BANK.skirt, foot(b, ro(b)), false);
+        wall(tile.paths, lp(a), lp(b), foot(a, lo(a)) - FIELD_BANK.skirt, foot(a, lo(a)), foot(b, lo(b)) - FIELD_BANK.skirt, foot(b, lo(b)), true);
+        wall(tile.paths, rp(a), rp(b), foot(a, ro(a)) - FIELD_BANK.skirt, foot(a, ro(a)), foot(b, ro(b)) - FIELD_BANK.skirt, foot(b, ro(b)), false);
       }
       // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the edges
       // down to the terrain mesh, which is fitted below it (carve.ts). Decks and lifted roads only push the
@@ -462,8 +465,7 @@ export function buildRoads(
         };
         const lw = (p: typeof a) => left(p) + reach(p, 1), rw = (p: typeof a) => right(p) - reach(p, -1);
         strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
-        // Feldwege roll off over their bank instead (wheel collision, below).
-        if (!lifted && !field) {
+        if (!lifted) {
           // Bevel 1 m out and down under the terrain, but never above a lower road there.
           const skirt = (p: typeof a, o: number) => Math.min(c(p, ROAD_LIFT + 0.1), (lower(p, o) ?? Infinity) - STRIP_DROP);
           strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), skirt(a, lw(a) + 1)], [c(b, STRIP_DROP), skirt(b, lw(b) + 1)]);

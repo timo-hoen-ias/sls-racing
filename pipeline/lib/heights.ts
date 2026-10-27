@@ -6,6 +6,7 @@ import { roadProfiles } from './profiles.ts';
 import { laserSampler } from './laser.ts';
 import type { Polygon, Way } from './osm.ts';
 import { liftOverpasses } from './overpasses.ts';
+import { portalAnchors, tunnelProfiles } from './tunnels.ts';
 import { planPlazas, type Plaza } from './plazas.ts';
 import { paths, type RegionConfig } from './region.ts';
 import { flatSampler, terrariumSampler, type HeightSampler } from './terrain.ts';
@@ -59,8 +60,11 @@ export function roadHeights(ways: Way[], regions: RegionConfig[], height: (e: nu
   log(`Feldwege: ${rough.steep + rough.slope + rough.crossing} unpaved paths left as paths (${rough.steep} steep, ${rough.slope} on a steep slope, ${rough.crossing} crossing a road without a junction)`);
   const d = bridgeDecks(ways, dom, height);
   if (dom) log(`Bridges: ${d.measured}/${d.bridges} decks measured from DOM1, max. ${d.maxRise.toFixed(1)} m above the straight span`);
-  const p = roadProfiles(ways, height, d.anchors);
+  const portals = portalAnchors(ways, height);
+  const p = roadProfiles(ways, height, new Map([...d.anchors, ...portals]));
   log(`Road profiles: ${p.roads} roads, ${p.nodes} node heights, largest correction ${p.maxCorrection.toFixed(1)} m, bumps (off a 40 m mean) max. ${(p.roughness.max * 100).toFixed(1)} cm, mean ${(p.roughness.mean * 100).toFixed(2)} cm`);
+  const t = tunnelProfiles(ways, height, portals);
+  if (t.tunnels) log(`Tunnels: ${t.tunnels} built (${t.km.toFixed(2)} km), ${t.lowered} lowered under a road or hill, lowest clear height ${t.minHeight.toFixed(1)} m`);
   const over = liftOverpasses(ways, height);
   log(`Overpasses: ${over.crossings} crossings, ${over.lifted} roads lifted, min. headroom ${over.crossings ? over.minClearance.toFixed(1) : '-'} m`);
 }

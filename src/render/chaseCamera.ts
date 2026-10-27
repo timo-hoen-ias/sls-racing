@@ -14,6 +14,8 @@ export class ChaseCamera {
   mode: CamMode = 'chase';
   /** Showroom view (cam.orbit): fixed angle around the car in rad (0 = behind, π = in front), or null. */
   orbit: number | null = null;
+  /** Bird's-eye view (cam.top): height above the car in metres looking straight down, or null. */
+  top: number | null = null;
   /**
    * Vertical field of view at standstill (cam.basefov; the options offset cam.fov adds to it), chase/far/hood and cockpit. Three.js FOV is vertical:
    * 52° is about 82° horizontal on 16:9. Wider angles push the road away and make it look narrow.
@@ -67,6 +69,18 @@ export class ChaseCamera {
     this.initialised = false;
   }
 
+  private birdsEye(carPos: THREE.Vector3, carQuat: THREE.Quaternion) {
+    // Straight down, the car's nose pointing up the screen.
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(carQuat).setY(0).normalize();
+    this.camera.position.set(carPos.x, carPos.y + this.top!, carPos.z);
+    this.camera.up.copy(fwd);
+    this.camera.lookAt(carPos.x, carPos.y, carPos.z);
+    this.camera.up.set(0, 1, 0);
+    this.camera.fov = 50;
+    this.camera.updateProjectionMatrix();
+    this.initialised = false;
+  }
+
   /** Jump straight to the resting position behind the car on the next update (after teleports and resets), instead of gliding there. */
   snap() {
     this.initialised = false;
@@ -86,6 +100,7 @@ export class ChaseCamera {
    */
   update(carPos: THREE.Vector3, carQuat: THREE.Quaternion, speed: number, boosting: boolean, dt: number, reversing = false, lookBack = false) {
     this.camera.near = this.mode === 'cockpit' ? 0.04 : 0.3;
+    if (this.top !== null) { this.birdsEye(carPos, carQuat); return; }
     if (this.orbit !== null) { this.showroom(carPos, carQuat); return; }
     this.updateLook(dt);
     if (this.mode === 'cockpit') { this.cockpit(carPos, carQuat, speed, dt, lookBack); return; }

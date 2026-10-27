@@ -189,6 +189,17 @@ export function registerVehicleCommands(c: VehicleDebugContext) {
     },
   });
   registerCommand({
+    name: 'cam.top',
+    help: 'Vogelperspektive: senkrecht von oben auf das Auto (Höhe in m, Standard 25), zum Suchen von Löchern im Straßenbelag; "aus" beendet',
+    args: '[aus|<höhe m>]',
+    complete: () => ['aus', '15', '25', '60'],
+    run: ([v]) => {
+      if (v === 'aus' || v === 'off') c.cam.top = null;
+      else c.cam.top = Math.min(500, Math.max(3, v === undefined ? 25 : num(v, 'höhe')));
+      return c.cam.top === null ? 'Vogelperspektive aus' : `Vogelperspektive aus ${c.cam.top} m`;
+    },
+  });
+  registerCommand({
     name: 'cam.snap',
     help: 'Kamera sofort hinter das Auto setzen (passiert automatisch nach Teleport und Zurücksetzen)',
     run: () => { c.cam.snap(); return 'Kamera zurückgesetzt'; },

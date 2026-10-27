@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ROAD_GROUPS } from '../src/vehicle/carPhysics.ts';
 import {
-  cellCentre, clusterIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
+  cellCentre, clusterIssues, edgeCells, edgeIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
 } from '../src/world/surfaceScan.ts';
 import type { Way } from '../pipeline/lib/osm.ts';
 import { matchLevels } from '../pipeline/lib/levels.ts';
@@ -137,5 +137,37 @@ describe('overlapping road levels', () => {
     const b = way(2, [[0, 1], [100, 1]], { highway: 'primary', bridge: 'yes' });
     b.deck = [106, 106];
     expect(matchLevels([a, b], flat).ways).toBe(0);
+  });
+});
+
+describe('road edge scan', () => {
+  /** Edge issues of one road quad (drawn and as a wheel collider) over a terrain plane at `terrain`. */
+  function edges(terrain: number) {
+    const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    const body = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    const t = quad(-50, 50, -50, 50, terrain), r = quad(-10, 10, -2, 2, 0);
+    world.createCollider(RAPIER.ColliderDesc.trimesh(t.pos, t.idx), body);
+    world.createCollider(RAPIER.ColliderDesc.trimesh(r.pos, r.idx).setCollisionGroups(ROAD_GROUPS), body);
+    world.step();
+    const grid: CellGrid = { cell: 0.5, c0: -40, c1: 40, r0: -40, r1: 40 };
+    const paved = new Map<number, number[]>();
+    rasterizeMesh(r.pos, r.idx, grid, paved);
+    const out = edgeCells(paved, grid);
+    return edgeIssues(probeCells(RAPIER, world, out, grid, () => 'terrain'), gridCols(grid)).map((s) => ({ ...s, z: cellCentre(grid, s.key)[1] }));
+  }
+
+  it('a road lying on the ground has no floating edge', () => {
+    expect(edges(-0.1)).toEqual([]);
+  });
+
+  it('a road 0.6 m above the ground floats along both long edges, 1 m out', () => {
+    const found = edges(-0.6);
+    expect(found.length).toBeGreaterThan(70);
+    expect(found.every((s) => s.kind === 'edge' && Math.abs(s.size - 0.6) < 0.01)).toBe(true);
+    expect(found.some((s) => Math.abs(s.z - 2.75) < 0.01) && found.some((s) => Math.abs(s.z + 2.75) < 0.01)).toBe(true);
+  });
+
+  it('a deck high above the ground is a bridge, not a floating road', () => {
+    expect(edges(-5)).toEqual([]);
   });
 });

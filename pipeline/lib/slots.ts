@@ -11,8 +11,17 @@ import { type CellGrid, SURFACE_LIMITS, gridCols, slotCells } from '../../src/wo
 import type { TileBuild, TileMap } from './tilebuf.ts';
 
 const CELL = 0.5;
-/** Patches overlap their neighbours and the road edges by this much, so no hairline stays open (m). */
+/**
+ * A patch reaches from its cell to the centres of the cells around it (half a cell into each neighbour), so the
+ * saw-tooth slivers a square per cell left against a road edge running at an angle are covered too (just short of
+ * the centres, so the patch never decides on its own whether a neighbouring cell counts as drawn). Its corners
+ * take the height of the road drawn there (or the slot's own height) and sit SINK below it, hidden under the
+ * road where the two overlap.
+ */
+const REACH = CELL / 2 - 0.01;
+/** Where a patch does not reach on, it still overlaps the road edge beside it this far (no hairline crack). */
 const OVERLAP = 0.04;
+const SINK = 0.02;
 /** The collision surface sits this far under the drawn one, as for the road strips. */
 const STRIP_DROP = 0.05;
 
@@ -47,8 +56,11 @@ function rasterize(t: TileBuild, g: CellGrid, levels: Map<number, number[]>, loo
   }
 }
 
-/** Patching passes: patches across one direction can leave short runs between them along the other. */
-const PASSES = 3;
+/**
+ * Patching passes: patches across one direction can leave short runs between them along the other, and a closed
+ * pocket wider than a slot (the wedge where two carriageways meet) is filled from its rim one ring per pass.
+ */
+const PASSES = 10;
 
 /** Fills the slots of every tile; returns how many 0.5 m cells were patched. */
 export function fillSlots(tiles: TileMap, world: WorldInfo): number {
@@ -78,7 +90,22 @@ function fillPass(tiles: TileMap, world: WorldInfo): number {
         if (n) rasterize(n, g, levels, looks);
       }
     const cols = gridCols(g);
-    for (const [key, [y]] of slotCells(levels, g)) {
+    const slots = slotCells(levels, g);
+    // Road level drawn in cell k closest to the slot height y (within half a metre), or undefined.
+    const near = (k: number, y: number) => {
+      let best: number | undefined;
+      for (const l of levels.get(k) ?? []) if (Math.abs(l - y) < 0.5 && (best === undefined || Math.abs(l - y) < Math.abs(best - y))) best = l;
+      return best;
+    };
+    // A patch reaches half a cell into a neighbour only where that is more slot or a road at about the slot's
+    // height and nothing else: never over terrain or over a road at another level (a bridge deck or the road
+    // under it), where it would stand up as a step.
+    const fits = (k: number, y: number) => {
+      if (slots.has(k)) return true;
+      const ls = levels.get(k);
+      return !!ls?.length && ls.every((l) => Math.abs(l - y) < 0.5);
+    };
+    for (const [key, [y]] of slots) {
       const c = key % cols, r = (key - c) / cols;
       const x = (g.c0 + c) * CELL, z = (g.r0 + r) * CELL;
       // Each patch is drawn by the tile it lies in.
@@ -86,7 +113,26 @@ function fillPass(tiles: TileMap, world: WorldInfo): number {
       const look = nearLook(looks, key, cols);
       const r0 = decodeRoad(look);
       const plain = encodeRoad({ ...r0, lines: 0, gutter: false });
-      quad(t, x - OVERLAP, z - OVERLAP, x + CELL + OVERLAP, z + CELL + OVERLAP, y, plain);
+      const fit = (dc: number, dr: number) => fits(key + dr * cols + dc, y);
+      const W = fit(-1, 0), E = fit(1, 0), N = fit(0, -1), S = fit(0, 1);
+      // Corners: into the diagonal neighbour only where it fits as well, else on the cell's own corner line on that
+      // side; height from the road (or slot) the corner lies on, else the slot's own.
+      const corner = (dc: number, dr: number, ex: boolean, ez: boolean): [number, number, number] => {
+        const diag = ex && ez && fit(dc, dr);
+        const ks = diag ? [key + dr * cols + dc, key + dc, key + dr * cols] : ex && !ez ? [key + dc] : ez && !ex ? [key + dr * cols] : [];
+        const ox = ex && (diag || !ez) ? REACH : OVERLAP, oz = ez && (diag || !ex) ? REACH : OVERLAP;
+        const cx = dc < 0 ? x - ox : x + CELL + ox, cz = dr < 0 ? z - oz : z + CELL + oz;
+        for (const k of ks) {
+          const l = near(k, y);
+          if (l !== undefined) return [cx, l - SINK, cz];
+        }
+        for (const k of ks) {
+          const sl = slots.get(k)?.[0];
+          if (sl !== undefined) return [cx, sl - SINK, cz];
+        }
+        return [cx, y - SINK, cz];
+      };
+      quad(t, [corner(-1, -1, W, N), corner(1, -1, E, N), corner(1, 1, E, S), corner(-1, 1, W, S)], plain);
       filled++;
     }
   }
@@ -103,10 +149,10 @@ function nearLook(looks: Map<number, number>, key: number, cols: number): number
   return 0;
 }
 
-/** A flat square of road (drawn and collision) over local x0…x1, z0…z1, facing up. */
-function quad(t: TileBuild, x0: number, z0: number, x1: number, z1: number, y: number, look: number) {
+/** A quad of road (drawn and collision) through corners [x, y, z] at the north-west, north-east, south-east and south-west, facing up. */
+function quad(t: TileBuild, c: readonly [number, number, number][], look: number) {
   for (const [buf, drop, uv] of [[t.roads, 0, true], [t.collide, STRIP_DROP, false]] as const) {
-    const v = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]].map(([x, z]) => buf.vertex(x, y - drop, z, uv ? { uv: [0.5, look] } : {}));
+    const v = c.map(([x, y, z]) => buf.vertex(x, y - drop, z, uv ? { uv: [0.5, look] } : {}));
     // Wound so the normal points up (+y) with x east and z south.
     buf.tri(v[0], v[3], v[1]);
     buf.tri(v[1], v[3], v[2]);

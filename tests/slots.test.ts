@@ -23,11 +23,14 @@ describe('slots between carriageways', () => {
     expect(fillSlots(tiles, world)).toBe(2 * 32);
     expect(t.roads.idx.length - before).toBe(2 * 32 * 6);
     expect(t.collide.idx.length).toBe(2 * 32 * 6);
-    // Heights between the two roads, every patch facing up.
+    // Heights between the two roads (a little under them where a patch reaches onto one), every patch facing up.
     for (let i = before; i < t.roads.idx.length; i += 3) {
       const [a, b, c] = [0, 1, 2].map((k) => t.roads.idx[i + k]).map((k) => t.roads.pos.slice(k * 3, k * 3 + 3));
-      expect(a[1]).toBeGreaterThan(1);
+      expect(a[1]).toBeGreaterThanOrEqual(0.98 - 1e-6);
       expect(a[1]).toBeLessThan(1.2);
+      // Half a cell onto the road beside the slot, at that road's height: no saw-tooth left against its edge.
+      if (a[0] < 4) expect(a[1]).toBeCloseTo(0.98, 5);
+      if (a[0] > 5) expect(a[1]).toBeCloseTo(1.18, 5);
       expect((b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2])).toBeGreaterThan(0);
     }
   });

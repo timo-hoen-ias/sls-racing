@@ -18,6 +18,8 @@ export interface Edge {
   kerb: number;
   /** Closed to cars (pedestrian zone, access tags): routing and traffic leave it out. */
   noCars: boolean;
+  /** Feldweg (unpaved track with wheel ruts): loose grip, the GPS avoids it. */
+  field: boolean;
   /** Polyline x, y, z. */
   p: Float32Array;
   /** Cumulative length at each polyline point. */
@@ -62,6 +64,8 @@ export interface Route {
 }
 
 const CELL = 50;
+/** Route cost factor on Feldwege: the GPS takes one only where it saves a long way round. */
+const FIELD_COST = 4;
 /** Carriageway width per rank for graphs built before edges carried their width. */
 const RANK_WIDTH = [3, 4, 5, 6, 5.5, 7, 7.5, 8.5, 10, 11];
 
@@ -105,7 +109,7 @@ export class RoadGraph {
       for (let i = 1; i < cum.length; i++) cum[i] = cum[i - 1] + Math.hypot(p[i * 3] - p[i * 3 - 3], p[i * 3 + 2] - p[i * 3 - 1]);
       const width = e.w ?? RANK_WIDTH[e.c] ?? 6;
       const rightLane = e.r ?? (e.o && e.c < 8 ? 0 : width / 4);
-      const edge: Edge = { id, a: e.a, b: e.b, name: e.n >= 0 ? data.names[e.n] : '', rank: e.c, oneway: !!e.o, width, lanes: e.l ?? 0, rightLane, kerb: e.k ?? -1, noCars: !!e.x, p, cum, length: cum[cum.length - 1] };
+      const edge: Edge = { id, a: e.a, b: e.b, name: e.n >= 0 ? data.names[e.n] : '', rank: e.c, oneway: !!e.o, width, lanes: e.l ?? 0, rightLane, kerb: e.k ?? -1, noCars: !!e.x, field: !!e.f, p, cum, length: cum[cum.length - 1] };
       this.edges.push(edge);
       this.adj[e.a].push([id, e.b]);
       this.adj[e.b].push([id, e.a]);
@@ -250,7 +254,7 @@ export class RoadGraph {
       for (const [e, o] of this.adj[n]) {
         if (this.edges[e].noCars || bans?.has(`${via},${n},${e}`)) continue;
         const end = this.edges[e].a === n ? 1 : 0;
-        out.push([e * 2 + end, this.edges[e].length, e]);
+        out.push([e * 2 + end, this.edges[e].length * (this.edges[e].field ? FIELD_COST : 1), e]);
       }
       if (n === to.edge.a && !bans?.has(`${via},${n},${to.edge.id}`)) out.push([G, to.along, to.edge.id]);
       if (n === to.edge.b && !bans?.has(`${via},${n},${to.edge.id}`)) out.push([G, to.edge.length - to.along, to.edge.id]);

@@ -87,6 +87,9 @@ jobs:
       - name: Drive test (autopilot on 200 real roads)
         if: steps.key.outputs.skip != 'true'
         run: npm run world:drivetest -- --routes=200
+      - name: Tunnel drive test (through every built tunnel, both ways)
+        if: steps.key.outputs.skip != 'true'
+        run: npm run world:drivetest -- --tunnels
       - name: Gap check (every road, every 2 m, no holes or steps)
         if: steps.key.outputs.skip != 'true'
         run: npm run world:gaps -- --max=30 # ratchet: lower as bridge fixes land (24 after bridge ends meet their roads, 2026-10-25)

@@ -1,6 +1,6 @@
 import type { WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
-import { edgeLineWidth, encodeRoad, roadLook } from '../../src/render/pbr/roadCode.ts';
+import { edgeLineWidth, encodeRoad, isFieldWay, roadLook } from '../../src/render/pbr/roadCode.ts';
 import type { RoadCarve } from './carve.ts';
 import type { HalfWidths } from './overlap.ts';
 import { MIN_SIDEWALK, noCars, roadSection, type RoadSection } from '../../src/world/roadSpec.ts';
@@ -9,6 +9,9 @@ import type { Way } from './osm.ts';
 import { KERB } from './kerbs.ts';
 import type { MeshBuf, TileMap } from './tilebuf.ts';
 import { Line, type RampPlan } from './ramps.ts';
+import { builtTunnel, isTunnel } from './tunnelMark.ts';
+
+export { builtTunnel, isTunnel };
 
 interface RoadClass {
   /** Draw order at overlaps: higher sits a little higher. */
@@ -38,7 +41,11 @@ export const ROAD_CLASSES: Record<string, RoadClass> = {
 };
 
 const STEP = 4; // metres between road samples
+/** Feldwege climb and wind through hilly woods: samples every 2 m, so the drawn chords keep to the profile. */
+const FIELD_STEP = 2;
 export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
+/** Bank beside a Feldweg: width out from the edge, and how far its foot sinks under the terrain (m). */
+const FIELD_BANK = { width: 1.2, sink: 0.15, skirt: 2.5 };
 /** Road collision lies this far under the drawn surface. */
 const STRIP_DROP = 0.05;
 /** Raised roads up to this far above the terrain get an earth bank (draped verge), higher ones walls. */
@@ -81,9 +88,9 @@ export function roadWidth(tags: Record<string, string>): number | undefined {
   return ROAD_CLASSES[tags.highway] ? roadSection(tags)!.width : undefined;
 }
 
-/** Built as a carriageway (with collision), including pedestrian zones and roads closed to cars. */
+/** Built as a carriageway (with collision), including pedestrian zones, roads closed to cars and built tunnels. */
 export function isDrivable(tags: Record<string, string>) {
-  return !!ROAD_CLASSES[tags.highway] && tags.tunnel !== 'yes' && tags.area !== 'yes';
+  return !!ROAD_CLASSES[tags.highway] && (!isTunnel(tags) || builtTunnel(tags)) && tags.area !== 'yes';
 }
 
 /** A carriageway open to cars: routing, traffic and the drive test use only these. */
@@ -187,7 +194,7 @@ export function roadSurfaceHeights(way: Way, height: (e: number, n: number) => n
 }
 
 /** Centreline samples every STEP metres with direction, distance and surface height, as the road is drawn. */
-export function roadProfile(way: Way, height: (e: number, n: number) => number, world: WorldInfo, step = STEP) {
+export function roadProfile(way: Way, height: (e: number, n: number) => number, world: WorldInfo, step = way.tags.highway === 'track' ? FIELD_STEP : STEP) {
   const pts = densify(way.pts, step);
   if (pts.length < 2) return [];
   const ySurf = surface(way, height);
@@ -314,6 +321,8 @@ export function buildRoads(
     const ring = rings.get(way)!;
     if (ring.length < 2) continue;
     const bridge = isBridge(way.tags);
+    // Tunnels: the tube and the cut in the terrain come from the tile field (tunnels.ts, tunnelGeom.ts).
+    const tunnel = builtTunnel(way.tags);
     const sides = sidewalkSides(way);
     const sidewalk = sides.left || sides.right;
     // Bridges dressed by a landmark model bring their own railings.
@@ -321,6 +330,7 @@ export function buildRoads(
     const capFrom = FAST.test(way.tags.highway) ? BRIDGE_CAP.behindRail : 0;
     // Surface, wear, edge lines and gutters for the road shader (src/render/pbr/roadCode.ts).
     const look = encodeRoad(roadLook(way.tags, way.id, section, sidewalk));
+    const field = isFieldWay(way.tags);
     // Usable half width per sample, narrower where a road at another height runs alongside (overlap.ts).
     const half = halves?.get(way);
     // Nominal extent of the carriageway left and right of the OSM line: shifted by its placement, and on a
@@ -421,13 +431,29 @@ export function buildRoads(
       strip(tile.roads, right, left, [a.y, a.y], [b.y, b.y], (p, s) => [((s ? left(p) : right(p)) + Rn.get(p)!) / full(p), segLook]);
       // Lifted road on an embankment: own collision, and retaining walls down to the terrain.
       const above = !bridge && way.raise ? Math.max(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) : 0;
+      // Feldwege: a grassy bank on both sides down to the terrain, so a way across a slope or in a hairpin
+      // (where the mesh is kept below the lower leg, carve.ts) sits on an embankment instead of floating.
+      if (field && !bridge && !tunnel && !(above > ROAD_LIFT + 0.1)) {
+        // Never above a lower road the bank reaches over (a junction arm, a way alongside): its wheels would hit it.
+        const foot = (p: typeof a, o: number) => Math.min(height(p.e - p.dy * o, p.n + p.dx * o) - ROAD_LIFT, p.y - 0.05,
+          (carriageways.below(way, ...off(p, o), p.y - STRIP_DROP) ?? Infinity) - STRIP_DROP) - FIELD_BANK.sink;
+        const lo = (p: typeof a) => left(p) + FIELD_BANK.width, ro = (p: typeof a) => right(p) - FIELD_BANK.width;
+        // In the path mesh (road shader, wheels only), not the carriageway: the surface check scans only that.
+        strip(tile.paths, left, lo, [a.y, foot(a, lo(a))], [b.y, foot(b, lo(b))], () => [1, segLook]);
+        strip(tile.paths, ro, right, [foot(a, ro(a)), a.y], [foot(b, ro(b)), b.y], () => [0, segLook]);
+        // A skirt under the foot closes the view under the way where the mesh lies lower still (hairpins,
+        // ways side by side at different heights); under the terrain it is never seen.
+        const lp = (p: typeof a) => off(p, lo(p)), rp = (p: typeof a) => off(p, ro(p));
+        wall(tile.paths, lp(a), lp(b), foot(a, lo(a)) - FIELD_BANK.skirt, foot(a, lo(a)), foot(b, lo(b)) - FIELD_BANK.skirt, foot(b, lo(b)), true);
+        wall(tile.paths, rp(a), rp(b), foot(a, ro(a)) - FIELD_BANK.skirt, foot(a, ro(a)), foot(b, ro(b)) - FIELD_BANK.skirt, foot(b, ro(b)), false);
+      }
       // The car rolls on the road as drawn: its own collision 5 cm under the surface, bevelled at the edges
       // down to the terrain mesh, which is fitted below it (carve.ts). Decks and lifted roads only push the
       // terrain down.
-      const lifted = bridge || above > ROAD_LIFT + 0.1;
+      const lifted = bridge || tunnel || above > ROAD_LIFT + 0.1;
       // A road raised only a little (the foot of an overpass ramp) sits on an earth bank: the verge is draped up
       // to it like any road, instead of leaving it floating on a ledge without walls.
-      const bank = lifted && !bridge && above <= BANK_MAX;
+      const bank = lifted && !bridge && !tunnel && above <= BANK_MAX;
       if (carve || lifted) {
         // Centred on the carriageway where it lies off the OSM line (placement, auxiliary lane).
         const co = (p: typeof a) => (Rn.get(p)! - Ln) / 2;
@@ -440,8 +466,8 @@ export function buildRoads(
           tl: walk(1) ? Math.min(kerbAt(1, i - 1), kerbAt(1, i)) : 0, tr: walk(-1) ? Math.min(kerbAt(-1, i - 1), kerbAt(-1, i)) : 0,
         };
         const on: [boolean, boolean] = [i > 1, i < ring.length - 1];
-        if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted || bank, cap, pv, on);
-        else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted || bank, cap, pv, on);
+        // Never in a tunnel: the ground above stays where it is.
+        if (!tunnel) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted || bank, cap, pv, on);
         const c = (p: typeof a, d: number) => p.y - d;
         // Another road just below beside this one (a junction arm, a road alongside at another height): the
         // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.
@@ -467,7 +493,7 @@ export function buildRoads(
       // Outer edges of the deck (carriageway extents, placed off the OSM line where ramps.ts says so).
       const beyond = walkway ? capFrom + BRIDGE_CAP.width : 0.5;
       const ol = (_p: typeof a) => Ln + beyond, or = (p: typeof a) => -Rn.get(p)! - beyond;
-      if (Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
+      if (!tunnel && Math.min(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) > 1.5 && (bridge || above > 0.6)) {
         strip(tile.sidewalks, ol, or, [a.y - 1, a.y - 1], [b.y - 1, b.y - 1], () => [0, 0]);
         wall(tile.sidewalks, off(a, ol(a)), off(b, ol(b)), a.y - 1, a.y, b.y - 1, b.y, true);
         wall(tile.sidewalks, off(a, or(a)), off(b, or(b)), a.y - 1, a.y, b.y - 1, b.y, false);
@@ -578,7 +604,7 @@ export function buildRoads(
       }
 
     // Street lamps, alternating sides.
-    if (cls.street && cls.rank >= 3 && !bridge && way.urban !== false) {
+    if (cls.street && cls.rank >= 3 && !bridge && !tunnel && way.urban !== false) {
       let next = LAMP_SPACING / 2;
       let side = 1;
       for (const r of ring) {

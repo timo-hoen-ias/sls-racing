@@ -13,7 +13,7 @@ import { roadSection } from '../../src/world/roadSpec.ts';
 import { GuardRails, type ProfileSample, railAlongRoad } from './guardRails.ts';
 import { isExpressway } from './kerbs.ts';
 import type { Way } from './osm.ts';
-import { ROAD_CLASSES, ROAD_LIFT, carriagewayEdges, isBridge, isDrivable, roadProfile } from './roads.ts';
+import { ROAD_CLASSES, ROAD_LIFT, builtTunnel, carriagewayEdges, isBridge, isDrivable, roadProfile } from './roads.ts';
 
 export const ROADSIDE = {
   /** Delineator spacing on straights (m). */
@@ -158,7 +158,8 @@ export function buildRoadside(ways: Way[], o: RoadsideOptions) {
   for (const way of roads) {
     const hw = way.tags.highway;
     const cls = ROAD_CLASSES[hw];
-    if (!cls || cls.rank < 3 || hw === 'living_street') continue;
+    // In a tunnel the tube's walls and walkways line the road.
+    if (!cls || cls.rank < 3 || hw === 'living_street' || builtTunnel(way.tags)) continue;
     const urban = way.urban ?? cls.street;
     const section = roadSection(way.tags)!;
     const half = section.width / 2;

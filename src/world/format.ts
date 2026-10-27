@@ -107,6 +107,8 @@ export interface TileData {
   rails?: string;
   /** Float32 x, z, r, g, b (sRGB 0..255) per building with a roof colour measured in the aerial survey, for `roof.at`. */
   roofInfo?: string;
+  /** Tunnel centrelines, Float32 [count, clear height, id, x0, y0, z0, left0, right0, …] (see tunnelGeom.ts). */
+  tunnels?: string;
 }
 
 /** Drivable road network of the whole world, split at junctions. Coordinates are local metres. */
@@ -134,6 +136,8 @@ export interface RoadGraphData {
     k?: number;
     /** Closed to cars (pedestrian zone, access tags): left out of routing and traffic. */
     x?: 1;
+    /** Feldweg: unpaved track with wheel ruts (roadCode.ts isFieldWay); loose grip, avoided by the GPS. */
+    f?: 1;
     /** Polyline x, y, z from a to b, including both ends. */
     p: number[];
   }[];
@@ -205,7 +209,7 @@ export type SectionType = 'f32' | 'u8' | 'u32';
 
 /** Element type per top-level TileData field. Add new fields here. */
 export const SECTION_TYPES: Record<string, SectionType> = {
-  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', fuel: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32', roofInfo: 'f32', houses: 'f32', gardens: 'f32',
+  terrain: 'f32', ground: 'u8', trees: 'f32', lamps: 'f32', props: 'f32', treeKinds: 'u8', treeCrowns: 'u8', bushes: 'f32', shops: 'f32', fuel: 'f32', waterways: 'f32', waterLevel: 'f32', bldInfo: 'f32', rails: 'f32', tunnels: 'f32', roofInfo: 'f32', houses: 'f32', gardens: 'f32',
 };
 const MESH_PART_TYPES: Record<string, SectionType> = { pos: 'f32', nrm: 'f32', col: 'u8', uv: 'f32', idx: 'u32' };
 

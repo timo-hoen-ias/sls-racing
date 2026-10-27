@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { readDerived } from './derived.ts';
 import type { Way } from './osm.ts';
-import { isDrivable, ROAD_CLASSES } from './roads.ts';
+import { builtTunnel, isDrivable, ROAD_CLASSES } from './roads.ts';
 import { roadSection } from '../../src/world/roadSpec.ts';
 
 export const ALKIS_ATTRIBUTION = '© GeoBasis DE/LVGL-SL (2025), dl-de/by-2-0';
@@ -132,6 +132,18 @@ export function applyMeasuredWidths(ways: Way[], data: AlkisRoads | undefined): 
     return m ? [[w, m] as const] : [];
   });
   for (const [w, m] of measured) w.tags.width = String(m);
+  // ALKIS has no carriageway in a tunnel: the tube takes the widest measured approach, so the road outside never
+  // reaches into its walls. Twice, so the inner ways of a chain get it too.
+  const ends = new Map<number, Way[]>();
+  for (const w of ways) if (isDrivable(w.tags)) for (const id of [w.ids[0], w.ids[w.ids.length - 1]]) ends.set(id, [...(ends.get(id) ?? []), w]);
+  const unmeasured = ways.filter((w) => builtTunnel(w.tags) && !w.tags.width);
+  for (let pass = 0; pass < 2; pass++)
+    for (const w of unmeasured) {
+      const own = roadSection(w.tags)?.width ?? 0;
+      const near = [w.ids[0], w.ids[w.ids.length - 1]].flatMap((id) => ends.get(id) ?? []).filter((o) => o !== w && o.tags.width && o.tags.highway === w.tags.highway);
+      const widest = Math.max(0, ...near.map((o) => parseFloat(o.tags.width)));
+      if (widest > own) w.tags.width = String(widest);
+    }
   // Street space between the houses, for the game road profile (wider carriageways, narrower sidewalks).
   for (const w of ways) {
     if (!isDrivable(w.tags) || w.tags.bridge || w.tags.tunnel || !ROAD_CLASSES[w.tags.highway]?.street) continue;

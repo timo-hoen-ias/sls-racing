@@ -1,6 +1,7 @@
 // Drives an autopilot car along real roads through the built tiles and reports where it gets stuck.
 // Uses the same physics and the same colliders as the game, without rendering.
 //   node pipeline/drivetest.ts [region] [--routes=60] [--seed=1] [--way=<osm id>] [--pace=1] [--trace]
+//   --tunnels: instead, through every built tunnel, from 60 m before one portal to 60 m past the other, both ways.
 // Autopilot tuning (to tell its mistakes from the car's): --lat=<m/s²> cornering grip it plans with,
 // --brake=<m/s²> deceleration it plans with, --narrow=<factor> speed on narrow streets.
 import RAPIER from '@dimforge/rapier3d-compat';
@@ -26,7 +27,9 @@ import { matchLevels } from './lib/levels.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile } from './lib/region.ts';
-import { densify, isMotorRoad, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
+import { builtTunnel, densify, isMotorRoad, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
+import { tunnelChains } from './lib/tunnels.ts';
+import { readTunnels, tunnelOver } from '../src/world/tunnelGeom.ts';
 
 // The test car at the game's vehicle scale (smaller wheels meet the same road steps).
 scaleCar(VEHICLE.scale);
@@ -37,6 +40,7 @@ const ROUTES = +arg('routes', '60');
 const SEED = +arg('seed', '1');
 const ONLY = arg('way', '');
 const TRACE = process.argv.includes('--trace');
+const TUNNELS = process.argv.includes('--tunnels');
 /** Speed factor on the autopilot's target speeds (1 = cautious 18–50 km/h). */
 const PACE = +arg('pace', '1');
 const STEP = 1 / 60;
@@ -87,6 +91,9 @@ function groundAt(x: number, z: number): number | undefined {
   const [ix, iy] = tileOfLocal(W, x, z);
   const t = tile(tileKey(ix, iy));
   if (!t) return undefined;
+  // In a tunnel the ground is the tube's road, not the ground above it.
+  const tube = t.has('tunnels') ? tunnelOver(readTunnels(t.f32('tunnels')), x, z) : undefined;
+  if (tube) return tube.road;
   const [ox, oz] = tileOriginLocal(W, ix, iy);
   const h = terrainHeights(t);
   const fx = (x - ox) / TERRAIN_STEP, fz = (z - oz) / TERRAIN_STEP;
@@ -244,6 +251,39 @@ async function main() {
 
   let ok = 0;
   const fails: string[] = [];
+  if (TUNNELS) {
+    // Approach, tube and exit as one route, in both directions.
+    const roads = osm.ways.filter((w) => isMotorRoad(w.tags) && !builtTunnel(w.tags));
+    const outside = (id: number) => {
+      for (const r of roads) {
+        const i = r.ids.indexOf(id);
+        const pts = i === 0 ? r.pts.slice() : i === r.ids.length - 1 ? r.pts.slice().reverse() : undefined;
+        if (!pts) continue;
+        const out: [number, number][] = [pts[0]];
+        for (let k = 1, d = 0; k < pts.length && d < 60; k++) { d += Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]); out.push(pts[k]); }
+        return out;
+      }
+      return [];
+    };
+    const chains = tunnelChains(osm.ways).filter(({ chain }) => !ONLY || chain.ways.some((w) => String(w.id) === ONLY));
+    for (const { chain, parts } of chains) {
+      const tube = parts.flatMap(({ way, reversed }, i) => (reversed ? way.pts.slice().reverse() : way.pts).slice(i ? 1 : 0));
+      const first = parts[0], last = parts[parts.length - 1];
+      const a = first.reversed ? first.way.ids[first.way.ids.length - 1] : first.way.ids[0];
+      const b = last.reversed ? last.way.ids[0] : last.way.ids[last.way.ids.length - 1];
+      const fwd = [...outside(a).reverse(), ...tube.slice(1), ...outside(b).slice(1)];
+      for (const pts of [fwd, fwd.slice().reverse()]) {
+        currentWay = `tunnel ${chain.name || chain.ways[0].id}`;
+        const res = driveRoute(pts, height(...pts[0]) + 0.3, chain.ways[0].tags);
+        if (res.ok) ok++;
+        else fails.push(`  tunnel "${chain.name}" (${chain.ways.map((w) => w.id).join(',')}): ${res.why} after ${res.dist.toFixed(0)}/${res.len.toFixed(0)} m`);
+      }
+    }
+    console.log(`Tunnel drive test: ${ok}/${chains.length * 2} runs through ${chains.length} tunnels completed`);
+    for (const f of fails) console.log(f);
+    if (ok < chains.length * 2) process.exitCode = 1;
+    return;
+  }
   for (const { w } of pool) {
     currentWay = `way ${w.id}`;
     const res = driveRoute(w.pts, roadSurfaceHeights(w, height)[0], w.tags);

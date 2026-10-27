@@ -10,10 +10,12 @@
 //   seam   the terrain of two neighbouring tiles does not meet at their shared edge (pipeline only)
 //   gap    a slot up to 1.5 m wide between two carriageways at one height (two decks side by side) where a
 //          wheel drops through
+//   edge   the paved surface (carriageway or pavement) floats above the ground right beside it: a car leaving
+//          the road drops off a ledge and catches on it coming back (edgeCells/edgeIssues)
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import { CAR_GROUPS } from '../vehicle/carPhysics.ts';
 
-export const SURFACE_KINDS = ['hole', 'bump', 'dip', 'step', 'snag', 'seam', 'gap'] as const;
+export const SURFACE_KINDS = ['hole', 'bump', 'dip', 'step', 'snag', 'seam', 'gap', 'edge'] as const;
 export type SurfaceKind = (typeof SURFACE_KINDS)[number];
 
 /** Thresholds in metres (per kind: the size above which a cell counts), plus probe geometry. */
@@ -40,6 +42,12 @@ export const SURFACE_LIMITS = {
   below: 2,
   /** Drawn heights closer than this in one cell are one level (overlapping roads); farther apart, two roads. */
   level: 1.5,
+  /** The ground this far out from the paved edge (cells) … */
+  edgeOut: 2,
+  /** … lies more than this below the paved surface: the road floats on a ledge. */
+  edge: 0.12,
+  /** Drops beyond this are decks and walls (bridges, retaining walls), not a road that floats. */
+  edgeWall: 1.5,
 } as const;
 
 /**
@@ -47,7 +55,7 @@ export const SURFACE_LIMITS = {
  * 0.25 m (the step assist lifts the car over 0.3 m above its underbody, the springs take 0.18 m). Seams from 5 cm.
  */
 export function isCritical(kind: SurfaceKind, size: number) {
-  return kind === 'hole' || kind === 'snag' || kind === 'gap' || size >= (kind === 'seam' ? 0.05 : 0.25);
+  return kind === 'hole' || kind === 'snag' || kind === 'gap' || size >= (kind === 'seam' ? 0.05 : kind === 'edge' ? 0.3 : 0.25);
 }
 
 /** One drawn level of a cell: drawn height, where the wheels and the chassis rest (null: nothing) and on what. */
@@ -234,4 +242,43 @@ export function clusterIssues<T extends { x: number; y: number; z: number; kind:
     grid.get(k)!.push(s);
   }
   return kept;
+}
+
+/**
+ * Cells just off the paved surface: for every cell of `paved` (roads and pavements, rasterized) at the edge, the
+ * cell SURFACE_LIMITS.edgeOut cells out across the edge (along x or z) when everything between is unpaved. Each
+ * gets the paved height it was reached from, to be probed like a road cell (edgeIssues compares the two).
+ */
+export function edgeCells(paved: Map<number, number[]>, g: CellGrid): Map<number, number[]> {
+  const cols = gridCols(g), rows = g.r1 - g.r0, n = SURFACE_LIMITS.edgeOut;
+  const out = new Map<number, number[]>();
+  for (const [key, ys] of paved) {
+    const c = key % cols, r = (key - c) / cols;
+    const top = Math.max(...ys);
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const cc = c + dc * n, rr = r + dr * n;
+      if (cc < 0 || cc >= cols || rr < 0 || rr >= rows) continue;
+      let open = true;
+      for (let i = 1; i <= n && open; i++) open = !paved.has((r + dr * i) * cols + c + dc * i);
+      if (!open) continue;
+      const k = rr * cols + cc;
+      const have = out.get(k);
+      // Seen from two paved cells: the higher edge counts.
+      if (!have || have[0] < top) out.set(k, [top]);
+    }
+  }
+  return out;
+}
+
+/** Edge cells (edgeCells, probed) where the ground beside the paved surface lies a ledge below it. */
+export function edgeIssues(cells: Map<number, SurfaceCell[]>, cols: number, inside: (c: number, r: number) => boolean = () => true): SurfaceIssue[] {
+  const L = SURFACE_LIMITS;
+  const out: SurfaceIssue[] = [];
+  for (const [key, [s]] of cells) {
+    const c = key % cols, r = (key - c) / cols;
+    if (!inside(c, r) || s.yw === null) continue;
+    const drop = s.yd - s.yw;
+    if (drop > L.edge && drop <= L.edgeWall) out.push({ key, y: s.yd, kind: 'edge', size: drop, what: s.wheel });
+  }
+  return out;
 }

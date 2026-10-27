@@ -3,7 +3,10 @@
 // colliders as the game, as a wheel and as the chassis sees them (src/world/surfaceScan.ts has the rules).
 // Also compares the terrain of neighbouring tiles along their shared edge. Writes public/tiles/surface.json
 // for the in-game `world.surface` command (same layout as gaps.json).
+// Also walks the outer edge of every paved surface (carriageways and pavements): where the ground 1 m beside it
+// lies a ledge below, the road floats and a car leaving it catches on the way back ("edge", own limits).
 //   node pipeline/surfacecheck.ts [region] [--max=<allowed places>] [--max-critical=<allowed critical places>] [--list=<places to print, default 25>] [--cell=0.5]
+//     [--max-edge=<allowed edge places>] [--max-edge-critical=<allowed edges from 0.3 m>]
 import RAPIER from '@dimforge/rapier3d-compat';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -16,7 +19,7 @@ import { readOsm, type Way } from './lib/osm.ts';
 import { loadWorld, paths } from './lib/region.ts';
 import { densify, isDrivable } from './lib/roads.ts';
 import {
-  SURFACE_KINDS, SURFACE_LIMITS, cellCentre, clusterIssues, gapIssues, gridCols, isCritical, probeCells, rasterizeMesh, slotCells, surfaceIssues,
+  SURFACE_KINDS, SURFACE_LIMITS, cellCentre, clusterIssues, edgeCells, edgeIssues, gapIssues, gridCols, isCritical, probeCells, rasterizeMesh, slotCells, surfaceIssues,
   type CellGrid, type SurfaceCell, type SurfaceKind,
 } from '../src/world/surfaceScan.ts';
 
@@ -26,6 +29,8 @@ const MAX = +arg('max', 'Infinity');
 const MAX_CRITICAL = +arg('max-critical', 'Infinity');
 /** Critical places allowed on main roads (motorway, trunk, primary, secondary, tertiary and their links). */
 const MAX_CRITICAL_MAIN = +arg('max-critical-main', 'Infinity');
+const MAX_EDGE = +arg('max-edge', 'Infinity');
+const MAX_EDGE_CRITICAL = +arg('max-edge-critical', 'Infinity');
 const MAIN = /^(motorway|trunk|primary|secondary|tertiary)(_link)?$/;
 const CELL = +arg('cell', '0.5');
 /** Debugging: only the tile around local x,z, with the cells around it printed. */
@@ -103,7 +108,15 @@ async function main() {
     // Slots between two carriageways (decks side by side) where a wheel drops through.
     const slots = probeCells(RAPIER, world, slotCells(levels, grid), grid, (c) => kinds.get(c.handle) ?? '?');
     nRays += 2 * slots.size;
-    for (const s of [...surfaceIssues(cells, cols, inside), ...gapIssues(slots, cols, inside)]) {
+    // Ground beside the paved surface (carriageways and pavements).
+    const paved = new Map<number, number[]>();
+    for (const t of near) for (const f of ['roads', 'sidewalks']) {
+      const pos = t.f32(`${f}.pos`);
+      if (pos) rasterizeMesh(pos, t.u32(`${f}.idx`), grid, paved);
+    }
+    const edges = probeCells(RAPIER, world, edgeCells(paved, grid), grid, (c) => kinds.get(c.handle) ?? '?');
+    nRays += 2 * edges.size;
+    for (const s of [...surfaceIssues(cells, cols, inside), ...gapIssues(slots, cols, inside), ...edgeIssues(edges, cols, inside)]) {
       const [x, z] = cellCentre(grid, s.key);
       issues.push({ x, y: s.y, z, kind: s.kind, size: s.size, what: s.what });
     }
@@ -133,7 +146,8 @@ async function main() {
   const ways = new WayIndex(osm.ways.filter((w) => isDrivable(w.tags)));
   const roadIssues = issues.filter((s) => s.kind !== 'seam' || ways.nearest(s.x, s.z, 8));
 
-  const kept = clusterIssues(roadIssues);
+  // Edges cluster on their own: one floating edge must not hide a step on the road beside it.
+  const kept = [...clusterIssues(roadIssues.filter((s) => s.kind !== 'edge')), ...clusterIssues(roadIssues.filter((s) => s.kind === 'edge'))];
 
   const count = Object.fromEntries(SURFACE_KINDS.map((k) => [k, kept.filter((s) => s.kind === k).length]));
   const way = kept.map((s) => ways.nearest(s.x, s.z, 15));
@@ -152,15 +166,23 @@ async function main() {
   const byWhat = new Map<string, number>();
   for (const s of kept) byWhat.set(`${s.kind} on ${s.what}`, (byWhat.get(`${s.kind} on ${s.what}`) ?? 0) + 1);
   console.log(`  ${[...byWhat].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v}× ${k}`).join(', ')}`);
-  kept.slice(0, Number(arg('list', '25'))).forEach((s, i) => {
-    const w = way[i];
+  kept.map((s, i) => [s, way[i]] as const).filter(([s]) => s.kind !== 'edge').slice(0, Number(arg('list', '25'))).forEach(([s, w]) => {
     const [e, n] = [s.x + W.originE, W.originN - s.z];
     console.log(`  ${s.kind} ${s.size.toFixed(2)} m (${s.what}) at UTM ${e.toFixed(1)} ${n.toFixed(1)}, road ${s.y.toFixed(2)}`
       + (w ? ` · way ${w.id} ${w.tags.highway}${w.tags.bridge ? ' bridge' : ''} "${w.tags.name ?? ''}"` : ''));
   });
-  const critical = kept.filter((s) => isCritical(s.kind, s.size));
+  const critical = kept.filter((s) => s.kind !== 'edge' && isCritical(s.kind, s.size));
   console.log(`  critical (holes, snags, steps/bumps/dips from 0.25 m): ${critical.length} (${SURFACE_KINDS.map((k) => `${critical.filter((s) => s.kind === k).length} ${k}`).join(', ')})`);
-  const main = kept.map((s, i) => [s, way[i]] as const).filter(([s, w]) => isCritical(s.kind, s.size) && w && MAIN.test(w.tags.highway));
+  const edgeList = kept.map((s, i) => [s, way[i]] as const).filter(([s]) => s.kind === 'edge');
+  const edgeCritical = edgeList.filter(([s]) => isCritical(s.kind, s.size));
+  const edgeBy = new Map<string, number>();
+  for (const [s, w] of edgeCritical) { const k = `${w?.tags.highway ?? '?'}${w?.tags.bridge ? ' bridge' : ''} (${s.what})`; edgeBy.set(k, (edgeBy.get(k) ?? 0) + 1); }
+  console.log(`  road edges floating above the ground beside them: ${edgeList.length}, from 0.3 m ${edgeCritical.length}: ${[...edgeBy].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v}× ${k}`).join(', ')}`);
+  for (const [s, w] of edgeCritical.slice(0, Number(arg('list', '25')))) {
+    const [e, n] = [s.x + W.originE, W.originN - s.z];
+    console.log(`    edge ${s.size.toFixed(2)} m (${s.what}) at UTM ${e.toFixed(1)} ${n.toFixed(1)}${w ? ` · way ${w.id} ${w.tags.highway}${w.tags.bridge ? ' bridge' : ''} "${w.tags.name ?? w.tags.ref ?? ''}"` : ''}`);
+  }
+  const main = kept.map((s, i) => [s, way[i]] as const).filter(([s, w]) => s.kind !== 'edge' && isCritical(s.kind, s.size) && w && MAIN.test(w.tags.highway));
   console.log(`  critical on main roads: ${main.length}`);
   for (const [s, w] of main.slice(0, Number(arg('list', '25')))) {
     const [e, n] = [s.x + W.originE, W.originN - s.z];
@@ -169,7 +191,9 @@ async function main() {
   let fail = false;
   if (critical.length > MAX_CRITICAL) { console.log(`FAIL: ${critical.length} critical places (allowed ${MAX_CRITICAL})`); fail = true; }
   if (main.length > MAX_CRITICAL_MAIN) { console.log(`FAIL: ${main.length} critical places on main roads (allowed ${MAX_CRITICAL_MAIN})`); fail = true; }
-  if (kept.length > MAX) { console.log(`FAIL: ${kept.length} places where the road is not one seamless surface (allowed ${MAX})`); fail = true; }
+  if (edgeList.length > MAX_EDGE) { console.log(`FAIL: ${edgeList.length} floating road edges (allowed ${MAX_EDGE})`); fail = true; }
+  if (edgeCritical.length > MAX_EDGE_CRITICAL) { console.log(`FAIL: ${edgeCritical.length} road edges floating 0.3 m or more (allowed ${MAX_EDGE_CRITICAL})`); fail = true; }
+  if (kept.length - edgeList.length > MAX) { console.log(`FAIL: ${kept.length - edgeList.length} places where the road is not one seamless surface (allowed ${MAX})`); fail = true; }
   if (fail) process.exit(1);
 }
 

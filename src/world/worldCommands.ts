@@ -12,7 +12,7 @@ import { TERRAIN_STEP, type TileContent, type WorldIndex } from './format.ts';
 import { GAME_WIDEN } from './roadSpec.ts';
 import { ROAD_GROUPS } from '../vehicle/carPhysics.ts';
 import {
-  SURFACE_KINDS, cellCentre, clusterIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
+  SURFACE_KINDS, cellCentre, clusterIssues, edgeCells, edgeIssues, gapIssues, gridCols, probeCells, rasterizeMesh, slotCells, surfaceIssues, type CellGrid,
 } from './surfaceScan.ts';
 
 /** [name, x, z, plane height, area m², RMS cm, tilt %] per flattened plaza (pipeline/lib/plazas.ts). */
@@ -21,10 +21,10 @@ type PlazaRow = [string, number, number, number, number, number, number];
 interface Gaps { kinds: string[]; issues: [number, number, number, number, number, number][] }
 
 const KIND_DE: Record<string, string> = {
-  hole: 'Loch', bump: 'Kante/Hindernis', dip: 'Senke', step: 'Stufe', snag: 'Aufsetzer', seam: 'Kachelnaht', gap: 'Spalt',
+  hole: 'Loch', bump: 'Kante/Hindernis', dip: 'Senke', step: 'Stufe', snag: 'Aufsetzer', seam: 'Kachelnaht', gap: 'Spalt', edge: 'schwebender Rand',
   terrain: 'Gelände', road: 'Fahrbahn', bridge: 'Fahrbahnkollision/Brücke', building: 'Gebäude', rail: 'Leitplanke', tree: 'Baum', lamp: 'Laterne', solid: 'Bauwerk',
 };
-const KIND_COLOR: Record<string, number> = { hole: 0xff2020, bump: 0xff9900, dip: 0x3399ff, step: 0xffee00, snag: 0xff00cc, seam: 0x00ffcc, gap: 0x8a2be2 };
+const KIND_COLOR: Record<string, number> = { hole: 0xff2020, bump: 0xff9900, dip: 0x3399ff, step: 0xffee00, snag: 0xff00cc, seam: 0x00ffcc, gap: 0x8a2be2, edge: 0x00a0ff };
 
 export interface WorldCommandContext {
   R: typeof RAPIER_NS;
@@ -61,7 +61,7 @@ export function registerWorldCommands(g: WorldCommandContext) {
   });
   registerIssueList(g, {
     name: 'world.surface', file: 'surface.json', script: 'world:surface',
-    help: 'Flächenprüfung der Pipeline: jede 0,5-m-Zelle jeder Fahrbahn als Rad und Unterboden geprüft. show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe, magenta Aufsetzer, türkis Kachelnaht, lila Spalt zwischen Fahrbahnen), list die nächsten, next/prev/<nr> teleportiert hin, <art> filtert (z. B. "world.surface step")',
+    help: 'Flächenprüfung der Pipeline: jede 0,5-m-Zelle jeder Fahrbahn als Rad und Unterboden geprüft. show/hide zeigt Säulen (rot Loch, orange Kante, blau Senke, gelb Stufe, magenta Aufsetzer, türkis Kachelnaht, lila Spalt zwischen Fahrbahnen, hellblau schwebender Fahrbahnrand), list die nächsten, next/prev/<nr> teleportiert hin, <art> filtert (z. B. "world.surface step")',
   });
 
   registerCommand({
@@ -106,9 +106,9 @@ export function registerWorldCommands(g: WorldCommandContext) {
   let scanMarks: THREE.Group | null = null;
   registerCommand({
     name: 'road.scan',
-    help: 'Prüft jede 0,5-m-Zelle der Fahrbahnen um das Auto wie world:surface (Loch, Kante, Senke, Stufe, Aufsetzer, Spalt zwischen Fahrbahnen) und markiert Fundstellen; "hide" blendet aus',
-    args: '[radius m, Standard 40] [hide]',
-    complete: () => ['hide'],
+    help: 'Prüft jede 0,5-m-Zelle der Fahrbahnen um das Auto wie world:surface (Loch, Kante, Senke, Stufe, Aufsetzer, Spalt zwischen Fahrbahnen, schwebender Rand: Boden 1 m neben Fahrbahn/Gehweg tiefer) und markiert Fundstellen; "edge" nur die Ränder, "hide" blendet aus',
+    args: '[radius m, Standard 40] [edge] [hide]',
+    complete: () => ['edge', 'hide'],
     run(a) {
       if (scanMarks) { g.scene.remove(scanMarks); scanMarks = null; }
       if (a[0] === 'hide') return 'Markierungen ausgeblendet';
@@ -132,10 +132,30 @@ export function registerWorldCommands(g: WorldCommandContext) {
       // Only the world: the car and traffic are left out.
       const cells = probeCells(g.R, g.world, levels, grid, what, (c) => !!c.parent() && !c.parent()!.isFixed());
       const slots = probeCells(g.R, g.world, slotCells(levels, grid), grid, what, (c) => !!c.parent() && !c.parent()!.isFixed());
-      const found = clusterIssues([...surfaceIssues(cells, gridCols(grid)), ...gapIssues(slots, gridCols(grid))].map((s) => {
+      // The ground 1 m beside carriageways and pavements.
+      const paved = new Map<number, number[]>();
+      g.tiles((t) => {
+        for (const f of ['roads', 'sidewalks']) {
+          const pos = t.f32(`${f}.pos`);
+          if (pos) rasterizeMesh(pos, t.u32(`${f}.idx`), grid, paved);
+        }
+      });
+      const near = edgeCells(paved, grid);
+      for (const k of [...near.keys()]) {
+        const [x, z] = cellCentre(grid, k);
+        if (Math.hypot(x - p.x, z - p.z) > radius) near.delete(k);
+      }
+      const edges = probeCells(g.R, g.world, near, grid, what, (c) => !!c.parent() && !c.parent()!.isFixed());
+      const onlyEdge = a.includes('edge');
+      const at = <T extends { key: number }>(list: T[]) => list.map((s) => {
         const [x, z] = cellCentre(grid, s.key);
         return { ...s, x, z };
-      }), 3);
+      });
+      // Edges cluster on their own, so a floating edge does not hide a step on the road beside it.
+      const found = [
+        ...(onlyEdge ? [] : clusterIssues(at([...surfaceIssues(cells, gridCols(grid)), ...gapIssues(slots, gridCols(grid))]), 3)),
+        ...clusterIssues(at(edgeIssues(edges, gridCols(grid))), 3),
+      ];
       if (found.length) {
         scanMarks = new THREE.Group();
         scanMarks.name = 'road.scan';

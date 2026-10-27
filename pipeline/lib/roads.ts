@@ -41,6 +41,8 @@ const STEP = 4; // metres between road samples
 export const ROAD_LIFT = 0.15; // road surface above the terrain mesh
 /** Road collision lies this far under the drawn surface. */
 const STRIP_DROP = 0.05;
+/** Raised roads up to this far above the terrain get an earth bank (draped verge), higher ones walls. */
+export const BANK_MAX = 1.2;
 const SIDEWALK = { width: KERB.width, height: KERB.height };
 /**
  * Bridges without a landmark model get a raised walkway (cap) on both sides with a pedestrian railing at its
@@ -423,13 +425,23 @@ export function buildRoads(
       // down to the terrain mesh, which is fitted below it (carve.ts). Decks and lifted roads only push the
       // terrain down.
       const lifted = bridge || above > ROAD_LIFT + 0.1;
+      // A road raised only a little (the foot of an overpass ramp) sits on an earth bank: the verge is draped up
+      // to it like any road, instead of leaving it floating on a ledge without walls.
+      const bank = lifted && !bridge && above <= BANK_MAX;
       if (carve || lifted) {
         // Centred on the carriageway where it lies off the OSM line (placement, auxiliary lane).
         const co = (p: typeof a) => (Rn.get(p)! - Ln) / 2;
         const ext = [L.get(a)! + co(a), R.get(a)! - co(a), L.get(b)! + co(b), R.get(b)! - co(b)];
         const ch = Math.min(...ext), cap = Math.max(...ext);
-        if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted, cap);
-        else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted, cap);
+        // Paved extent per side with the pavement drawn below (its outer edge and top), for the verge to meet.
+        const walk = (side: 1 | -1) => !bridge && !!paved.get(side)![i];
+        const pv = {
+          l: Math.max(ext[0], ext[2]) + (walk(1) ? sw0 : 0), r: Math.max(ext[1], ext[3]) + (walk(-1) ? sw0 : 0),
+          tl: walk(1) ? Math.min(kerbAt(1, i - 1), kerbAt(1, i)) : 0, tr: walk(-1) ? Math.min(kerbAt(-1, i - 1), kerbAt(-1, i)) : 0,
+        };
+        const on: [boolean, boolean] = [i > 1, i < ring.length - 1];
+        if (co(a) || co(b)) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted || bank, cap, pv, on);
+        else carve?.add(a.e, a.n, a.y, b.e, b.n, b.y, ch, !lifted || bank, cap, pv, on);
         const c = (p: typeof a, d: number) => p.y - d;
         // Another road just below beside this one (a junction arm, a road alongside at another height): the
         // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.
@@ -437,14 +449,14 @@ export function buildRoads(
         // Decks and lifted roads reach 0.5 m wider, so a wheel at the edge has ground; where another deck or road
         // runs alongside at the same height with a slot of up to 1.5 m between them, across the slot.
         const reach = (p: typeof a, side: number) => {
-          if (!lifted) return 0;
+          if (!lifted || bank) return 0;
           const edge = side > 0 ? left(p) : -right(p);
           for (const o of [0.5, 1, 1.5]) if (carriageways.level(way, ...off(p, side * (edge + o)), p.y, 0.5)) return o + 0.25;
           return 0.5;
         };
         const lw = (p: typeof a) => left(p) + reach(p, 1), rw = (p: typeof a) => right(p) - reach(p, -1);
         strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
-        if (!lifted) {
+        if (!lifted || bank) {
           // Bevel 1 m out and down under the terrain, but never above a lower road there.
           const skirt = (p: typeof a, o: number) => Math.min(c(p, ROAD_LIFT + 0.1), (lower(p, o) ?? Infinity) - STRIP_DROP);
           strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), skirt(a, lw(a) + 1)], [c(b, STRIP_DROP), skirt(b, lw(b) + 1)]);
@@ -460,7 +472,7 @@ export function buildRoads(
         wall(tile.sidewalks, off(a, ol(a)), off(b, ol(b)), a.y - 1, a.y, b.y - 1, b.y, true);
         wall(tile.sidewalks, off(a, or(a)), off(b, or(b)), a.y - 1, a.y, b.y - 1, b.y, false);
       }
-      if (above > 0.6) {
+      if (above > BANK_MAX) {
         for (const side of [1, -1]) {
           const o = (p: typeof a) => (side > 0 ? ol(p) : or(p));
           const foot = (p: typeof a) => height(p.e - p.dy * o(p), p.n + p.dx * o(p)) - 0.3;

@@ -1,5 +1,6 @@
 // Minimal reader for Overpass JSON ("out body" with nodes, ways and relations).
 import { coreWay, extraWay } from './osmTags.ts';
+import { promoteFieldPaths } from './fieldWays.ts';
 import { markTunnels } from './tunnelMark.ts';
 
 export interface OsmJson {
@@ -78,6 +79,8 @@ export interface OsmData {
   restrictions?: { from: number; via: number; to: number; only: boolean; kind: string }[];
   /** Bus routes: name/ref and member way ids in order, stops as node ids. */
   busRoutes?: { id: number; ref: string; name: string; ways: number[]; stops: number[] }[];
+  /** Unpaved paths outside town built as Feldwege (highway=track, fieldWays.ts). */
+  fieldPaths?: number;
 }
 
 export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [number, number]): OsmData {
@@ -153,7 +156,8 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
   }
   // Which mapped tunnels are built as roads (car roads through, not into a garage or under a hall).
   markTunnels(ways, polygons);
-  return { ways, polygons, trees, points, boundary, extra, restrictions, busRoutes };
+  const fieldPaths = promoteFieldPaths(ways, polygons);
+  return { ways, polygons, trees, points, boundary, extra, restrictions, busRoutes, fieldPaths };
 }
 
 function isArea(tags: Record<string, string>) {

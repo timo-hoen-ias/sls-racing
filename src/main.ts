@@ -649,7 +649,7 @@ async function boot() {
     print: (t) => debug.print(t, 'info'),
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
-  registerPathCommands({ graph, scene: view.scene, pos: () => (hold ?? ip), teleport: (x, z, heading) => teleport(x, z, heading, true) });
+  registerPathCommands({ graph, scene: view.scene, pos: () => (hold ?? ip), teleport: (x, z, heading, road = true) => teleport(x, z, heading, road) });
   registerGroundCommands({ index, pos: () => (hold ?? ip), tiles: (fn) => streamer.forEachContent(fn) });
   guideSigns.registerCommands(() => (hold ?? ip), (x, z, heading) => teleport(x, z, heading, true));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.

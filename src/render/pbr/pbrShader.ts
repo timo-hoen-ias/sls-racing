@@ -56,6 +56,8 @@ uniform float uPbrGroundTint;
 uniform float uPbrWear;
 uniform float uPbrDebug;
 uniform float uPbrRoadForce;
+uniform float uPbrFieldRuts;
+uniform float uPbrFieldGrass;
 uniform float uPbrOn;
 varying vec3 vPbrPos;
 varying vec3 vPbrNrm;

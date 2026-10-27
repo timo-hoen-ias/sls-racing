@@ -23,7 +23,8 @@ describe('PBR atlases', () => {
   });
 
   it('keeps the road surface codes on street atlas cells', () => {
-    for (const [name, cell] of Object.entries(SURFACE)) expect(STREET.sets[cell].name).toBe(name);
+    // field (Feldweg) is drawn from several cells of both atlases (surfaces.ts), not one street cell.
+    for (const [name, cell] of Object.entries(SURFACE)) if (name !== 'field') expect(STREET.sets[cell].name).toBe(name);
   });
 });
 
@@ -40,7 +41,7 @@ describe('road look code', () => {
   it('takes the surface from OSM', () => {
     expect(roadSurface({ highway: 'residential', surface: 'sett' }, 1)).toBe(SURFACE.sett);
     expect(roadSurface({ highway: 'pedestrian' }, 1)).toBe(SURFACE.plaza);
-    expect(roadSurface({ highway: 'track' }, 1)).toBe(SURFACE.gravel);
+    expect(roadSurface({ highway: 'track' }, 1)).toBe(SURFACE.field);
     expect(roadSurface({ highway: 'primary', surface: 'asphalt' }, 1)).toBeLessThanOrEqual(SURFACE.asphalt_cracked);
   });
 

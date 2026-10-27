@@ -136,6 +136,8 @@ export interface RoadGraphData {
     k?: number;
     /** Closed to cars (pedestrian zone, access tags): left out of routing and traffic. */
     x?: 1;
+    /** Feldweg: unpaved track with wheel ruts (roadCode.ts isFieldWay); loose grip, avoided by the GPS. */
+    f?: 1;
     /** Polyline x, y, z from a to b, including both ends. */
     p: number[];
   }[];

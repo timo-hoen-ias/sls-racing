@@ -43,6 +43,7 @@ import { CarriagewayIndex, buildRoads, builtTunnel, isBridge, isDrivable, roadPr
 import { tunnelTiles } from './lib/tunnels.ts';
 import { TUNNEL, readTunnels, tunnelOver, type TunnelLine } from '../src/world/tunnelGeom.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
+import { isFieldWay } from '../src/render/pbr/roadCode.ts';
 import { activeRoadProfile, KERB, noCars } from '../src/world/roadSpec.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
 import { matchLevels } from './lib/levels.ts';
@@ -105,6 +106,7 @@ function main() {
   const ramps = planRamps(osm.ways);
   console.log(`Motorway junctions: ${ramps.stats.runs} auxiliary lanes, ${ramps.stats.moved} ramps moved onto them, ${ramps.stats.plain} ramps as mapped`);
   roadHeights(osm.ways, regions, height, console.log);
+  console.log(`Feldwege: ${osm.ways.filter((w) => isFieldWay(w.tags)).length} unpaved tracks, ${osm.ways.filter((w) => w.tags['sls:path']).length} of them unpaved paths outside town (of ${osm.fieldPaths} candidates)`);
   matchRampHeights(ramps);
   const matched = matchLevels(osm.ways, height);
   console.log(`Levels: ${matched.ways} roads matched to the road they overlap (${matched.overlaps} samples), max. shift ${matched.maxShift.toFixed(2)} m`);

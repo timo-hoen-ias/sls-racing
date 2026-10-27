@@ -2,6 +2,7 @@ import type { RoadGraphData, WorldInfo } from '../../src/world/format.ts';
 import { utmToLocal } from '../../src/world/format.ts';
 import type { OsmData, Way } from './osm.ts';
 import { noCars, roadSection } from '../../src/world/roadSpec.ts';
+import { isFieldWay } from '../../src/render/pbr/roadCode.ts';
 import { ROAD_CLASSES, isDrivable, roadSurfaceHeights, roadWidth } from './roads.ts';
 
 export interface Junction {
@@ -62,7 +63,7 @@ export function buildGraph(ways: Way[], world: WorldInfo, height: (e: number, n:
     const section = roadSection(w.tags)!;
     // Pavement sides (kerbs.ts): 1 right, 2 left of a → b.
     const k = w.sidewalks ? (w.sidewalks.right ? 1 : 0) | (w.sidewalks.left ? 2 : 0) : undefined;
-    const dims = { w: r1(section.width), l: section.lanes, r: r1(section.rightLane), ...(k !== undefined ? { k } : {}), ...(noCars(w.tags) ? { x: 1 as const } : {}) };
+    const dims = { w: r1(section.width), l: section.lanes, r: r1(section.rightLane), ...(k !== undefined ? { k } : {}), ...(noCars(w.tags) ? { x: 1 as const } : {}), ...(isFieldWay(w.tags) ? { f: 1 as const } : {}) };
     let start = 0;
     let p: number[] = [];
     for (let i = 0; i < wids.length; i++) {

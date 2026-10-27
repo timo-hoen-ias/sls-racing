@@ -30,11 +30,18 @@ import { applyOsmFixes } from './lib/osmFixes.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile, type RegionConfig } from './lib/region.ts';
 import { buildGraph } from './lib/graph.ts';
 import { drawFillets, planFillets } from './lib/fillets.ts';
+import { drawCalming, drawRoundaboutIslands, planTurningCircles } from './lib/roadDetails.ts';
+import { Details, along } from './lib/details.ts';
+import { buildIndustry } from './lib/industry.ts';
+import { buildLeisure } from './lib/leisure.ts';
+import { buildPower } from './lib/power.ts';
+import { buildSights } from './lib/sights.ts';
+import { TRACK, buildRail, isTrack } from './lib/rail.ts';
 import { fillSlots } from './lib/slots.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { CarriagewayIndex, buildRoads, builtTunnel, isBridge, isDrivable, roadProfile, roadWidth, sidewalkSides, sidewalkWidth, type Railing } from './lib/roads.ts';
 import { tunnelTiles } from './lib/tunnels.ts';
-import { TUNNEL } from '../src/world/tunnelGeom.ts';
+import { TUNNEL, readTunnels, tunnelOver, type TunnelLine } from '../src/world/tunnelGeom.ts';
 import { PathMask, buildPaths, meshHeight } from './lib/paths.ts';
 import { activeRoadProfile, KERB, noCars } from '../src/world/roadSpec.ts';
 import { separateCarriageways } from './lib/carriageways.ts';
@@ -108,11 +115,15 @@ function main() {
   console.log(`Turn restrictions: ${osm.restrictions?.length ?? 0} mapped → ${banned} banned turns · bus lines: ${graph.b?.length ?? 0} (${osm.busRoutes?.length ?? 0} routes)`);
   // Rounded junction corners (game road profile): kerbs, lamps and props keep clear of them like of a junction.
   const fillets = planFillets(osm.ways, height);
+  const corners = fillets.length;
+  // Turning circles at dead ends (roadDetails.ts) are fillets too.
+  const turning = planTurningCircles(osm, height);
+  fillets.push(...turning.fillets);
   for (const f of fillets) {
     const [x, z] = utmToLocal(info, f.node[0], f.node[1]);
     junctions.push({ x, z, width: 2 * Math.max(0, f.reach - 2.8) });
   }
-  console.log(`Junction corners: ${fillets.length} rounded`);
+  console.log(`Junction corners: ${corners} rounded · turning circles: ${turning.fillets.length} (${turning.skipped} left out: buildings or slope)`);
   const carve = new RoadCarve(TERRAIN_STEP);
   // Landmark models (real regions only): bridges they dress, and footprints whose generic buildings they replace.
   const real = regions.some((r) => r.boundary.type !== 'fixture');
@@ -124,6 +135,27 @@ function main() {
   // Tunnels: centrelines for the tube and the cut in the terrain, which the game builds (tunnelGeom.ts).
   const tunnels = tunnelTiles(osm.ways, info, height);
   if (tunnels.list.length) console.log(`Tunnels: ${tunnels.list.map((t) => `${t.name || t.highway} ${t.length} m (${t.height.toFixed(1)} m clear)`).join(', ')}`);
+  const calming = drawCalming(osm, info, tiles, height);
+  console.log(`Traffic calming: ${calming.bumps} bumps, ${calming.tables} tables, ${calming.rings} mini roundabouts`);
+  // Visual OSM details (details.ts): roundabout islands, rail, power and leisure grounds.
+  const details = new Details(info, tiles);
+  const islands = drawRoundaboutIslands(osm.ways, info, tiles, details, height);
+  console.log(`Roundabout islands: ${islands.islands} raised, ${islands.spots.length - islands.islands} left open`);
+  // Track over a road tunnel lies on its roof where that is above the ground (a slot through an embankment).
+  const tubes = new Map<number, TunnelLine>();
+  for (const rec of tunnels.tiles.values()) for (const l of readTunnels(Float32Array.from(rec))) tubes.set(l.id, l);
+  const tubeLines = [...tubes.values()];
+  const railHeight = (e: number, n: number) => {
+    const [x, z] = utmToLocal(info, e, n);
+    const t = tubeLines.length ? tunnelOver(tubeLines, x, z) : undefined;
+    return t ? Math.max(height(e, n), t.ceiling + TUNNEL.slab) : height(e, n);
+  };
+  const rail = buildRail(osm, info, details, railHeight);
+  console.log(`Rail: ${rail.km.toFixed(1)} km track (${rail.electrifiedKm.toFixed(1)} km electrified, ${rail.masts} masts), ${rail.bridges} bridges, ${rail.crossings} level crossings`);
+  const power = buildPower(osm, details, height);
+  console.log(`Power: ${power.pylons} pylons, ${power.poles} poles, ${power.spans} spans, ${power.kiosks} transformer kiosks, ${power.substations} substations, ${power.solarRows} solar rows`);
+  const leisure = buildLeisure(osm, details, height);
+  console.log(`Leisure: ${leisure.pitches} pitches (${leisure.goals} goals, ${leisure.nets} nets, ${leisure.floodlights} floodlights), ${leisure.playgrounds} playgrounds (${leisure.equipment} items), ${leisure.pools} pools, ${leisure.fountains} fountain basins, ${leisure.tracks} running tracks`);
   // Narrow slots left between carriageways get patched, so no wheel drops between two roads.
   const slots = fillSlots(tiles, info);
   console.log(`Road slots: ${slots} cells of 0.5 m patched between carriageways`);
@@ -209,6 +241,7 @@ function main() {
   };
   // Freely designed houses, villas and administrative buildings in place of fitting surveyed ones (houses.ts).
   const houseRoad = new RoadMask(osm.ways, 2.0);
+  houseRoad.addFillets(fillets);
   const osmKept = osm.polygons.filter((p) => p.tags.building && p.tags.building !== 'no' && p.outer.length > 3 && !footprints.covers(p.outer.slice(0, -1)) && !landmarkFoot.contains(...centre(p.outer.slice(0, -1))));
   const lod2Kept = lod2Rings.filter((b) => {
     const r = b.ring;
@@ -249,7 +282,8 @@ function main() {
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) want.add(tileKey(ix + dx, iy + dy));
   }
 
-  const ground = new GroundIndex(osm.polygons);
+  // Heath areas are extra features (osmTags.ts); they count as grass ground.
+  const ground = new GroundIndex([...osm.polygons, ...(osm.extra?.areas ?? []).filter((a) => a.tags.natural === 'heath')]);
   let coverTiles = 0;
   const water = new WaterLines(osm.ways);
   const waterways = water.polylines(info, height);
@@ -258,7 +292,13 @@ function main() {
   const onMotorLanes = new RoadMask(osm.ways, -0.5, (t) => !noCars(t));
   // Trees a little further: their trunk collider is up to TREE_COLLIDER_MAX wide and the mask is a 2 m grid.
   const treeLanes = new RoadMask(osm.ways, 1.0);
+  // No trees or bushes on the railway beds (rail.ts).
+  const railBed = new RoadMask([], 0.5);
+  railBed.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
+  treeLanes.addLines((osm.extra?.ways ?? []).filter((w) => isTrack(w.tags)).map((w) => ({ pts: w.pts, half: TRACK.bedBottom / 2 })));
   for (const m of [onRoad, onLanes, onMotorLanes, nearLanes, treeLanes]) m.addFillets(fillets);
+  const industry = buildIndustry(osm, details, height, (e, n) => onRoad.has(e, n), (e, n) => keptFoot.inside(e, n));
+  console.log(`Industry: ${industry.chimneys} chimneys, ${industry.masts} masts, ${industry.tanks} tanks, ${industry.waterTowers} water towers, ${industry.pipesKm.toFixed(1)} km pipelines, ${industry.conveyorsKm.toFixed(1)} km conveyors, ${industry.piers} piers, ${industry.weirs} weirs/dams/lock gates`);
   const offLanes = (lamps: number[]) => {
     const out: number[] = [];
     for (let i = 0; i < lamps.length; i += 4) if (!onLanes.has(...localToUtm(info, lamps[i], lamps[i + 2]))) out.push(...lamps.slice(i, i + 4));
@@ -330,6 +370,19 @@ function main() {
     addBush(e, n, s, Bush.round);
   }
   mapped.forEach((t, i) => { if (!lidar.merged.has(i) && !treeLanes.has(t.e, t.n)) addTree(t.e, t.n, 0.8 + rand(t.e, t.n) * 0.5, t.kind); });
+  // Mapped tree rows (natural=tree_row) outside the LiDAR survey: a tree every 9 m where none is mapped near.
+  let rowTrees = 0;
+  const lidarCovered = (e: number, n: number) => coverage.some(([e0, n0, e1, n1]) => e >= e0 && e < e1 && n >= n0 && n < n1);
+  for (const w of osm.extra?.ways ?? []) {
+    if (w.tags.natural !== 'tree_row') continue;
+    for (const p of along(w.pts, 9)) {
+      if (lidarCovered(p.e, p.n) || treeLanes.has(p.e, p.n) || onPaths.has(p.e, p.n) || nearMeasured(p.e, p.n, 2)) continue;
+      if (mapped.some((t) => Math.abs(t.e - p.e) < 4 && Math.abs(t.n - p.n) < 4)) continue;
+      addTree(p.e, p.n, 0.85 + rand(p.e, p.n) * 0.4, treeKindOf(w.tags, rand(p.e, p.n, 31)));
+      rowTrees++;
+    }
+  }
+  console.log(`Tree rows: ${rowTrees} trees added outside the LiDAR survey`);
   // Street furniture and traffic lights seen on Mapillary's street-level photos, on top of OSM.
   const DETECTED: Partial<Record<string, PropKind>> = { sign: Prop.sign, stopSign: Prop.stopSign, giveWay: Prop.giveWay, bench: Prop.bench, hydrant: Prop.hydrant };
   // Bins are left out: the photos mostly show household bins put out on collection day.
@@ -403,6 +456,10 @@ function main() {
   console.log(`Shops: ${shops.placedMapped}/${shops.mapped} mapped placed · ${Object.entries(shops.counts).map(([k, c]) => `${k} ${c}`).join(', ') || '-'}`);
   // Guard rails, delineators and chevron boards outside town (roadside.ts).
   const roadside = buildRoadside(osm.ways, { world: info, height, onLanes: (e, n) => onLanes.has(e, n), dressed });
+  for (const [k, list] of rail.props) {
+    if (!props.tiles.has(k)) props.tiles.set(k, []);
+    props.tiles.get(k)!.push(...list);
+  }
   for (const [k, list] of roadside.props) {
     if (!props.tiles.has(k)) props.tiles.set(k, []);
     props.tiles.get(k)!.push(...list);
@@ -481,7 +538,7 @@ function main() {
           for (let i = 0; i < nt + nb; i++) {
             const te = e + rand(e, n, i * 2 + 5) * TREE_CELL;
             const tn = n - rand(e, n, i * 2 + 6) * TREE_CELL;
-            if (onRoad.has(te, tn) || onPaths.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
+            if (onRoad.has(te, tn) || railBed.has(te, tn) || onPaths.has(te, tn) || ground.at(te, tn, Ground.grass) !== cls) continue;
             if (i < nt) {
               // Trunks keep clear of the carriageway like the measured trees.
               if (treeLanes.has(te, tn)) continue;
@@ -569,7 +626,7 @@ function main() {
     tiles: index,
     graph: 'graph.json',
     roadProfile: activeRoadProfile(),
-    ...(fillets.length || smoothed || curves.ways || slots ? { roadShape: { corners: fillets.length, slots, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
+    ...(corners || smoothed || curves.ways || slots ? { roadShape: { corners, slots, bends: smoothed, curves: curves.ways, curvePoints: curves.points } } : {}),
     spawn: best ? { x: best.x, y: best.y + 1.5, z: best.z, heading: best.heading } : { x: 0, y: height(se, sn) + 2, z: 0, heading: 0 },
     attribution: regions.some((r) => r.boundary.type !== 'fixture')
       ? ['Kartendaten © OpenStreetMap-Mitwirkende (ODbL)',
@@ -607,6 +664,9 @@ function main() {
   writeFileSync(`${paths.out}fuel.json`, JSON.stringify({ v: 1, stations: fuel.list }));
   const districts = districtList(osm, (e, n) => utmToLocal(info, e, n));
   writeFileSync(`${paths.out}districts.json`, JSON.stringify({ v: 1, districts }));
+  const sights = buildSights(osm, info, height, (e, n) => tiles.has(e, n));
+  writeFileSync(`${paths.out}sights.json`, JSON.stringify(sights));
+  console.log(`Sights: ${sights.sights.length} to discover, ${sights.churches.length} church bells, ${sights.cameras.length} speed cameras`);
   console.log(`Districts: ${districts.map((d) => d.name).join(', ') || '–'}`);
   writeFileSync(`${paths.out}signs.json`, JSON.stringify({ v: 1, signs: guide.signs }));
   writeFileSync(`${paths.out}bridges.json`, JSON.stringify({ v: 1, bridges: bridgeDeckList(osm.ways, height, info) }));
@@ -616,6 +676,11 @@ function main() {
   writeFileSync(`${paths.out}plazas.json`, JSON.stringify({ v: 1, plazas: height.plazas.map((p) => {
     const [x, z] = utmToLocal(info, p.e0, p.n0);
     return [p.name, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(p.y0 * 100) / 100, Math.round(p.area), Math.round(p.rms * 100), Math.round(Math.hypot(p.ge, p.gn) * 1000) / 10];
+  }) }));
+  // OSM details placed by the pipeline, for the osm.details command: [kind, x, z, note].
+  writeFileSync(`${paths.out}details.json`, JSON.stringify({ v: 1, spots: [...turning.spots, ...calming.spots, ...islands.spots, ...rail.spots, ...power.spots, ...leisure.spots, ...industry.spots].map((s) => {
+    const [x, z] = utmToLocal(info, s.e, s.n);
+    return [s.kind, Math.round(x * 10) / 10, Math.round(z * 10) / 10, s.note];
   }) }));
   writeFileSync(`${paths.out}index.json`, JSON.stringify(idx));
   const nTrees = [...treeKindsByTile.values()].reduce((a, v) => a + v.length, 0);

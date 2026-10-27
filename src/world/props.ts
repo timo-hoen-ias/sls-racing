@@ -37,7 +37,7 @@ export interface PropHit {
 }
 
 const BREAKABLE = new Set<PropKind>([Prop.busStop, Prop.sign, Prop.stopSign, Prop.giveWay, Prop.cityLimit, Prop.bollard, Prop.bench, Prop.bin, Prop.postBox, Prop.hydrant, Prop.bikeStand, Prop.fence, Prop.hedge, Prop.delineator, Prop.chevronLeft, Prop.chevronRight,
-  Prop.gate, Prop.liftGate, Prop.cycleBarrier, Prop.guidepost, Prop.infoBoard, Prop.camera, Prop.emergencyPhone, Prop.posterBox, Prop.vending, Prop.trafficMirror, Prop.picnicTable, Prop.waysideCross, Prop.boundaryStone]);
+  Prop.gate, Prop.liftGate, Prop.cycleBarrier, Prop.guidepost, Prop.infoBoard, Prop.camera, Prop.emergencyPhone, Prop.posterBox, Prop.vending, Prop.trafficMirror, Prop.picnicTable, Prop.waysideCross, Prop.boundaryStone, Prop.railCross]);
 
 interface TileProps { key: string; cx: number; cz: number; data: Float32Array }
 

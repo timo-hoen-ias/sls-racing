@@ -330,7 +330,50 @@ export function buildProps(osm: OsmData, o: PropOptions) {
       }
     });
   }
+  // Substations and solar farms are fenced in with chain-link where no fence is mapped (power.ts draws the inside).
+  for (const area of osm.extra?.areas ?? []) {
+    const t = area.tags;
+    if (t.power !== 'substation' && !(t.power === 'generator' && t['generator:source'] === 'solar') && !(t.power === 'plant' && t['plant:source'] === 'solar')) continue;
+    if (t.substation === 'minor_distribution' || t.location === 'indoor' || t.location === 'roof') continue;
+    pieces(area.outer, 2.5, (e, n, de, dn, len) => {
+      const cell = `${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`;
+      if (mappedBarriers.has(cell)) return;
+      if (offLanes(e, n, de, dn, len)) add(Prop.chainLink, e, n, headingOf(de, dn), len);
+      else {
+        const at = squeeze(e, n, de, dn, len);
+        if (at) { add(Prop.chainLink, at[0], at[1], headingOf(de, dn), len); squeezed++; }
+      }
+    });
+  }
   if (squeezed) console.log(`Props: ${squeezed} chain-link pieces moved off the roads beside them`);
+  // Garage entrances: a raised barrier beside each drivable way that crosses the outline of a multi-storey or
+  // underground car park, unless OSM maps a barrier at the entrance already.
+  let garageGates = 0;
+  const garages = [...osm.polygons, ...(osm.extra?.areas ?? [])].filter((p) => /^(multi-storey|underground)$/.test(p.tags.parking ?? '') || p.tags.building === 'parking');
+  const seenGarage = new Set<number>();
+  for (const g of garages) {
+    if (seenGarage.has(g.id)) continue;
+    seenGarage.add(g.id);
+    for (const w of osm.ways) {
+      if (!isDrivable(w.tags)) continue;
+      for (let i = 1; i < w.pts.length; i++) {
+        const [a, b] = [w.pts[i - 1], w.pts[i]];
+        for (let j = 1; j < g.outer.length; j++) {
+          const [c, d] = [g.outer[j - 1], g.outer[j]];
+          const den = (b[0] - a[0]) * (d[1] - c[1]) - (b[1] - a[1]) * (d[0] - c[0]);
+          if (Math.abs(den) < 1e-9) continue;
+          const t = ((c[0] - a[0]) * (d[1] - c[1]) - (c[1] - a[1]) * (d[0] - c[0])) / den;
+          const u = ((c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0])) / den;
+          if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+          const e = a[0] + (b[0] - a[0]) * t, n = a[1] + (b[1] - a[1]) * t;
+          if (mappedBarriers.has(`${Math.floor(e / HEDGE_CELL)}_${Math.floor(n / HEDGE_CELL)}`)) continue;
+          placePoint(Prop.liftGate, e, n, 0);
+          garageGates++;
+        }
+      }
+    }
+  }
+  if (garageGates) console.log(`Props: ${garageGates} barriers at car park entrances`);
   // Retaining walls (extra features, osmTags.ts).
   for (const w of osm.extra?.ways ?? []) {
     if (w.tags.barrier !== 'retaining_wall') continue;

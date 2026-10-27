@@ -35,6 +35,8 @@ export const Prop = {
   retainingWall: 49,
   /** Maschendrahtzaun (fence_type=chain_link, OSM fixes in osmFixes.ts): linear like fences, a see-through wire mesh. */
   chainLink: 50,
+  /** Andreaskreuz (Z 201) at level crossings (rail.ts): faces the approaching traffic. */
+  railCross: 51,
 } as const;
 export type PropKind = (typeof Prop)[keyof typeof Prop];
 
@@ -67,12 +69,12 @@ export const PROP_NAMES: Record<PropKind, string> = {
   24: 'tor', 25: 'schranke', 26: 'umlaufsperre', 27: 'verteilerkasten', 28: 'wegweiser', 29: 'infotafel', 30: 'ladesaeule',
   31: 'kamera', 32: 'notrufsaeule', 33: 'werbetafel', 34: 'plakatvitrine', 35: 'fahnenmast', 36: 'hochsitz', 37: 'wegkreuz',
   38: 'denkmal', 39: 'kunstwerk', 40: 'schutzhuette', 41: 'picknicktisch', 42: 'automat', 43: 'verkehrsspiegel', 44: 'blitzer',
-  45: 'brunnen', 46: 'packstation', 47: 'bunker', 48: 'grenzstein', 49: 'stuetzmauer', 50: 'maschendrahtzaun',
+  45: 'brunnen', 46: 'packstation', 47: 'bunker', 48: 'grenzstein', 49: 'stuetzmauer', 50: 'maschendrahtzaun', 51: 'andreaskreuz',
 };
 
 /** Groups for props.toggle. */
 export const PROP_GROUPS: Record<string, PropKind[]> = {
-  schilder: [2, 3, 4, 19, 1],
+  schilder: [2, 3, 4, 19, 1, 51],
   moebel: [5, 6, 7, 8, 9, 10, 11, 12, 13],
   parker: [14],
   zaeune: [15, 16, 17, 18, 20, 50],

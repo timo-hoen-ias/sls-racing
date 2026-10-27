@@ -53,6 +53,7 @@ import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
+import { ChurchBells, strokesFor } from './audio/bells.ts';
 import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
@@ -241,6 +242,20 @@ async function boot() {
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
   loadHouses().then((set) => houses.setHouseSet(set), (e) => console.warn('[houses] GLB nicht geladen, keine gestalteten Häuser', e));
+  // Church bells strike the hour (sights.json churches via the game); made once the audio starts.
+  let bells: ChurchBells | undefined;
+  registerCommand({
+    name: 'sound.bells',
+    help: 'Kirchenglocken: an/aus oder jetzt läuten lassen',
+    args: '[an|aus|jetzt]',
+    run: ([v]) => {
+      if (!bells) return 'Ton noch nicht gestartet';
+      if (v === 'an' || v === 'aus') bells.enabled = v === 'an';
+      if (v === 'jetzt') bells.ring(strokesFor(view.daylight.hours), ip.x, ip.z);
+      const near = game.churches.filter((c) => Math.hypot(c.x - ip.x, c.z - ip.z) < 900).length;
+      return `Glocken ${bells.enabled ? 'an' : 'aus'} · ${game.churches.length} Kirchen, ${near} in Hörweite`;
+    },
+  });
   const worldAudio = new WorldAudio({
     R: RAPIER, world, graph, car: car.body, scene: view.scene,
     ignore: (c) => traffic.isSolid(c.parent()),
@@ -272,6 +287,7 @@ async function boot() {
     traffic.attachAudio(sound.context, sound.world);
     net.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
+    bells = new ChurchBells(sound.context, sound.world);
     joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});
     await weather.startSound();
@@ -856,6 +872,7 @@ async function boot() {
     }
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
+    if (worldReady && bells) { bells.towers = game.churches; bells.update(view.daylight.hours, ip.x, ip.z); }
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
     fuel.update(view.camera, view.daylight.daylight);

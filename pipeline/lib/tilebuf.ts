@@ -61,6 +61,11 @@ export class TileMap {
     this.tileSize = tileSize;
   }
 
+  /** Whether a tile holds anything yet (detail layers add only to tiles the roads and terrain made). */
+  has(e: number, n: number): boolean {
+    return this.tiles.has(`${Math.floor(e / this.tileSize)}_${Math.floor(n / this.tileSize)}`);
+  }
+
   /** Tile containing a UTM position. */
   at(e: number, n: number): TileBuild {
     const ix = Math.floor(e / this.tileSize);

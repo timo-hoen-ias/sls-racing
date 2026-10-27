@@ -1,8 +1,9 @@
 // Visual OSM details written into the tiles' "details" mesh: vertex colours (sRGB bytes) and flat normals,
 // no collision. Railway tracks, overhead wires, pitch markings, islands and the like are built from these
 // primitives (rail.ts, power.ts, leisure.ts, roadDetails.ts). Positions come in UTM with absolute heights.
+import earcut from 'earcut';
 import { type WorldInfo, utmToLocal } from '../../src/world/format.ts';
-import type { MeshBuf, TileMap } from './tilebuf.ts';
+import { MeshBuf, type TileMap } from './tilebuf.ts';
 
 export type Rgb = [number, number, number];
 type P3 = [number, number, number]; // local x, y, z
@@ -19,7 +20,10 @@ export class Details {
     this.tiles = tiles;
   }
 
+  /** Tiles outside the built area get nothing: details alone would add tiles beyond the region. */
+  private spare = new MeshBuf();
   private buf(e: number, n: number): MeshBuf {
+    if (!this.tiles.has(e, n)) { this.spare = new MeshBuf(); return this.spare; }
     return this.tiles.at(e, n).details;
   }
 
@@ -60,6 +64,13 @@ export class Details {
     else this.quad(a, d, c, b, col);
   }
 
+  /** Horizontal-ish quad facing down (an underside), whatever order its corners come in. */
+  quadDown(a: P3, b: P3, c: P3, d: P3, col: Rgb) {
+    const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    if (cross < 0) this.quad(a, b, c, d, col);
+    else this.quad(a, d, c, b, col);
+  }
+
   /** Box centred at (e, n) on y (its bottom), `along` metres along the unit direction (de, dn), `across` wide. */
   box(e: number, n: number, y: number, de: number, dn: number, along: number, across: number, h: number, col: Rgb, top = col) {
     const ae = de * along / 2, an = dn * along / 2, ce = dn * across / 2, cn = -de * across / 2;
@@ -73,6 +84,34 @@ export class Details {
   /** Vertical wall between two ground points, h high, visible from both sides. */
   wall(a: P3, b: P3, h: number, col: Rgb) {
     this.quad(a, b, [b[0], b[1], b[2] + h], [a[0], a[1], a[2] + h], col, true);
+  }
+
+  /** Vertical face a-b (bottom heights in a, b; tops ta, tb), one-sided, facing the UTM direction (fe, fn). */
+  face(a: P3, b: P3, ta: number, tb: number, fe: number, fn: number, col: Rgb) {
+    const A: P3 = a, B: P3 = b, C: P3 = [b[0], b[1], tb], D: P3 = [a[0], a[1], ta];
+    // The quad's normal (UTM e, n part) from its first edge along the bottom and the upward edge.
+    const ue = B[0] - A[0], un = B[1] - A[1];
+    // Wound A, B, C, D the face points to (un, -ue) in UTM (right of a → b) — see quad's local-frame flip.
+    if (un * fe - ue * fn >= 0) this.quad(A, B, C, D, col);
+    else this.quad(B, A, D, C, col);
+  }
+
+  /** Solid box in the collision layer: centred at (e, n) from y up h, `w` across the unit direction (ae, an), `d` along it. */
+  solid(p: P3, w: number, d: number, h: number, ae: number, an: number) {
+    if (!this.tiles.has(p[0], p[1])) return;
+    const buf = this.tiles.at(p[0], p[1]).collide;
+    const le = -an, ln = ae;
+    const c = (x: number, z: number, yy: number) => {
+      const [lx, lz] = utmToLocal(this.world, p[0] + ae * x * w / 2 + le * z * d / 2, p[1] + an * x * w / 2 + ln * z * d / 2);
+      return buf.vertex(lx, yy, lz);
+    };
+    const v = [-1, 1].flatMap((x) => [-1, 1].flatMap((z) => [c(x, z, p[2]), c(x, z, p[2] + h)]));
+    // v index: ((x+1)/2)*4 + ((z+1)/2)*2 + top; both windings so the collider sees every face.
+    const faces = [[0, 4, 6, 2], [1, 3, 7, 5], [0, 1, 5, 4], [2, 6, 7, 3], [0, 2, 3, 1], [4, 5, 7, 6]];
+    for (const [a, b, cc, d2] of faces) {
+      buf.tri(v[a], v[b], v[cc]); buf.tri(v[a], v[cc], v[d2]);
+      buf.tri(v[a], v[cc], v[b]); buf.tri(v[a], v[d2], v[cc]);
+    }
   }
 
   /** Tube from a to b (UTM e, n, y): `sides` faces, radius r. */
@@ -92,7 +131,41 @@ export class Details {
       const cs = Math.cos(ang) * r, sn = Math.sin(ang) * r;
       return [p[0] + u[0] * cs + v[0] * sn, p[1] + u[1] * cs + v[1] * sn, p[2] + u[2] * cs + v[2] * sn];
     };
-    for (let k = 0; k < sides; k++) this.quad(ring(a, k), ring(b, k), ring(b, k + 1), ring(a, k + 1), col, true);
+    // Closed tube: outward faces only (this winding faces out in the local frame).
+    for (let k = 0; k < sides; k++) this.quad(ring(a, k + 1), ring(b, k + 1), ring(b, k), ring(a, k), col);
+  }
+
+  /** Area with holes facing up, its corners at y(e, n): triangles split until no edge is longer than `maxEdge`,
+   * so a surface on the terrain follows it. */
+  surface(outer: [number, number][], holes: [number, number][][], y: (e: number, n: number) => number, col: Rgb, maxEdge = 3) {
+    const open = (r: [number, number][]) => (r.length > 1 && r[0][0] === r[r.length - 1][0] && r[0][1] === r[r.length - 1][1] ? r.slice(0, -1) : r);
+    const rings = [open(outer), ...holes.map(open)].filter((r) => r.length >= 3);
+    if (!rings.length) return;
+    const flat: number[] = [], starts: number[] = [];
+    for (const r of rings) {
+      if (flat.length) starts.push(flat.length / 2);
+      for (const [e, n] of r) flat.push(e, n);
+    }
+    const idx = earcut(flat, starts);
+    const pt = (i: number): [number, number] => [flat[i * 2], flat[i * 2 + 1]];
+    const split = (a: [number, number], b: [number, number], c: [number, number], depth: number) => {
+      const ab = Math.hypot(b[0] - a[0], b[1] - a[1]), bc = Math.hypot(c[0] - b[0], c[1] - b[1]), ca = Math.hypot(a[0] - c[0], a[1] - c[1]);
+      const m = Math.max(ab, bc, ca);
+      if (m > maxEdge && depth < 12) {
+        // Halve the longest edge.
+        const mid = (p: [number, number], q: [number, number]): [number, number] => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+        if (m === ab) { const d = mid(a, b); split(a, d, c, depth + 1); split(d, b, c, depth + 1); }
+        else if (m === bc) { const d = mid(b, c); split(a, b, d, depth + 1); split(a, d, c, depth + 1); }
+        else { const d = mid(c, a); split(a, b, d, depth + 1); split(d, b, c, depth + 1); }
+        return;
+      }
+      const P = (q: [number, number]): P3 => [q[0], q[1], y(q[0], q[1])];
+      const cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+      const buf = this.buf((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3);
+      const [A, B, C] = (cross >= 0 ? [a, b, c] : [a, c, b]).map((q) => { const p3 = P(q); return this.local(p3[0], p3[1], p3[2]); });
+      this.triL(buf, A, B, C, col);
+    };
+    for (let i = 0; i < idx.length; i += 3) split(pt(idx[i]), pt(idx[i + 1]), pt(idx[i + 2]), 0);
   }
 
   /** Flat ribbon along a polyline (UTM e, n with a height each), `width` wide, lying on its points' heights. */

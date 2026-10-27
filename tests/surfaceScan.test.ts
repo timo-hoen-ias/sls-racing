@@ -96,6 +96,25 @@ describe('overlapping road levels', () => {
     expect(ya[0]).toBeGreaterThan(110.3);
   });
 
+  it('a road leaving a bridge end at a right angle meets the deck where their surfaces overlap, straight on keeps its grade', () => {
+    const deck = way(5, [[0, 0], [50, 0]], { highway: 'secondary', bridge: 'yes' });
+    deck.deck = [101, 101];
+    // Shares the bridge's end node, climbing 5 % to the north.
+    const turn = way(6, [[50, 0], [50, 40]], { highway: 'secondary' });
+    turn.ids[0] = deck.ids[1];
+    turn.profile = { dist: Float32Array.from([0, 40]), y: Float32Array.from([101, 103]) };
+    const ahead = way(7, [[50, 0], [90, 0]], { highway: 'secondary' });
+    ahead.ids[0] = deck.ids[1];
+    ahead.profile = { dist: Float32Array.from([0, 40]), y: Float32Array.from([101, 103]) };
+    const at = (w: Way, d: number) => roadProfile(w, flat, { originE: 0, originN: 0, tileSize: 256 } as WorldInfo, 2).reduce((b, p) => (Math.abs(p.dist - d) < Math.abs(b.dist - d) ? p : b)).y;
+    const y0 = at(turn, 2), a0 = at(ahead, 4);
+    matchLevels([deck, turn, ahead], flat);
+    const y = roadSurfaceHeights(deck, flat)[0];
+    // Beside the deck the turning road comes down to it, the road straight on is untouched.
+    expect(Math.abs(at(turn, 2) - y)).toBeLessThan(Math.abs(y0 - y));
+    expect(at(ahead, 4)).toBeCloseTo(a0, 3);
+  });
+
   it('the touching legs of a hairpin become one surface', () => {
     // Track out east and back west 2 m beside itself, climbing 1 %: the legs overlap with a 0.6–1.1 m ledge.
     const t = way(3, [[0, 0], [60, 0], [60, 2], [0, 2]], { highway: 'track' });

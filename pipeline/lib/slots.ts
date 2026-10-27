@@ -56,11 +56,14 @@ function rasterize(t: TileBuild, g: CellGrid, levels: Map<number, number[]>, loo
   }
 }
 
+/** Patching passes: patches across one direction can leave short runs between them along the other. */
+const PASSES = 4;
 /**
- * Patching passes: patches across one direction can leave short runs between them along the other, and a closed
- * pocket wider than a slot (the wedge where two carriageways meet) is filled from its rim one ring per pass.
+ * Closed pockets: undrawn holes wider than a slot but surrounded by road on every side (the tip of the wedge
+ * where two carriageways merge), up to this many cells, are patched whole. Open wedges are left alone: filling
+ * them ring by ring would pave the verge between two roads that part.
  */
-const PASSES = 10;
+const POCKET = 24;
 
 /** Fills the slots of every tile; returns how many 0.5 m cells were patched. */
 export function fillSlots(tiles: TileMap, world: WorldInfo): number {
@@ -91,6 +94,7 @@ function fillPass(tiles: TileMap, world: WorldInfo): number {
       }
     const cols = gridCols(g);
     const slots = slotCells(levels, g);
+    addPockets(levels, slots, g);
     // Road level drawn in cell k closest to the slot height y (within half a metre), or undefined.
     const near = (k: number, y: number) => {
       let best: number | undefined;
@@ -137,6 +141,60 @@ function fillPass(tiles: TileMap, world: WorldInfo): number {
     }
   }
   return filled;
+}
+
+/**
+ * Adds the cells of closed pockets beside drawn cells to the slots, each at the height of the road around it
+ * (weighted by inverse distance to the drawn cells on its rim).
+ */
+function addPockets(levels: Map<number, number[]>, slots: Map<number, number[]>, g: CellGrid) {
+  const cols = gridCols(g), rows = g.r1 - g.r0;
+  const top = (k: number) => Math.max(...levels.get(k)!);
+  const seen = new Set<number>();
+  const found: [number, number][] = [];
+  for (const start of levels.keys()) {
+    const sc = start % cols, sr = (start - sc) / cols;
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const c0 = sc + dc, r0 = sr + dr, k0 = r0 * cols + c0;
+      if (c0 < 0 || r0 < 0 || c0 >= cols || r0 >= rows || levels.has(k0) || slots.has(k0) || seen.has(k0)) continue;
+      // Flood the undrawn cells from here; a pocket stays small and never reaches the edge of the grid.
+      const cells = [k0], rim = new Set<number>(), mine = new Set([k0]);
+      seen.add(k0);
+      let open = false;
+      for (let i = 0; i < cells.length && !open; i++) {
+        const k = cells[i], c = k % cols, r = (k - c) / cols;
+        for (const [ec, er] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nc = c + ec, nr = r + er, n = nr * cols + nc;
+          if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) { open = true; break; }
+          if (levels.has(n)) rim.add(n);
+          else if (slots.has(n) || mine.has(n)) continue;
+          // Reached cells an earlier flood gave up on: open as well.
+          else if (seen.has(n)) { open = true; break; }
+          else {
+            seen.add(n);
+            mine.add(n);
+            cells.push(n);
+            if (cells.length > POCKET) { open = true; break; }
+          }
+        }
+      }
+      if (open || !rim.size) continue;
+      const ys = [...rim].map(top);
+      if (Math.max(...ys) - Math.min(...ys) > 0.5) continue;
+      for (const k of cells) {
+        const c = k % cols, r = (k - c) / cols;
+        let sw = 0, sy = 0;
+        for (const n of rim) {
+          const nc = n % cols, nr = (n - nc) / cols;
+          const w = 1 / ((nc - c) ** 2 + (nr - r) ** 2);
+          sw += w;
+          sy += w * top(n);
+        }
+        found.push([k, sy / sw]);
+      }
+    }
+  }
+  for (const [k, y] of found) slots.set(k, [y]);
 }
 
 /** Look of the nearest drawn cell (searching outwards up to the slot width). */

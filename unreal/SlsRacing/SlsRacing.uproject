@@ -1,0 +1,17 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.5",
+	"Category": "",
+	"Description": "SLS Racing: Open-World-Racer im echten Landkreis Saarlouis (Unreal-Port des Three.js-Spiels)",
+	"Modules": [
+		{
+			"Name": "SlsRacing",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": ["Engine"]
+		}
+	],
+	"Plugins": [
+		{ "Name": "ProceduralMeshComponent", "Enabled": true }
+	]
+}

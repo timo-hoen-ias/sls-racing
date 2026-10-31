@@ -113,3 +113,53 @@ jobs:
           name: world-tiles
           path: public/tiles
           retention-days: 14
+  # Unreal port: the published tiles of this key as SLSU tiles (unreal/tools/export-tiles.ts), checked against
+  # the web game's own colliders at every road cell, published as ue-tiles-<key>.tar for the Unreal project.
+  unreal:
+    needs: build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unreal export key
+        id: key
+        run: |
+          key=$(node pipeline/worldkey.ts)
+          # The export depends on the tiles and on the exporter itself.
+          ukey="$key-$(cat unreal/tools/*.ts src/world/tileColliders.ts src/world/tileBuild.ts src/world/surfaceScan.ts | sha256sum | cut -c1-8)"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "ukey=$ukey" >> "$GITHUB_OUTPUT"
+          skip=false
+          gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null | grep -qx "ue-tiles-$ukey.tar" && skip=true
+          gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null | grep -qx "tiles-$key.tar.gz" || { echo "Keine Web-Kacheln für $key veröffentlicht"; skip=true; }
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "Unreal-Export $ukey, skip $skip"
+      - name: Download web tiles
+        if: steps.key.outputs.skip != 'true'
+        run: |
+          gh release download world-tiles -p "tiles-${{ steps.key.outputs.key }}.tar.gz" -O tiles.tar.gz
+          mkdir -p web && tar -xzf tiles.tar.gz -C web && rm tiles.tar.gz
+      - name: Export for Unreal (meshes, recorded colliders, reference heights of every road cell)
+        if: steps.key.outputs.skip != 'true'
+        run: node --max-old-space-size=6144 unreal/tools/export-tiles.ts --tiles=web/tiles --out=ue/WorldData
+      - name: Verify export (rebuilt collision answers every road cell like the web game)
+        if: steps.key.outputs.skip != 'true'
+        run: node --max-old-space-size=6144 unreal/tools/verify-export.ts --data=ue/WorldData --max=0
+      - name: Publish Unreal export
+        if: steps.key.outputs.skip != 'true'
+        run: |
+          ukey=${{ steps.key.outputs.ukey }}
+          tar -cf "ue-tiles-$ukey.tar" -C ue WorldData   # plain tar: the tiles are gzipped already
+          gh release upload world-tiles "ue-tiles-$ukey.tar" --clobber
+          # Keep the 3 newest Unreal exports (about 1 GB each).
+          gh api "repos/${{ github.repository }}/releases/tags/world-tiles" -q '[.assets[] | select(.name | startswith("ue-tiles-"))] | sort_by(.created_at) | reverse | .[3:] | .[].name' |
+            while read -r old; do gh release delete-asset world-tiles "$old" -y || true; done
+          echo "Unreal-Export veröffentlicht: ue-tiles-$ukey.tar ($(du -h "ue-tiles-$ukey.tar" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"

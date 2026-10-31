@@ -32,7 +32,7 @@ const STEEL = hexRgb(0x8d948f), STEEL_DARK = hexRgb(0x6c726e), CONDUCTOR = hexRg
 const CONCRETE = hexRgb(0x9c9a94), WOOD = hexRgb(0x6b5440), KIOSK = hexRgb(0xc8bfa8), KIOSK_ROOF = hexRgb(0x56524c);
 const TRAFO = hexRgb(0x5e6a62), PANEL = hexRgb(0x1f2b45), PANEL_FRAME = hexRgb(0x9aa0a6), PANEL_BACK = hexRgb(0x4a4f55);
 
-export interface PowerStats { pylons: number; poles: number; spans: number; kiosks: number; substations: number; solarRows: number; spots: DetailSpot[] }
+export interface PowerStats { pylons: number; poles: number; spans: number; kiosks: number; substations: number; solarRows: number; moved: number; spots: DetailSpot[] }
 
 interface Support { e: number; n: number; y: number; ae: number; an: number; h: number; pole: boolean }
 
@@ -53,10 +53,35 @@ function inside(ring: [number, number][], e: number, n: number): boolean {
   return c;
 }
 
-export function buildPower(osm: Pick<OsmData, 'points' | 'extra'>, details: Details, measured: Height): PowerStats {
+/** Where the footing of a support stands: its legs (pylon) or its foot (pole), x across and z along the line. */
+export function footings(h: number, pole: boolean): [number, number][] {
+  if (pole) return [[0, 0]];
+  const b = h * 0.09;
+  return [[-b, -b], [b, -b], [b, b], [-b, b]];
+}
+
+/** Steps (m) a support is moved to get its footings off a carriageway: OSM places some a few metres off, and a
+ * pylon leg or pole on the road is a wall to drive into. Along the line first, across it where the line follows
+ * the road. */
+const SHIFTS = [2, -2, 4, -4, 6, -6, 8, -8, 10, -10, 12, -12];
+
+/**
+ * The support position with no footing on a road (`onRoad`), moved by the smallest step along the line (else
+ * across it) that clears it; unchanged when it stands clear already or no step does.
+ */
+export function clearOfRoads(e: number, n: number, ae: number, an: number, feet: [number, number][], onRoad: (e: number, n: number) => boolean): [number, number] {
+  const le = -an, ln = ae;
+  const hits = (ce: number, cn: number) => feet.some(([x, z]) => onRoad(ce + ae * x + le * z, cn + an * x + ln * z));
+  if (!hits(e, n)) return [e, n];
+  for (const d of SHIFTS) if (!hits(e + le * d, n + ln * d)) return [e + le * d, n + ln * d];
+  for (const d of SHIFTS) if (!hits(e + ae * d, n + an * d)) return [e + ae * d, n + an * d];
+  return [e, n];
+}
+
+export function buildPower(osm: Pick<OsmData, 'points' | 'extra'>, details: Details, measured: Height, onRoad: (e: number, n: number) => boolean = () => false): PowerStats {
   // Lines run on beyond the fetched terrain; their supports out there are left out (NaN).
   const height: Height = (e, n) => { try { return measured(e, n); } catch { return NaN; } };
-  const stats: PowerStats = { pylons: 0, poles: 0, spans: 0, kiosks: 0, substations: 0, solarRows: 0, spots: [] };
+  const stats: PowerStats = { pylons: 0, poles: 0, spans: 0, kiosks: 0, substations: 0, solarRows: 0, moved: 0, spots: [] };
   const lines = (osm.extra?.ways ?? []).filter((w) => w.tags.power === 'line' || w.tags.power === 'minor_line');
   const nodeTags = new Map(osm.points.map((p) => [p.id, p.tags]));
   const done = new Set<number>();
@@ -116,7 +141,12 @@ export function buildPower(osm: Pick<OsmData, 'points' | 'extra'>, details: Deta
       const tagged = Number(t?.height);
       const h = Number.isFinite(tagged) && tagged > 4 ? tagged : isPole ? (minor ? 9 : 14) : pylonHeight(w.tags.voltage);
       const [ae, an] = acrossAt(w.pts, i);
-      return { e: p[0], n: p[1], y: height(p[0], p[1]), ae, an, h, pole: isPole };
+      const [e, n] = clearOfRoads(p[0], p[1], ae, an, footings(h, isPole), onRoad);
+      if (e !== p[0] || n !== p[1]) {
+        stats.moved++;
+        stats.spots.push({ kind: 'mast-verschoben', e, n, note: `${Math.hypot(e - p[0], n - p[1]).toFixed(0)} m von der Fahrbahn weg (OSM ${w.ids[i]})` });
+      }
+      return { e, n, y: height(e, n), ae, an, h, pole: isPole };
     });
     const slotsOf = (s: Support): [number, number][] =>
       s.pole ? (minor ? [[-0.8, 1], [0.8, 1], [0, 1.02]] : [[-1.6, 0.92], [1.6, 0.92], [-1, 0.8], [1, 0.8]]) : pylonSlots(cables, s.h);

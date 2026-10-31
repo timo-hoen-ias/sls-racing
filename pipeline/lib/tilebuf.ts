@@ -35,6 +35,24 @@ export class MeshBuf {
   }
 }
 
+/**
+ * Counts vertices but keeps nothing: content of tiles that another build shard writes (shard.ts). The
+ * builders run unchanged, so every shard sees the same tiles and makes the same decisions.
+ */
+export class NullBuf extends MeshBuf {
+  private count = 0;
+  override get vertexCount() {
+    return this.count;
+  }
+  override vertex() {
+    return this.count++;
+  }
+  override tri() {}
+  override pack() {
+    return undefined;
+  }
+}
+
 /** Rounds to centimetres so repeated builds give identical files. */
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -57,8 +75,11 @@ export interface TileBuild {
 export class TileMap {
   tiles = new Map<string, TileBuild>();
   private tileSize: number;
-  constructor(tileSize: number) {
+  /** Tiles this build writes (a shard of the world); the others only take NullBufs. */
+  private owns: (ix: number, iy: number) => boolean;
+  constructor(tileSize: number, owns: (ix: number, iy: number) => boolean = () => true) {
     this.tileSize = tileSize;
+    this.owns = owns;
   }
 
   /** Whether a tile holds anything yet (detail layers add only to tiles the roads and terrain made). */
@@ -73,7 +94,8 @@ export class TileMap {
     const key = `${ix}_${iy}`;
     let t = this.tiles.get(key);
     if (!t) {
-      t = { ix, iy, roads: new MeshBuf(), markings: new MeshBuf(), buildings: new MeshBuf(), collide: new MeshBuf(), sidewalks: new MeshBuf(), paths: new MeshBuf(), details: new MeshBuf(), trees: [], lamps: [] };
+      const Buf = this.owns(ix, iy) ? MeshBuf : NullBuf;
+      t = { ix, iy, roads: new Buf(), markings: new Buf(), buildings: new Buf(), collide: new Buf(), sidewalks: new Buf(), paths: new Buf(), details: new Buf(), trees: [], lamps: [] };
       this.tiles.set(key, t);
     }
     return t;

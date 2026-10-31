@@ -3,14 +3,14 @@
 // same wheel and chassis rays and compares with the heights the web game's own colliders gave (r.* sections).
 // Runs in Rapier, so it checks the export, not Unreal's physics: road.parity in the game checks that part.
 //
-//   node unreal/tools/verify-export.ts [--data=unreal/SlsRacing/WorldData] [--only=ix_iy,…] [--limit=<tiles>] [--tol=0.005] [--max=<allowed mismatches>]
+//   node unreal/tools/verify-export.ts [--data=unreal/SlsRacing/WorldData] [--only=ix_iy,…] [--limit=<tiles>] [--tol=0.005] [--max=<allowed mismatches>] [--shard=i/n]
 import RAPIER from '@dimforge/rapier3d-compat';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { tileKey } from '../../src/world/format.ts';
 import { CAR_GROUPS, ROAD_GROUPS } from '../../src/vehicle/carPhysics.ts';
 import { SURFACE_LIMITS } from '../../src/world/surfaceScan.ts';
-import { readSlsu, REF_NONE } from './slsu.ts';
+import { readSlsu, REF_NONE, shardOf } from './slsu.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? def;
 const DATA = arg('data', 'unreal/SlsRacing/WorldData').replace(/\/?$/, '/');
@@ -73,8 +73,9 @@ async function main() {
   let cells = 0, bad = 0, worst = 0;
   const examples: string[] = [];
   const keys = (index.tiles as [number, number][]).slice().sort((a, b) => b[1] - a[1] || a[0] - b[0])
-    .filter(([x, y]) => !ONLY.size || ONLY.has(tileKey(x, y))).slice(0, LIMIT);
-  for (const [ix, iy] of keys) {
+    .filter(([x, y]) => !ONLY.size || ONLY.has(tileKey(x, y)));
+  const work = shardOf(keys, arg('shard', '')).slice(0, LIMIT);
+  for (const [ix, iy] of work) {
     const s = load(tileKey(ix, iy));
     if (!s) throw new Error(`Kachel ${tileKey(ix, iy)} fehlt im Export`);
     for (const [bk, b] of bodies) {
@@ -117,7 +118,7 @@ async function main() {
       }
     }
   }
-  console.log(`Export-Prüfung: ${keys.length} Kacheln, ${cells} Straßenzellen, ${bad} Abweichungen über ${TOL * 1000} mm (größte endliche ${(worst * 1000).toFixed(1)} mm) in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+  console.log(`Export-Prüfung: ${work.length} Kacheln, ${cells} Straßenzellen, ${bad} Abweichungen über ${TOL * 1000} mm (größte endliche ${(worst * 1000).toFixed(1)} mm) in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   for (const e of examples) console.log(e);
   if (bad > MAX) { console.log(`FAIL: ${bad} Abweichungen (erlaubt ${MAX})`); process.exit(1); }
 }

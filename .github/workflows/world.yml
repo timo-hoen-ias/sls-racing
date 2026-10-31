@@ -1,7 +1,10 @@
-# Builds the real world tiles from OpenStreetMap and terrain data.
+# Builds the real world tiles (Landkreis Saarlouis) from OpenStreetMap and terrain data.
 # Runs on GitHub's runners because they are fast and keep the laser-scan downloads in a cache. Finished tiles
 # are published as release assets world-tiles/tiles-<key>.tar.gz (key: pipeline/worldkey.ts), which the
 # Cloudflare deploy downloads instead of building the world itself (pipeline/deploy-tiles.ts).
+# The Landkreis does not fit into one runner's memory in one go: SHARDS jobs build a stripe share of the
+# tiles each (pipeline/lib/shard.ts, byte-identical to a whole build), the check job merges them, runs the
+# event test and publishes, and the verify jobs run the drive, gap and surface checks side by side.
 name: World build
 on:
   workflow_dispatch:
@@ -24,21 +27,24 @@ permissions:
 concurrency:
   group: world-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+  GH_TOKEN: ${{ github.token }}
+  SHARDS: 3
 jobs:
-  build:
+  # Everything is skipped when tiles for this key are already published (same inputs, same tiles, already
+  # tested), except on the weekly run and a forced manual run, which refresh the OSM data. Forks cannot publish.
+  # The OSM extract is downloaded once here, so all shards cut the same data.
+  key:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      GH_TOKEN: ${{ github.token }}
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+      skip: ${{ steps.key.outputs.skip }}
+      publish: ${{ steps.key.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      # Everything is skipped when tiles for this key are already published (same inputs, same tiles, already
-      # tested), except on the weekly run and a forced manual run, which refresh the OSM data. Forks cannot publish.
       - name: World key
         id: key
         run: |
@@ -52,76 +58,178 @@ jobs:
             gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null | grep -qx "tiles-$key.tar.gz"; then skip=true; fi
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
           echo "World key $key, publish $publish, skip $skip"
-      # Laser-scan tiles (DGM1/DOM1) come from a slow server; keep them between runs.
-      - uses: actions/cache@v4
+      - name: OSM extract
         if: steps.key.outputs.skip != 'true'
+        run: |
+          mkdir -p data/raw/extracts
+          curl -fsSL --retry 4 -o data/raw/extracts/saarland-latest.osm.pbf https://download.geofabrik.de/europe/germany/saarland-latest.osm.pbf
+      - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.skip != 'true'
+        with:
+          name: osm-extract
+          path: data/raw/extracts
+          retention-days: 1
+
+  build:
+    needs: key
+    if: needs.key.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: osm-extract
+          path: data/raw/extracts
+      # Laser-scan tiles (DGM1/DOM1) and LoD2 come from a slow server; keep them between runs.
+      - uses: actions/cache@v4
         with:
           path: |
             data/raw/dgm1
             data/raw/dom1
             data/raw/lod2
           key: laser-${{ hashFiles('pipeline/regions/*.json') }}
+          # A changed region keeps the tiles it already had and only downloads the new ones.
+          restore-keys: laser-
       - name: Download OSM and terrain
-        if: steps.key.outputs.skip != 'true'
         run: npm run world:fetch
-      - if: steps.key.outputs.skip != 'true'
-        run: npm run world:build
+      - name: Build shard ${{ matrix.shard }}
+        run: SLS_TILES_OUT=shard npm run world:build -- --shard=${{ matrix.shard }}/$SHARDS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiles-shard-${{ matrix.shard }}
+          path: shard
+          retention-days: 1
+          compression-level: 0
+
+  check:
+    needs: [key, build]
+    if: needs.key.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Merge the shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tiles-shard-*
+          path: public/tiles
+          merge-multiple: true
+      - name: All tiles there
+        run: node -e "const i=require('./public/tiles/index.json');const fs=require('fs');const miss=i.tiles.filter(([x,y])=>!fs.existsSync('public/tiles/t/'+x+'_'+y+'.bin'));console.log(i.tiles.length+' tiles, '+miss.length+' missing');process.exit(miss.length?1:0)"
       # --write leaves undrivable events out of events.json, exactly like the deploy used to; --min still fails the run.
       - name: Event test (rival autopilot through every race, zone and slalom)
-        if: steps.key.outputs.skip != 'true'
         run: npm run world:eventtest -- --write --min=0.6 # ratchet: raise as the world gets fixed where cars get stuck
       # Published before the slower checks so a waiting Cloudflare deploy can go on.
       - name: Publish tiles for the Cloudflare deploy
-        if: steps.key.outputs.skip != 'true' && steps.key.outputs.publish == 'true'
+        if: needs.key.outputs.publish == 'true'
         run: |
-          key=${{ steps.key.outputs.key }}
+          key=${{ needs.key.outputs.key }}
           echo "{\"key\":\"$key\",\"eventsKey\":\"$(node pipeline/worldkey.ts --events)\",\"commit\":\"$GITHUB_SHA\",\"event\":\"$GITHUB_EVENT_NAME\",\"at\":\"$(date -u +%FT%TZ)\",\"run\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" > public/tiles/build.json
           tar -czf "tiles-$key.tar.gz" -C public tiles
           gh release view world-tiles >/dev/null 2>&1 || gh release create world-tiles --prerelease --title "Welt-Kacheln" \
-            --notes "Fertige Saarlouis-Kacheln für den Cloudflare-Deploy, je Welt-Schlüssel (pipeline/worldkey.ts). Wird automatisch gepflegt." || true
+            --notes "Fertige Kacheln des Landkreises Saarlouis für den Cloudflare-Deploy, je Welt-Schlüssel (pipeline/worldkey.ts). Wird automatisch gepflegt." || true
           gh release upload world-tiles "tiles-$key.tar.gz" --clobber
-          # Keep the 12 newest keys.
-          gh api "repos/${{ github.repository }}/releases/tags/world-tiles" -q '.assets | sort_by(.created_at) | reverse | .[12:] | .[].name' |
+          # Keep the 8 newest keys.
+          gh api "repos/${{ github.repository }}/releases/tags/world-tiles" -q '.assets | sort_by(.created_at) | reverse | .[8:] | .[].name' |
             while read -r old; do gh release delete-asset world-tiles "$old" -y || true; done
           echo "Kacheln veröffentlicht: tiles-$key.tar.gz ($(du -h "tiles-$key.tar.gz" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
-      - name: Drive test (autopilot on 200 real roads)
-        if: steps.key.outputs.skip != 'true'
-        run: npm run world:drivetest -- --routes=200
-      - name: Tunnel drive test (through every built tunnel, both ways)
-        if: steps.key.outputs.skip != 'true'
-        run: npm run world:drivetest -- --tunnels
-      - name: Gap check (every road, every 2 m, no holes or steps)
-        if: steps.key.outputs.skip != 'true'
-        run: npm run world:gaps -- --max=30 # ratchet: lower as bridge fixes land (24 after bridge ends meet their roads, 2026-10-25)
-      # Full coverage: every 0.5 m cell of every carriageway (junctions, ramps, bridges, tile borders), as wheel and chassis.
-      - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags; road edges not floating)
-        if: steps.key.outputs.skip != 'true'
-        run: npm run world:surface -- --max-critical=100 --max=1900 --max-critical-main=15 --max-edge-critical=9300 # ratchet (2026-10-27: 96 critical, 1856 total, 15 on main roads; 8845 road edges floating 0.3 m or more, 54399 before the verge met the road): lower as fixes land
-      # Tiles that fail the checks must not count as tested: the next run with this key builds again.
-      - name: Withdraw tiles after a failed check
-        if: failure() && steps.key.outputs.skip != 'true' && steps.key.outputs.publish == 'true'
-        run: gh release delete-asset world-tiles "tiles-${{ steps.key.outputs.key }}.tar.gz" -y || true
       - name: Summary
-        if: steps.key.outputs.skip != 'true'
         run: |
           echo "### Welt-Kacheln" >> $GITHUB_STEP_SUMMARY
           echo "Dateien: $(ls public/tiles/t | wc -l), Größe: $(du -sh public/tiles | cut -f1)" >> $GITHUB_STEP_SUMMARY
-          [ -f public/tiles/surface.json ] && node -e "const s=require('./public/tiles/surface.json');console.log('Flächenprüfung: '+s.cells+' Zellen, '+s.issues.length+' Stellen, davon '+s.critical+' kritisch')" >> $GITHUB_STEP_SUMMARY || true
       - uses: actions/upload-artifact@v4
-        if: steps.key.outputs.skip != 'true'
         with:
           name: world-tiles
           path: public/tiles
-          retention-days: 14
-  # Unreal port: the published tiles of this key as SLSU tiles (unreal/tools/export-tiles.ts), checked against
-  # the web game's own colliders at every road cell, published as ue-tiles-<key>.tar for the Unreal project.
-  unreal:
-    needs: build
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+          retention-days: 7
+          compression-level: 0
+
+  # The slow checks side by side, each on the merged tiles. A failed one withdraws the published tiles.
+  verify:
+    needs: [key, check]
+    if: needs.key.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      GH_TOKEN: ${{ github.token }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Drive test (autopilot on 200 real roads)
+            run: npm run world:drivetest -- --routes=200
+          - name: Tunnel drive test (through every built tunnel, both ways)
+            run: npm run world:drivetest -- --tunnels
+          - name: Gap check (every road, every 2 m, no holes or steps)
+            # ratchet (2026-10-31, Landkreis: 99; was 135 before the road edge and slot fixes): lower as fixes land
+            run: npm run world:gaps -- --max=105
+          - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags; road edges not floating)
+            # ratchet (2026-10-31, Landkreis 18.9 km² carriageway: 300 critical, 65 on main roads, 6677 total, 28070 road edges
+            # floating 0.3 m or more; the same density as Saarlouis alone): lower as fixes land
+            run: npm run world:surface -- --max-critical=320 --max=7000 --max-critical-main=70 --max-edge-critical=29500
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: osm-extract
+          path: data/raw/extracts
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/raw/dgm1
+            data/raw/dom1
+            data/raw/lod2
+          key: laser-${{ hashFiles('pipeline/regions/*.json') }}
+          restore-keys: laser-
+      # The drive and gap tests compare the tiles with the road heights from the raw data.
+      - name: Download OSM and terrain
+        run: npm run world:fetch
+      - uses: actions/download-artifact@v4
+        with:
+          name: world-tiles
+          path: public/tiles
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.run }}
+      # Tiles that fail the checks must not count as tested: the next run with this key builds again.
+      - name: Withdraw tiles after a failed check
+        if: failure() && needs.key.outputs.publish == 'true'
+        run: gh release delete-asset world-tiles "tiles-${{ needs.key.outputs.key }}.tar.gz" -y || true
+      - name: Summary
+        if: always()
+        run: |
+          [ -f public/tiles/surface.json ] && node -e "const s=require('./public/tiles/surface.json');console.log('Flächenprüfung: '+s.cells+' Zellen, '+s.issues.length+' Stellen, davon '+s.critical+' kritisch')" >> $GITHUB_STEP_SUMMARY || true
+          [ -f public/tiles/gaps.json ] && node -e "const s=require('./public/tiles/gaps.json');console.log('Lückenprüfung: '+s.issues.length+' Stellen')" >> $GITHUB_STEP_SUMMARY || true
+
+  # Unreal port: the published tiles of this key as SLSU tiles (unreal/tools/export-tiles.ts), checked against
+  # the web game's own colliders at every road cell (verify-export.ts), published in SHARDS parts as
+  # ue-tiles-<ukey>-<shard>.tar (release assets stay under 2 GB). unreal/tools/fetch-world.sh puts them together.
+  # Runs whenever tiles for the key exist, also when the build was skipped.
+  unreal:
+    needs: [key, check]
+    if: always() && needs.key.result == 'success' && (needs.check.result == 'success' || needs.check.result == 'skipped') && needs.key.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -130,38 +238,38 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Unreal export key
-        id: key
+        id: ukey
         run: |
-          key=$(node pipeline/worldkey.ts)
-          # The export depends on the tiles and on the exporter itself.
+          key=${{ needs.key.outputs.key }}
+          # The export depends on the tiles and on the exporter and the web code it replays.
           ukey="$key-$(cat unreal/tools/*.ts src/world/tileColliders.ts src/world/tileBuild.ts src/world/surfaceScan.ts | sha256sum | cut -c1-8)"
-          echo "key=$key" >> "$GITHUB_OUTPUT"
           echo "ukey=$ukey" >> "$GITHUB_OUTPUT"
+          assets=$(gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null || true)
           skip=false
-          gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null | grep -qx "ue-tiles-$ukey.tar" && skip=true
-          gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null | grep -qx "tiles-$key.tar.gz" || { echo "Keine Web-Kacheln für $key veröffentlicht"; skip=true; }
+          echo "$assets" | grep -qx "ue-tiles-$ukey-${{ matrix.shard }}.tar" && skip=true
+          echo "$assets" | grep -qx "tiles-$key.tar.gz" || { echo "Keine Web-Kacheln für $key veröffentlicht"; skip=true; }
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
-          echo "Unreal-Export $ukey, skip $skip"
+          echo "Unreal-Export $ukey Teil ${{ matrix.shard }}, skip $skip"
       - name: Download web tiles
-        if: steps.key.outputs.skip != 'true'
+        if: steps.ukey.outputs.skip != 'true'
         run: |
-          gh release download world-tiles -p "tiles-${{ steps.key.outputs.key }}.tar.gz" -O tiles.tar.gz
+          gh release download world-tiles -p "tiles-${{ needs.key.outputs.key }}.tar.gz" -O tiles.tar.gz
           mkdir -p web && tar -xzf tiles.tar.gz -C web && rm tiles.tar.gz
       - name: Export for Unreal (meshes, recorded colliders, reference heights of every road cell)
-        if: steps.key.outputs.skip != 'true'
-        run: node --max-old-space-size=6144 unreal/tools/export-tiles.ts --tiles=web/tiles --out=ue/WorldData
+        if: steps.ukey.outputs.skip != 'true'
+        run: node --max-old-space-size=6144 unreal/tools/export-tiles.ts --tiles=web/tiles --out=ue/WorldData --shard=${{ matrix.shard }}/$SHARDS
       - name: Verify export (rebuilt collision answers every road cell like the web game)
-        if: steps.key.outputs.skip != 'true'
-        # 2026-10-31: 12 of 27 M probes differ, all rays grazing the edge of a tunnel walkway kerb within float32 rounding
-        # (the kerb block is 0.15 m high, the ray hits it on one side of the micrometre and misses it on the other).
-        run: node --max-old-space-size=6144 unreal/tools/verify-export.ts --data=ue/WorldData --max=24
+        if: steps.ukey.outputs.skip != 'true'
+        # 2026-10-31 (Saarlouis): 12 of 27 M probes differed, all rays grazing the edge of a tunnel walkway kerb within
+        # float32 rounding (the 0.15 m kerb block is hit on one side of the micrometre and missed on the other).
+        run: node --max-old-space-size=6144 unreal/tools/verify-export.ts --data=ue/WorldData --shard=${{ matrix.shard }}/$SHARDS --max=24
       - name: Publish Unreal export
-        if: steps.key.outputs.skip != 'true'
+        if: steps.ukey.outputs.skip != 'true'
         run: |
-          ukey=${{ steps.key.outputs.ukey }}
-          tar -cf "ue-tiles-$ukey.tar" -C ue WorldData   # plain tar: the tiles are gzipped already
-          gh release upload world-tiles "ue-tiles-$ukey.tar" --clobber
-          # Keep the 3 newest Unreal exports (about 1 GB each).
-          gh api "repos/${{ github.repository }}/releases/tags/world-tiles" -q '[.assets[] | select(.name | startswith("ue-tiles-"))] | sort_by(.created_at) | reverse | .[3:] | .[].name' |
+          part="ue-tiles-${{ steps.ukey.outputs.ukey }}-${{ matrix.shard }}.tar"
+          tar -cf "$part" -C ue WorldData   # plain tar: the tiles are gzipped already
+          gh release upload world-tiles "$part" --clobber
+          # Keep the 3 newest Unreal exports (SHARDS parts each).
+          gh api "repos/${{ github.repository }}/releases/tags/world-tiles" -q "[.assets[] | select(.name | startswith(\"ue-tiles-\"))] | sort_by(.created_at) | reverse | .[$((3 * SHARDS)):] | .[].name" |
             while read -r old; do gh release delete-asset world-tiles "$old" -y || true; done
-          echo "Unreal-Export veröffentlicht: ue-tiles-$ukey.tar ($(du -h "ue-tiles-$ukey.tar" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"
+          echo "Unreal-Export veröffentlicht: $part ($(du -h "$part" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"

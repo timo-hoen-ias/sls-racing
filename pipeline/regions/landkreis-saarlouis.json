@@ -1,0 +1,50 @@
+{
+  "id": "landkreis-saarlouis",
+  "name": "Landkreis Saarlouis",
+  "boundary": {
+    "type": "admin",
+    "name": "Landkreis Saarlouis",
+    "level": 6
+  },
+  "marginMeters": 300,
+  "osm": {
+    "extracts": [
+      "https://download.geofabrik.de/europe/germany/saarland-latest.osm.pbf"
+    ]
+  },
+  "terrain": {
+    "source": "terrarium",
+    "zoom": 14
+  },
+  "laser": {
+    "dgm1": [
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DGM1_2025_tif_LK/DGM1_tif_SLS_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DGM1_2025_tif_LK/DGM1_tif_MZG_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DGM1_2025_tif_LK/DGM1_tif_SB_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DGM1_2025_tif_LK/DGM1_tif_NK_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DGM1_2025_tif_LK/DGM1_tif_WND_EPSG-25832_Entstehung-2025.zip"
+    ],
+    "dom1": [
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DOM1_2025_tif_LK/DOM1_tif_SLS_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DOM1_2025_tif_LK/DOM1_tif_MZG_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DOM1_2025_tif_LK/DOM1_tif_SB_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DOM1_2025_tif_LK/DOM1_tif_NK_EPSG-25832_Entstehung-2025.zip",
+      "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_DOM1_2025_tif_LK/DOM1_tif_WND_EPSG-25832_Entstehung-2025.zip"
+    ]
+  },
+  "lod2": [
+    "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_Geb%c3%a4udemodelle_LoD2_gml_LK/SLS_LOD2BWK_gml.zip",
+    "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_Geb%c3%a4udemodelle_LoD2_gml_LK/MZG_LOD2BWK_gml.zip",
+    "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_Geb%c3%a4udemodelle_LoD2_gml_LK/SB_LOD2BWK_gml.zip",
+    "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_Geb%c3%a4udemodelle_LoD2_gml_LK/NK_LOD2BWK_gml.zip",
+    "https://www.shop.lvgl.saarland.de/cloud/public.php/dav/files/NK8ndP55qAqGEZD/OD_Geb%c3%a4udemodelle_LoD2_gml_LK/WND_LOD2BWK_gml.zip"
+  ],
+  "far": {
+    "marginMeters": 7000,
+    "zoom": 12
+  },
+  "spawn": {
+    "lat": 49.31335,
+    "lon": 6.75165
+  }
+}

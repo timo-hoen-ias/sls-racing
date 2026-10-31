@@ -6,7 +6,7 @@
 // the reference the Unreal surface test (road.parity) must reproduce.
 //
 //   node unreal/tools/export-tiles.ts [--tiles=public/tiles] [--out=unreal/SlsRacing/WorldData] [--only=ix_iy,…]
-//     [--at=x,z (local metres: only the tile there)] [--no-ref] [--limit=<tiles>]
+//     [--at=x,z (local metres: only the tile there)] [--no-ref] [--limit=<tiles>] [--shard=i/n]
 import RAPIER from '@dimforge/rapier3d-compat';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -15,7 +15,7 @@ import { buildTile, type MeshArrays } from '../../src/world/tileBuild.ts';
 import { addTileColliders, type ColliderKind } from '../../src/world/tileColliders.ts';
 import { CAR_GROUPS } from '../../src/vehicle/carPhysics.ts';
 import { mergeLevels, SURFACE_LIMITS } from '../../src/world/surfaceScan.ts';
-import { bytesOf, packSlsu, REF_CELL, REF_N, REF_NONE, type ColliderGroup, type LayerInfo, type Section } from './slsu.ts';
+import { bytesOf, packSlsu, shardOf, REF_CELL, REF_N, REF_NONE, type ColliderGroup, type LayerInfo, type Section } from './slsu.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? def;
 const TILES = arg('tiles', 'public/tiles').replace(/\/?$/, '/');
@@ -288,9 +288,13 @@ async function main() {
   }
 
   const keys = index.tiles.map(([x, y]) => [x, y] as [number, number]).sort((a, b) => b[1] - a[1] || a[0] - b[0])
-    .filter(([x, y]) => !ONLY.size || ONLY.has(tileKey(x, y))).slice(0, LIMIT);
+    .filter(([x, y]) => !ONLY.size || ONLY.has(tileKey(x, y)));
+  // A shard also writes the tile rows just beyond its own, so its verify job has every neighbour's colliders.
+  const own = shardOf(keys, arg('shard', ''));
+  const lo = Math.min(...own.map((k) => k[1])) - 1, hi = Math.max(...own.map((k) => k[1])) + 1;
+  const work = (arg('shard', '') ? keys.filter(([, y]) => y >= lo && y <= hi) : own).slice(0, LIMIT);
   let bytes = 0, refCells = 0, n = 0;
-  for (const [ix, iy] of keys) {
+  for (const [ix, iy] of work) {
     const k = tileKey(ix, iy);
     const self = tile(k);
     if (!self) continue;
@@ -318,11 +322,11 @@ async function main() {
     }
     const r = exportTile(self, W, records.get(k)!, ref);
     bytes += r.bytes; refCells += r.ref; n++;
-    if (n % 100 === 0) console.log(`  ${n}/${keys.length} Kacheln, ${(bytes / 1e6).toFixed(0)} MB, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    if (n % 100 === 0) console.log(`  ${n}/${work.length} Kacheln, ${(bytes / 1e6).toFixed(0)} MB, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }
 
   // World manifest and the shared JSON layers (road graph, signs, events …) as they are.
-  writeFileSync(`${OUT}index.json`, JSON.stringify({ ...index, format: 'slsu', slsu: { version: 1, refCell: REF_CELL, refN: REF_N, tiles: keys.length } }));
+  writeFileSync(`${OUT}index.json`, JSON.stringify({ ...index, format: 'slsu', slsu: { version: 1, refCell: REF_CELL, refN: REF_N, tiles: index.tiles.length } }));
   for (const f of readdirSync(TILES)) if (f.endsWith('.json') && f !== 'index.json') copyFileSync(`${TILES}${f}`, `${OUT}${f}`);
   console.log(`Unreal-Export: ${n} Kacheln, ${(bytes / 1e6).toFixed(0)} MB unkomprimiert, ${refCells} Referenzzellen in ${((Date.now() - t0) / 1000).toFixed(0)} s → ${OUT}`);
 }

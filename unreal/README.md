@@ -29,7 +29,7 @@ node --max-old-space-size=6144 unreal/tools/export-tiles.ts --tiles=/tmp/w/tiles
 node unreal/tools/verify-export.ts                                                     # Export gegen das Web-Spiel prüfen
 ```
 
-Die World-Build-Action veröffentlicht den fertigen Export zusätzlich als `ue-tiles-<key>.tar` im Release
+Die World-Build-Action veröffentlicht den fertigen Export zusätzlich als `ue-tiles-<key>-<teil>.tar` (3 Teile) im Release
 `world-tiles`. Kürzester Weg auf dem PC: `unreal/tools/fetch-world.sh` (braucht `gh auth login`).
 
 ## Projekt bauen und starten (Linux)

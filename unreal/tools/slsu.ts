@@ -90,3 +90,11 @@ export function readSlsu(buf: Uint8Array) {
     u8: (n: string) => copy(n),
   };
 }
+
+/** --shard=i/n: the i-th of n blocks of consecutive tile rows (north to south), for parallel CI jobs. */
+export function shardOf<T>(sorted: T[], spec: string): T[] {
+  if (!spec) return sorted;
+  const [i, n] = spec.split('/').map(Number);
+  const size = Math.ceil(sorted.length / n);
+  return sorted.slice(i * size, (i + 1) * size);
+}

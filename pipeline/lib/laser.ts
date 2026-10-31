@@ -99,19 +99,25 @@ export interface LaserGrid {
   tiles: number;
 }
 
-export function laserSampler(dir: string): LaserGrid {
-  const cache = new Map<string, Float32Array | null>();
-  // Each tile is 4 MB as floats (outside the JS heap); keep the most recently used ones. Roads and buildings
-  // jump across the whole world, so this covers a typical region.
-  const KEEP = 320;
+/** keep: how many tiles stay decoded (4 MB each, outside the JS heap), most recently used first. */
+export function laserSampler(dir: string, keep = 640): LaserGrid {
+  const cache = new Map<number, Float32Array | null>();
+  // Roads and buildings jump across the whole world: the default keeps most of a Landkreis decoded (~2.5 GB),
+  // so few tiles are inflated twice.
+  const KEEP = keep;
+  // Numeric keys and the last tile at hand: the terrain asks for millions of neighbouring points.
+  let lastKey = NaN, last: Float32Array | null = null;
   const tile = (ekm: number, nkm: number) => {
-    const key = `${ekm}_${nkm}`;
+    const key = ekm * 100_000 + nkm;
+    if (key === lastKey) return last;
     let t = cache.get(key);
     if (t === undefined) {
       t = has(ekm, nkm) ? readTiff(inflateRawSync(readFileSync(file(dir, ekm, nkm)))) : null;
       if (cache.size >= KEEP) cache.delete(cache.keys().next().value!);
     } else cache.delete(key);
     cache.set(key, t);
+    lastKey = key;
+    last = t;
     return t;
   };
   // Pixel (c, r) covers [E0 + c, E0 + c + 1] × [N1 - r - 1, N1 - r]; its value belongs to the centre.
@@ -122,8 +128,13 @@ export function laserSampler(dir: string): LaserGrid {
     const v = t[(KM - 1 - (gn - nkm * KM)) * KM + (ge - ekm * KM)];
     return v === NODATA ? undefined : v;
   };
-  const present = new Set(existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.tif.deflate')) : []);
-  const has = (ekm: number, nkm: number) => present.has(`${ekm}_${nkm}.tif.deflate`);
+  const present = new Set(
+    (existsSync(dir) ? readdirSync(dir) : []).flatMap((f) => {
+      const m = /^(\d+)_(\d+)\.tif\.deflate$/.exec(f);
+      return m ? [Number(m[1]) * 100_000 + Number(m[2])] : [];
+    }),
+  );
+  const has = (ekm: number, nkm: number) => present.has(ekm * 100_000 + nkm);
   return {
     tiles: present.size,
     at(e, n) {

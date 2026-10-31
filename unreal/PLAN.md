@@ -9,7 +9,7 @@ Straßen, Brücken und Gelände landen dort und kommen über den Export in beide
 
 - [x] Export der fertigen Web-Kacheln nach Unreal (`unreal/tools/export-tiles.ts`): gezeichnete Ebenen wie im
       Web-Client, Kollision exakt wie an Rapier übergeben (mitgeschnitten, nicht nachgebaut).
-- [x] Referenzhöhen je 0,5-m-Fahrbahnzelle (Rad- und Chassis-Strahl) im Export, 27 Mio. Zellen für Saarlouis.
+- [x] Referenzhöhen je 0,5-m-Fahrbahnzelle (Rad- und Chassis-Strahl) im Export, 27 Mio. Zellen für Saarlouis allein, gut dreimal so viele für den Landkreis.
 - [x] `verify-export.ts`: Kollision aus dem Export in Rapier nachgebaut, gegen die Referenz geprüft (CI).
 - [x] Unreal-C++-Projekt: Kachel-Streaming um die Kamera (Worker-Threads, Zeitbudget, Kollider im Physikradius
       wie `streamer.ts`), Kollisionskanäle SlsRoad / SlsWheel / SlsChassis wie `ROAD_GROUPS` / `CAR_GROUPS`.

@@ -171,8 +171,10 @@ function main() {
   };
   const rail = buildRail(osm, info, details, railHeight);
   console.log(`Rail: ${rail.km.toFixed(1)} km track (${rail.electrifiedKm.toFixed(1)} km electrified, ${rail.masts} masts), ${rail.bridges} bridges, ${rail.crossings} level crossings`);
-  const power = buildPower(osm, details, height);
-  console.log(`Power: ${power.pylons} pylons, ${power.poles} poles, ${power.spans} spans, ${power.kiosks} transformer kiosks, ${power.substations} substations, ${power.solarRows} solar rows`);
+  // Pylon legs and poles stay off the carriageways (with half a metre to spare).
+  const powerClear = new RoadMask(osm.ways, 0.5);
+  const power = buildPower(osm, details, height, (e, n) => powerClear.has(e, n));
+  console.log(`Power: ${power.pylons} pylons, ${power.poles} poles (${power.moved} moved off a road), ${power.spans} spans, ${power.kiosks} transformer kiosks, ${power.substations} substations, ${power.solarRows} solar rows`);
   const leisure = buildLeisure(osm, details, height);
   console.log(`Leisure: ${leisure.pitches} pitches (${leisure.goals} goals, ${leisure.nets} nets, ${leisure.floodlights} floodlights), ${leisure.playgrounds} playgrounds (${leisure.equipment} items), ${leisure.pools} pools, ${leisure.fountains} fountain basins, ${leisure.tracks} running tracks`);
   // Narrow slots left between carriageways get patched, so no wheel drops between two roads.

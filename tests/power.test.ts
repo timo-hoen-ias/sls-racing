@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Details } from '../pipeline/lib/details.ts';
 import type { OsmData, Way } from '../pipeline/lib/osm.ts';
-import { buildPower, pylonHeight, pylonSlots } from '../pipeline/lib/power.ts';
+import { buildPower, clearOfRoads, footings, pylonHeight, pylonSlots } from '../pipeline/lib/power.ts';
 import { TileMap } from '../pipeline/lib/tilebuf.ts';
 import type { WorldInfo } from '../src/world/format.ts';
 
@@ -47,5 +47,25 @@ describe('power lines', () => {
     for (let i = 0; i < t.pos.length; i += 3) if (Math.abs(t.pos[i] - mx) < 3 && Math.abs(t.pos[i + 2] - mz) < 10 && t.pos[i + 1] > 5) low = Math.min(low, t.pos[i + 1]);
     expect(low).toBeLessThan(34 * 0.7 - 2.6 - 1);
     expect(low).toBeGreaterThan(9);
+  });
+
+  it('moves a support along its line until no footing stands on a road', () => {
+    // A road 8 m wide along north–south at e = 0; the line runs east (across = south), the pylon legs reach 3 m.
+    const onRoad = (e: number) => Math.abs(e) < 4;
+    const feet = footings(34, false);
+    expect(clearOfRoads(20, 0, 0, -1, feet, onRoad)).toEqual([20, 0]);
+    const [e, n] = clearOfRoads(5, 0, 0, -1, feet, onRoad);
+    expect(n).toBe(0);
+    expect(feet.every(([x, z]) => !onRoad(e + z))).toBe(true);
+    expect(Math.abs(e - 5)).toBeLessThanOrEqual(4);
+    // In the middle of a wide road nothing within reach clears it: it stays.
+    expect(clearOfRoads(0, 0, 0, -1, feet, () => true)).toEqual([0, 0]);
+  });
+
+  it('counts the supports it moved off a road as details spots', () => {
+    const tiles = new TileMap(256);
+    const stats = buildPower(osm(), new Details(world, tiles), () => 200, (e) => Math.abs(e - E) < 3);
+    expect(stats.moved).toBeGreaterThan(0);
+    expect(stats.spots.some((s) => s.kind === 'mast-verschoben')).toBe(true);
   });
 });

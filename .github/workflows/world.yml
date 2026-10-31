@@ -173,12 +173,12 @@ jobs:
           - name: Tunnel drive test (through every built tunnel, both ways)
             run: npm run world:drivetest -- --tunnels
           - name: Gap check (every road, every 2 m, no holes or steps)
-            # ratchet (2026-10-25, Landkreis: 135; Saarlouis alone had 49): lower as fixes land
-            run: npm run world:gaps -- --max=145
+            # ratchet (2026-10-31, Landkreis: 99; was 135 before the road edge and slot fixes): lower as fixes land
+            run: npm run world:gaps -- --max=105
           - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags; road edges not floating)
-            # ratchet (2026-10-25, Landkreis 16.7 km² carriageway: 358 critical, 73 on main roads; Saarlouis 6.2 km²: 96/1856, 15 main,
-            # 8845 floating edges): edges provisional at the Saarlouis density, lower all of them as fixes land
-            run: npm run world:surface -- --max-critical=370 --max=6400 --max-critical-main=80 --max-edge-critical=25000
+            # ratchet (2026-10-31, Landkreis 18.9 km² carriageway: 300 critical, 65 on main roads, 6677 total, 28070 road edges
+            # floating 0.3 m or more; the same density as Saarlouis alone): lower as fixes land
+            run: npm run world:surface -- --max-critical=320 --max=7000 --max-critical-main=70 --max-edge-critical=29500
     name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4

@@ -9,7 +9,7 @@ export function groundClassOf(tags: Record<string, string>): { cls: GroundClass;
   if (tags.amenity === 'parking' || tags.amenity === 'fuel') return { cls: Ground.urban, prio: 4 };
   if (lu === 'forest' || nat === 'wood' || nat === 'scrub') return { cls: Ground.forest, prio: 3 };
   if (['grass', 'meadow', 'recreation_ground', 'village_green', 'cemetery', 'allotments', 'orchard', 'vineyard'].includes(lu) ||
-      ['park', 'garden', 'pitch', 'playground'].includes(lei) || nat === 'grassland') return { cls: Ground.grass, prio: 2 };
+      ['park', 'garden', 'pitch', 'playground'].includes(lei) || nat === 'grassland' || nat === 'heath') return { cls: Ground.grass, prio: 2 };
   if (lu === 'farmland' || lu === 'farmyard') return { cls: Ground.farmland, prio: 1 };
   if (['residential', 'commercial', 'industrial', 'retail', 'railway', 'construction'].includes(lu)) return { cls: Ground.urban, prio: 0 };
   return undefined;

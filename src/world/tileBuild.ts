@@ -1,7 +1,8 @@
 // Turns a decoded tile into ready-to-upload vertex arrays. Pure TypeScript without three.js or DOM,
 // so it runs in the tile worker (tileWorker.ts), on the main thread (stream.worker off) and in Node tests.
 import { GROUND_LOOK, lookWeights, SPLAT, SPLAT_AERIAL_REF } from './coverKinds.ts';
-import { Ground, TERRAIN_N, TERRAIN_STEP, type TileContent, type WorldInfo, tileOriginLocal } from './format.ts';
+import { Ground, TERRAIN_N, TERRAIN_STEP, type TileContent, type WorldInfo, tileKey, tileOfLocal, tileOriginLocal } from './format.ts';
+import { cutTerrain, readTunnels, tubeGeometry, type TunnelLine } from './tunnelGeom.ts';
 
 export interface MeshArrays {
   pos: Float32Array;
@@ -120,14 +121,20 @@ export function gridMesh(y: Float32Array, g: Uint8Array, n: number, step: number
   return { pos, col, uv, idx, nrm: computeNormals(pos, idx) };
 }
 
-function buildTerrain(t: TileContent, w: WorldInfo): { terrain: MeshArrays; water?: MeshArrays } {
+function buildTerrain(t: TileContent, w: WorldInfo, tunnels: TunnelLine[] = [], skirts: number[] = []): { terrain: MeshArrays; water?: MeshArrays } {
   const [ox, oz] = tileOriginLocal(w, t.ix, t.iy);
   const h = t.f32('terrain')!;
   const g = t.u8('ground')!;
   const N = TERRAIN_N;
-  const terrain = gridMesh(terrainHeights(t), g, N, TERRAIN_STEP, ox, oz);
-  const { pos, uv } = terrain as Required<MeshArrays>;
+  let terrain = gridMesh(terrainHeights(t), g, N, TERRAIN_STEP, ox, oz);
   coverAttributes(t, g, terrain);
+  // The grid as it is for the water below; the tunnels' cut only changes the drawn ground (tunnelGeom.ts).
+  const { pos, uv } = terrain as Required<MeshArrays>;
+  if (tunnels.length) {
+    const cut = cutTerrain(terrain as MeshArrays & { idx: Uint32Array }, tunnels);
+    terrain = { ...cut.mesh, nrm: computeNormals(cut.mesh.pos, cut.mesh.idx) };
+    skirts.push(...cut.skirts);
+  }
 
   let water: MeshArrays | undefined;
   if (g.some((v) => v === Ground.water)) {
@@ -203,7 +210,29 @@ export function buildTile(t: TileContent, w: WorldInfo): BuiltTile {
   const meshes: Record<string, MeshArrays> = {};
   // "collide" is physics only.
   for (const f of meshFields(t)) if (f !== 'collide') meshes[f] = buildMesh(t, f)!;
-  return { key: t.key, ix: t.ix, iy: t.iy, ...buildTerrain(t, w), meshes };
+  const tunnels = readTunnels(t.f32('tunnels'));
+  const skirts: number[] = [];
+  const built = buildTerrain(t, w, tunnels, skirts);
+  if (tunnels.length) Object.assign(meshes, tunnelMeshes(t, w, tunnels, skirts));
+  return { key: t.key, ix: t.ix, iy: t.iy, ...built, meshes };
+}
+
+/** Does this tile own the point (local x, z)? Tunnel segments are drawn and collided by the tile of their midpoint. */
+export const ownsPoint = (t: { ix: number; iy: number }, w: WorldInfo) => (x: number, z: number) => tileKey(...tileOfLocal(w, x, z)) === tileKey(t.ix, t.iy);
+
+/** Tube (concrete, with the terrain skirts) and light bands of the tunnels in a tile, as meshes "tunnel" and "tunnelLights". */
+function tunnelMeshes(t: TileContent, w: WorldInfo, tunnels: TunnelLine[], skirts: number[]): Record<string, MeshArrays> {
+  const { tube, lights } = tubeGeometry(tunnels, ownsPoint(t, w), skirts);
+  const out: Record<string, MeshArrays> = {};
+  if (tube.pos.length) {
+    const pos = Float32Array.from(tube.pos);
+    out.tunnel = { pos, nrm: computeNormals(pos), uv: Float32Array.from(tube.uv), col: Float32Array.from(tube.col) };
+  }
+  if (lights.length) {
+    const pos = Float32Array.from(lights);
+    out.tunnelLights = { pos, nrm: computeNormals(pos) };
+  }
+  return out;
 }
 
 /** All buffers of a built tile, for postMessage transfer. */

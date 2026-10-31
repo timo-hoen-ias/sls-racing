@@ -60,19 +60,23 @@ export class RoadMask {
 
 /** Points every 2 m on the centrelines of drivable roads with their half width, to find buildings standing on a road. */
 export class RoadLines {
-  /** Per 16 m cell: east, north, half width and way id of each point, flat. */
+  /** Per 16 m cell: east, north, half width, way id and the previous sample (NaN at a way's start or a gap) of each point, flat. */
   private cells = new Map<number, number[]>();
   private static readonly CELL = 16;
 
-  constructor(ways: Way[]) {
+  /** `keep` leaves out points of a way (a tunnel deep enough under the ground for a building on top). */
+  constructor(ways: Way[], keep: (w: Way, e: number, n: number) => boolean = () => true) {
     const C = RoadLines.CELL;
     for (const w of ways) {
       if (!isDrivable(w.tags)) continue;
       const hw = roadWidth(w.tags)! / 2;
+      let pe = NaN, pn = NaN;
       for (const [e, n] of densify(w.pts, 1)) {
+        if (!keep(w, e, n)) { pe = pn = NaN; continue; }
         const k = Math.floor(e / C) * 4_000_000 + Math.floor(n / C);
         if (!this.cells.has(k)) this.cells.set(k, []);
-        this.cells.get(k)!.push(e, n, hw, w.id);
+        this.cells.get(k)!.push(e, n, hw, w.id, pe, pn);
+        pe = e; pn = n;
       }
     }
   }
@@ -88,11 +92,22 @@ export class RoadLines {
     const r = 12;
     for (let x = Math.floor((x0 - r) / C); x <= Math.floor((x1 + r) / C); x++)
       for (let y = Math.floor((y0 - r) / C); y <= Math.floor((y1 + r) / C); y++)
-        for (let i = 0, c = this.cells.get(x * 4_000_000 + y) ?? []; i < c.length; i += 4) {
-          const e = c[i], n = c[i + 1], hw = c[i + 2], id = c[i + 3];
+        for (let j = 0, c = this.cells.get(x * 4_000_000 + y) ?? []; j < c.length; j += 6) {
+          const e = c[j], n = c[j + 1], hw = c[j + 2], id = c[j + 3], pe = c[j + 4], pn = c[j + 5];
           if (e >= x0 && e <= x1 && n >= y0 && n <= y1 && pointInRing(e, n, ring)) return id;
           for (const [re, rn] of ring) if (Math.hypot(re - e, rn - n) < hw - margin) return id;
+          // A wall thinner than the sample step: the centreline crosses one of its edges.
+          if (pe === pe && Math.max(e, pe) >= x0 && Math.min(e, pe) <= x1 && Math.max(n, pn) >= y0 && Math.min(n, pn) <= y1)
+            for (let i = 0; i < ring.length; i++) if (crosses(pe, pn, e, n, ring[i], ring[(i + 1) % ring.length])) return id;
         }
     return undefined;
   }
+}
+
+/** Whether segment a–b and segment p–q cross. */
+function crosses(ae: number, an: number, be: number, bn: number, [pe, pn]: [number, number], [qe, qn]: [number, number]) {
+  const side = (e: number, n: number, e0: number, n0: number, e1: number, n1: number) => (e1 - e0) * (n - n0) - (n1 - n0) * (e - e0);
+  const d1 = side(pe, pn, ae, an, be, bn), d2 = side(qe, qn, ae, an, be, bn);
+  const d3 = side(ae, an, pe, pn, qe, qn), d4 = side(be, bn, pe, pn, qe, qn);
+  return d1 * d2 < 0 && d3 * d4 < 0;
 }

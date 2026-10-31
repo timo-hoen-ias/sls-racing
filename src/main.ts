@@ -53,9 +53,11 @@ import { registerTrafficCommands } from './traffic/debugCommands.ts';
 import { Traffic } from './traffic/traffic.ts';
 import { loadVehicleParts } from './traffic/vehicleGlb.ts';
 import { WorldAudio } from './audio/worldAudio.ts';
+import { ChurchBells, strokesFor } from './audio/bells.ts';
 import { BridgeJoints } from './audio/bridgeJoints.ts';
 import { PropLayer } from './world/props.ts';
 import { RailLayer } from './world/rails.ts';
+import { TunnelLayer } from './world/tunnels.ts';
 import { StallLayer } from './world/stalls.ts';
 import { registerRoadsideCommands } from './world/roadsideCommands.ts';
 import { Vegetation } from './world/vegetation.ts';
@@ -154,6 +156,9 @@ async function boot() {
   // Guard rails: drawn per tile; their colliders come with the tile physics.
   const rails = new RailLayer();
   rails.register();
+  // Tunnels: tube, portals and lights per tile; tunnels.json lists them for tunnel.list / tunnel.tp.
+  const tunnels = await TunnelLayer.fetch(TILES_URL, index.world);
+  tunnels.register();
   // Painted stall lines on car parks.
   const stalls = new StallLayer();
   stalls.register();
@@ -193,6 +198,7 @@ async function boot() {
   view.scene.add(lampLights.root);
   view.post?.beams.sources.push(...carLights.heads, ...lampLights.pool);
   const forEachLamp = streamer.forEachLamp.bind(streamer);
+  const tunnelLamps = tunnels.forEachLamp.bind(tunnels);
   let boostFx = 0;
     const effects = new CarEffects(quality, carView.exhausts);
   view.scene.add(effects.root);
@@ -236,6 +242,20 @@ async function boot() {
   }, (e) => console.warn('[props] GLB nicht geladen, nehme die prozeduralen Modelle', e));
   loadShops().then((set) => shops.setShopSet(set), (e) => console.warn('[shops] GLB nicht geladen, keine Ladenfronten', e));
   loadHouses().then((set) => houses.setHouseSet(set), (e) => console.warn('[houses] GLB nicht geladen, keine gestalteten Häuser', e));
+  // Church bells strike the hour (sights.json churches via the game); made once the audio starts.
+  let bells: ChurchBells | undefined;
+  registerCommand({
+    name: 'sound.bells',
+    help: 'Kirchenglocken: an/aus oder jetzt läuten lassen',
+    args: '[an|aus|jetzt]',
+    run: ([v]) => {
+      if (!bells) return 'Ton noch nicht gestartet';
+      if (v === 'an' || v === 'aus') bells.enabled = v === 'an';
+      if (v === 'jetzt') bells.ring(strokesFor(view.daylight.hours), ip.x, ip.z);
+      const near = game.churches.filter((c) => Math.hypot(c.x - ip.x, c.z - ip.z) < 900).length;
+      return `Glocken ${bells.enabled ? 'an' : 'aus'} · ${game.churches.length} Kirchen, ${near} in Hörweite`;
+    },
+  });
   const worldAudio = new WorldAudio({
     R: RAPIER, world, graph, car: car.body, scene: view.scene,
     ignore: (c) => traffic.isSolid(c.parent()),
@@ -267,6 +287,7 @@ async function boot() {
     traffic.attachAudio(sound.context, sound.world);
     net.attachAudio(sound.context, sound.world);
     worldAudio.attach(sound);
+    bells = new ChurchBells(sound.context, sound.world);
     joints.onClick = (k) => worldAudio.ambience?.joint(k);
     await sound.resume().catch(() => {});
     await weather.startSound();
@@ -282,9 +303,12 @@ async function boot() {
   let hold: { x: number; y?: number; z: number; heading: number; frames: number; road?: boolean; wait?: number } | null = { ...spawn, frames: 0 };
   const groundRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   const groundAt = (x: number, z: number) => {
-    groundRay.origin = { x, y: 2000, z };
-    const hit = world.castRay(groundRay, 4000, true, undefined, undefined, undefined, car.body, (c) => !traffic.isSolid(c.parent()));
-    return hit ? 2000 - hit.timeOfImpact : undefined;
+    // In a tunnel the road, not the ground above it.
+    const floor = tunnels.floorAt(x, z);
+    const top = floor !== undefined ? floor + 2 : 2000;
+    groundRay.origin = { x, y: top, z };
+    const hit = world.castRay(groundRay, top + 2000, true, undefined, undefined, undefined, car.body, (c) => !traffic.isSolid(c.parent()));
+    return hit ? top - hit.timeOfImpact : undefined;
   };
 
   const prev = { p: new THREE.Vector3(), q: new THREE.Quaternion() };
@@ -599,6 +623,7 @@ async function boot() {
   bigMap.areas = () => game.areas();
   bigMap.stats = () => game.mapStats();
   rails.registerCommands(() => ({ x: ip.x, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
+  tunnels.registerCommands(() => ({ x: ip.x, y: ip.y, z: ip.z }), (x, z, heading) => teleport(x, z, heading, true));
   registerRoadsideCommands({ props, graph, player: () => ({ x: ip.x, z: ip.z }), teleport: (x, z, heading) => teleport(x, z, heading, true) });
   // Post-processing renders several passes; count draw calls for the whole frame, not the last pass.
   view.renderer.info.autoReset = false;
@@ -624,7 +649,7 @@ async function boot() {
     print: (t) => debug.print(t, 'info'),
   });
   registerLandmarkCommands(landmarks, () => (hold ?? ip));
-  registerPathCommands({ graph, scene: view.scene, pos: () => (hold ?? ip), teleport: (x, z, heading) => teleport(x, z, heading, true) });
+  registerPathCommands({ graph, scene: view.scene, pos: () => (hold ?? ip), teleport: (x, z, heading, road = true) => teleport(x, z, heading, road) });
   registerGroundCommands({ index, pos: () => (hold ?? ip), tiles: (fn) => streamer.forEachContent(fn) });
   guideSigns.registerCommands(() => (hold ?? ip), (x, z, heading) => teleport(x, z, heading, true));
   // Options menu (Esc / Start): saved settings are applied once every module has registered its commands.
@@ -807,7 +832,9 @@ async function boot() {
       const n = police.heat ? police.nearest({ x: ip.x, z: ip.z, vx: 0, vz: 0, speed: 0, heading: car.heading() }) : undefined;
       sfx.siren(n && !paused ? Math.max(0, 1 - n.d / 250) : 0, n?.side ?? 0, dt);
     }
-    carLights.update(night, rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
+    // In a tunnel the low beams come on and the lamp pool follows the tunnel lights.
+    tunnels.update(ip.x, ip.y, ip.z, dt);
+    carLights.update(Math.max(night, tunnels.inside), rs ? rs.brake > 0 && rs.speed > 1 : braking, rs ? rs.boost > 0.5 : car.boosting, dt);
     hitCooldown -= dt;
     if (hit > 0 && worldReady && hitCooldown <= 0) {
       const strength = Math.min(1, (hit - 3.5) / 12);
@@ -845,6 +872,7 @@ async function boot() {
     }
     traffic.update(simDt, worldReady ? { x: ip.x, z: ip.z, vx: lvel.x, vz: lvel.z, halfLength: CAR.halfExtents.z, halfWidth: CAR.halfExtents.x } : undefined, view.camera);
     if (worldReady) worldAudio.update(dt, ip, car.heading());
+    if (worldReady && bells) { bells.towers = game.churches; bells.update(view.daylight.hours, ip.x, ip.z); }
     props.update(view.camera);
     shops.update(view.camera, view.daylight.daylight);
     fuel.update(view.camera, view.daylight.daylight);
@@ -914,7 +942,8 @@ async function boot() {
 
     // Lamp lights gather around a point ahead of the car, where the driver looks.
     const ahead = fwd.set(0, 0, 25).applyQuaternion(iq);
-    lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
+    if (tunnels.inside > 0.05) lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, tunnelLamps, dt, Math.max(night, tunnels.inside));
+    else lampLights.update(night, ip.x + ahead.x, ip.z + ahead.z, forEachLamp, dt);
     boostFx += ((car.boosting ? 1 : 0) - boostFx) * (1 - Math.exp(-dt * 5));
     perf.begin('render');
     perf.gpuBegin();

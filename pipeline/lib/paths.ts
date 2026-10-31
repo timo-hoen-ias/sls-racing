@@ -13,7 +13,7 @@ import { CellSet } from './cellset.ts';
 export const PATH_LIFT = 0.06;
 /** Metres between the samples that test for roads; vertices are emitted every EMIT samples. */
 const TEST = 1;
-const EMIT = 2;
+const EMIT = 1;
 
 /** A footpath, cycle path or steps that is drawn: not in a tunnel or building, not on a bridge, not an area. */
 export function isPath(tags: Record<string, string>): boolean {
@@ -93,25 +93,24 @@ export function buildPaths(
       const keep: number[] = [];
       for (let k = i0; k <= i1; k++) if ((k - i0) % EMIT === 0 || k === i1) keep.push(k);
       const hw = width / 2;
-      // Right (uv.x 0) and left (uv.x 1) edge per kept sample, draped on the terrain mesh.
+      // Right (uv.x 0), centre and left (uv.x 1) per kept sample, each draped on the terrain mesh, so the strip
+      // follows the mesh creases across and along (every metre) instead of bridging them.
+      const across = [-hw, 0, hw];
       const edges = keep.map((k, q) => {
         const a = pts[keep[Math.max(0, q - 1)]], b = pts[keep[Math.min(keep.length - 1, q + 1)]];
         let dx = b[0] - a[0], dy = b[1] - a[1];
         const dl = Math.hypot(dx, dy) || 1;
         dx /= dl; dy /= dl;
         const [e, n] = pts[k];
-        return [-hw, hw].map((o) => {
+        return across.map((o) => {
           const ce = e - dy * o, cn = n + dx * o;
           const [x, z] = utmToLocal(world, ce, cn);
           return [x, ground(ce, cn) + PATH_LIFT, z] as const;
         });
       });
       let buf: TileBuild['paths'] | undefined;
-      let prev: [number, number] = [0, 0];
-      const put = (q: number): [number, number] => {
-        const [r, l] = edges[q];
-        return [buf!.vertex(r[0], r[1], r[2], { uv: [0, look] }), buf!.vertex(l[0], l[1], l[2], { uv: [1, look] })];
-      };
+      let prev: number[] = [];
+      const put = (q: number) => edges[q].map((p, j) => buf!.vertex(p[0], p[1], p[2], { uv: [j / (across.length - 1), look] }));
       for (let q = 1; q < keep.length; q++) {
         const [pe, pn] = pts[keep[q - 1]], [e, n] = pts[keep[q]];
         // Each segment goes into the tile of its midpoint; a new tile starts a new strip there.
@@ -119,8 +118,10 @@ export function buildPaths(
         if (t !== buf) { buf = t; prev = put(q - 1); }
         const cur = put(q);
         // Faces point up (same winding as the road strips).
-        buf.tri(prev[0], cur[0], prev[1]);
-        buf.tri(prev[1], cur[0], cur[1]);
+        for (let j = 0; j + 1 < cur.length; j++) {
+          buf.tri(prev[j], cur[j], prev[j + 1]);
+          buf.tri(prev[j + 1], cur[j], cur[j + 1]);
+        }
         prev = cur;
         stats.drawn[kind] = (stats.drawn[kind] ?? 0) + Math.hypot(e - pe, n - pn);
       }

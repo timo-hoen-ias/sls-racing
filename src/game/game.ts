@@ -29,6 +29,8 @@ import { Collectibles, DISTRICT_BONUS, placeTokens, TOKEN_REWARD } from './colle
 import { STEPS, Tutorial } from './tutorial.ts';
 import { type Destination, makeDelivery } from './delivery.ts';
 import { Discovery, DISTRICT_REWARD, type District, type Viewpoint, VIEWPOINT_REWARD } from './discovery.ts';
+import { flashScreen, type SpeedCamera, SpeedCameras } from './speedCameras.ts';
+import type { BellTower } from '../audio/bells.ts';
 import { Online } from '../net/online.ts';
 import { GhostRecorder, type GhostRun, ghostStore, GhostView, type Pose } from './ghost.ts';
 
@@ -219,6 +221,17 @@ export class Game {
     // "tp <ort>" for every town, village and district of the world.
     for (const dd of this.discovery.districts) addTeleportPlace(dd.name, dd.x, dd.z);
     this.collectibles.set(placeTokens(this.d.graph, this.discovery.districts));
+    // sights.json (pipeline/lib/sights.ts): named sights and stations join the viewpoints, speed cameras, churches.
+    try {
+      const r = await fetch(`${this.d.tilesUrl}/sights.json`);
+      if (r.ok && r.headers.get('content-type')?.includes('json')) {
+        const f = (await r.json()) as { sights?: { id: string; kind: string; name: string; x: number; z: number }[]; churches?: BellTower[]; cameras?: SpeedCamera[] };
+        const sights = (f.sights ?? []).map((v) => ({ id: v.id, name: v.name === v.kind ? v.kind : `${v.name} (${v.kind})`, x: v.x, z: v.z, radius: 6 }));
+        this.discovery.viewpoints = [...this.discovery.viewpoints.filter((v) => !v.id.startsWith('osm-')), ...sights];
+        this.cameras.list = f.cameras ?? [];
+        this.churches = f.churches ?? [];
+      }
+    } catch { /* optional file (older worlds) */ }
     console.info(`[events] ${this.events.length} Events in ${Math.round(performance.now() - t)} ms`);
   }
 
@@ -423,6 +436,7 @@ export class Game {
       this.trackPlace(car);
       this.updateGhost();
       if (!this.runner.busy) this.discovery.update(car.x, car.z, car.speed);
+      if (!this.runner.busy) this.cameras.update(car.x, car.z, car.speed);
       this.collectibles.update(this.runner.busy ? 0 : dt, this.runner.busy ? Infinity : car.x, car.z);
       if (car.speed * 3.6 > 60 && !this.tutorial.finished) this.tutorial.mark('drive');
       if (this.hint) this.hint.style.visibility = this.runner.busy || this.overlay ? 'hidden' : '';
@@ -516,6 +530,10 @@ export class Game {
   readonly discovery = new Discovery();
   /** Hidden tokens in every district (E7). */
   readonly collectibles = new Collectibles();
+  /** Mapped speed cameras as a challenge (sights.json). */
+  readonly cameras = new SpeedCameras();
+  /** Churches whose bells strike the hour (src/audio/bells.ts, wired in main). */
+  churches: BellTower[] = [];
 
   private wireDiscovery() {
     const { toast, sfx } = this.d;
@@ -542,6 +560,18 @@ export class Game {
         this.progress.reward(DISTRICT_BONUS.xp, DISTRICT_BONUS.credits, t.district);
         sfx.play('medal', 0.7);
       } else toast(`Sammelstück ${n}/${total}`, 1.5);
+    };
+    const cams = this.cameras;
+    for (const [k, v] of Object.entries(this.save.data.stats)) if (k.startsWith('blitzer:')) cams.best.set(k.slice(8), v);
+    cams.onPass = (p) => {
+      const previous = this.save.data.stats[`blitzer:${p.camera.id}`] ?? 0;
+      flashScreen();
+      sfx.play('point', 0.5);
+      const where = p.camera.street ? `Blitzer ${p.camera.street}` : 'Blitzer';
+      toast(`${where}: ${p.kmh} km/h${p.over > 0 ? ` (${p.over} zu schnell)` : ''} · Bestwert ${p.best}`, 2.2);
+      const r = SpeedCameras.reward(p, previous);
+      if (p.kmh > previous) { this.save.data.stats[`blitzer:${p.camera.id}`] = p.kmh; this.save.touch(); }
+      if (r.xp) this.progress.reward(r.xp, r.credits, where);
     };
     disc.onViewpoint = (v, n, total) => {
       keep();
@@ -838,6 +868,15 @@ export class Game {
       return `${t.district}: ${Math.round(Math.hypot(t.x - p.x, t.z - p.z))} m`;
     } });
     registerCommand({ name: 'collect.reset', help: 'Gefundene Sammelstücke vergessen', run: () => { this.collectibles.found.clear(); this.save.data.collected = []; this.save.touch(); return 'alle wieder versteckt'; } });
+    registerCommand({
+      name: 'blitzer',
+      help: 'Blitzer aus OSM: Bestwerte, Tempolimit und Entfernung (die Kamera misst beim Vorbeifahren)',
+      run: () => {
+        const p = pos(), cams = this.cameras.list;
+        if (!cams.length) return 'Keine Blitzer in dieser Welt.';
+        return cams.map((c, i) => `${i + 1}. ${c.street || '–'} · Limit ${c.limit} · Bestwert ${this.cameras.best.get(c.id) ?? '–'} km/h · ${Math.hypot(c.x - p.x, c.z - p.z).toFixed(0)} m`).join('\n');
+      },
+    });
     registerCommand({ name: 'discover.reset', help: 'Entdeckte Stadtteile und Aussichtspunkte vergessen', run: () => { this.discovery.found.clear(); this.save.data.discovered = []; this.save.touch(); return 'alles wieder unentdeckt'; } });
     registerToggle('ghost', 'Geist der eigenen Bestfahrt in Sprints und Rundkursen', () => this.ghosts, (v) => (this.ghosts = v));
     registerCommand({ name: 'ghost.clear', help: 'Gespeicherte Geister löschen (alle oder eines)', args: '[event-id]', run: ([id]) => { ghostStore.clear(id); return id ? `Geist ${id} gelöscht` : 'alle Geister gelöscht'; } });

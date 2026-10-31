@@ -4,7 +4,7 @@
 // headroom, ramping the lift down along the connected road network. Lifted roads get their own
 // collision, so the car drives on them rather than on the terrain below.
 import type { Way } from './osm.ts';
-import { densify, isBridge, isDrivable, roadSurfaceHeights } from './roads.ts';
+import { builtTunnel, densify, isBridge, isDrivable, roadSurfaceHeights } from './roads.ts';
 
 /** Headroom between the lower road and the upper deck. */
 export const CLEARANCE = 4.8;
@@ -13,7 +13,7 @@ const GRADE = 0.06;
 
 const level = (t: Record<string, string>) => {
   const l = parseInt(t.layer);
-  return Number.isFinite(l) ? l : isBridge(t) ? 1 : 0;
+  return Number.isFinite(l) ? l : isBridge(t) ? 1 : builtTunnel(t) ? -1 : 0;
 };
 
 /** Where segment ab crosses segment cd: [t along ab, u along cd], or undefined. */
@@ -117,9 +117,11 @@ export function liftOverpasses(ways: Way[], height: (e: number, n: number) => nu
   const pinned = new Set<number>();
   const found: { upper: Way; i: number; t: number; lower: Way; j: number; u: number }[] = [];
   const separate = (upper: Way, i: number, t: number, lower: Way, j: number, u: number) => {
-    found.push({ upper, i, t, lower, j, u });
     pinned.add(lower.ids[j]);
     pinned.add(lower.ids[j + 1]);
+    // A tunnel below goes under the ground: its depth and clear height are tunnels.ts's, the road above stays.
+    if (builtTunnel(lower.tags)) return;
+    found.push({ upper, i, t, lower, j, u });
     const lift = CLEARANCE - (at(base.get(upper)!, i, t) - at(base.get(lower)!, j, u));
     if (lift > 0) for (const n of [upper.ids[i], upper.ids[i + 1]]) need.set(n, Math.max(need.get(n) ?? 0, lift));
   };

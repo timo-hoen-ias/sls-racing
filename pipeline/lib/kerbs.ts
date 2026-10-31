@@ -105,7 +105,8 @@ export function planKerbs(ways: Way[], polygons: Polygon[], points: OsmData['poi
     const rural = motorway || (ruralByTags(w.tags) ?? built.share(w) < 0.5);
     w.urban = !rural;
     const tagged = taggedSidewalks(w.tags);
-    if (!KERB_CLASSES.has(hw) || motorway || (w.tags.bridge && w.tags.bridge !== 'no')) { w.sidewalks = { left: false, right: false }; continue; }
+    // Bridges have their own walkway caps, tunnels the tube's emergency walkways (tunnelGeom.ts).
+    if (!KERB_CLASSES.has(hw) || motorway || (w.tags.bridge && w.tags.bridge !== 'no') || w.tags['sls:tunnel'] === 'yes') { w.sidewalks = { left: false, right: false }; continue; }
     if (tagged) { w.sidewalks = tagged; stats.tagged++; if (tagged.left || tagged.right) w.urban = true; continue; }
     w.sidewalks = { left: !rural, right: !rural };
     if (rural) stats.rural++; else stats.urban++;

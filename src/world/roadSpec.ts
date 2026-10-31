@@ -2,6 +2,15 @@
 // Lane widths follow German guidelines (RAA/RAL/RASt): 3.75 m on motorways, 3.5 m on trunk and primary roads,
 // 3.25 m on secondary and tertiary roads, about 3 m in residential streets.
 
+/** Feldwege (highway=track, and unpaved paths outside town promoted to tracks, pipeline/lib/fieldWays.ts). */
+export const FIELD_WAY = {
+  /** Narrowest carriageway, metres, also over a smaller width tag. */
+  min: 3.6,
+  /** Wheel ruts: centre offset either side of the way's centre and half width, metres. */
+  rut: 0.8,
+  rutHalf: 0.26,
+};
+
 interface ClassSection {
   /** Lane width, metres. */
   lane: number;
@@ -31,7 +40,9 @@ const SECTIONS: Record<string, ClassSection> = {
   living_street: { lane: 2.5, outer: 0, inner: 0, lanes: 2, min: 3.5 },
   pedestrian: { lane: 3, outer: 0, inner: 0, lanes: 2, min: 4 },
   service: { lane: 2, outer: 0, inner: 0, lanes: 2, min: 3 },
-  track: { lane: 1.5, outer: 0, inner: 0, lanes: 2, min: 2.5 },
+  // Feldwege and forest tracks: real ones are 2.5–3.5 m; the game builds them 4 m wide (at least 3.6 m, also
+  // where OSM has a narrower width tag) so two wheel ruts and a grass strip fit and they can be driven like a rally stage.
+  track: { lane: 2, outer: 0, inner: 0, lanes: 2, min: FIELD_WAY.min },
 };
 
 /**
@@ -115,7 +126,7 @@ export function roadSection(tags: Record<string, string>, as: RoadProfile = prof
   const natural = lanes * s.lane + (oneway ? s.outer + s.inner : 2 * s.outer);
   const w = parseFloat(tags.width);
   const explicit = w > 2 && w < 40;
-  const base = explicit ? w : Math.max(s.min, natural);
+  const base = explicit ? (tags.highway === 'track' ? Math.max(w, s.min) : w) : Math.max(s.min, natural);
   // Game profile: wider, but within the street space (keeping sidewalks of MIN_SIDEWALK), never narrower.
   const street = parseFloat(tags['sls:street']);
   const room = street > 0 ? street - 2 * MIN_SIDEWALK : Infinity;
@@ -169,6 +180,8 @@ export function noCars(tags: Record<string, string>): boolean {
 /** Entrances that get a row of bollards: pedestrian zones and roads explicitly closed to all motor vehicles. */
 export function bollardedEntry(tags: Record<string, string>): boolean {
   if (tags.highway === 'pedestrian') return true;
+  // Feldwege stay open for rally driving.
+  if (tags.highway === 'track') return false;
   const v = tags.motorcar ?? tags.motor_vehicle ?? tags.vehicle ?? tags.access;
   return v === 'no';
 }

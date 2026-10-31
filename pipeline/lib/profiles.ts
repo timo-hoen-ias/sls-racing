@@ -6,7 +6,7 @@
 // short filter keeps as bumps; real roads are built with long vertical curves, so the profile is smoothed
 // over a length that grows with the road class.
 import { SYNTHETIC_NODE, type Way } from './osm.ts';
-import { ROAD_CLASSES, densify, isBridge, isDrivable, roadWidth } from './roads.ts';
+import { ROAD_CLASSES, builtTunnel, densify, isBridge, isDrivable, roadWidth } from './roads.ts';
 
 /** Spacing of profile samples (m). */
 export const PROFILE_STEP = 2;
@@ -15,6 +15,8 @@ const MEDIAN = 3;
 /** Gaussian smoothing after the median (sigma, m): long on fast roads with big vertical curves, shorter in town. */
 export function profileSigma(highway: string) {
   const rank = ROAD_CLASSES[highway]?.rank ?? 0;
+  // Feldwege: a little longer than service ways, so roots and ruts in the forest floor scan are not built in.
+  if (highway === 'track') return 12;
   return rank >= 8 ? 28 : rank >= 5 ? 16 : rank >= 2 ? 11 : 8;
 }
 /**
@@ -109,10 +111,12 @@ export function profileRoughness(ways: Way[]): Roughness {
 
 /**
  * Sets `way.profile` (terrain height every PROFILE_STEP metres along the way, filtered and pinned to node
- * heights) on every drivable road that is not a bridge. Bridge nodes are pinned to their decks (`anchors`).
+ * heights) on every drivable road that is not a bridge or tunnel. Bridge nodes are pinned to their decks, tunnel
+ * portals to the road outside (`anchors`).
  */
 export function roadProfiles(ways: Way[], height: (e: number, n: number) => number, anchors: Map<number, number>): ProfileReport {
-  const roads = ways.filter((w) => isDrivable(w.tags) && !isBridge(w.tags));
+  // Tunnels get theirs from tunnels.ts (portal to portal under the ground), like bridges from their decks.
+  const roads = ways.filter((w) => isDrivable(w.tags) && !isBridge(w.tags) && !builtTunnel(w.tags));
   // Raw terrain samples per road, with the distance of each original node along it.
   const raw = new Map<Way, { ys: number[]; nodeAt: number[] }>();
   for (const w of roads) {

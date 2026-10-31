@@ -1,5 +1,5 @@
 // House addresses for the GPS from the official Hauskoordinaten of the LVGL Saarland (dl-de/by-2-0).
-//   node pipeline/addresses.ts saarlouis
+//   node pipeline/addresses.ts landkreis-saarlouis
 // Needs data/raw/<region>/osm.json (pipeline/fetch.ts) for the boundary. Output: public/data/addresses.json
 // (see AddressData in src/nav/addresses.ts). The file is small and committed, so the deploy build needs no download.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -59,6 +59,8 @@ async function main() {
   const streetIdx = new Map<string, number>();
   const a: AddressData['a'] = [];
   const towns = new Set<string>();
+  const townNames: string[] = [];
+  const townIdx = new Map<string, number>();
   for (const line of lines.slice(1)) {
     const f = line.split(';');
     if (f.length < head.length) continue;
@@ -69,10 +71,12 @@ async function main() {
     if (f[cPlz] !== plz && !osm.boundary.some((r) => pointInRing(e, n, r))) continue;
     const street = f[cStn];
     if (!streetIdx.has(street)) { streetIdx.set(street, streets.length); streets.push(street); }
-    a.push([streetIdx.get(street)!, `${f[cHnr]}${f[cAdz]}`, Math.round(e * 10) / 10, Math.round(n * 10) / 10, f[cPlz]]);
+    const town = f[cOnm];
+    if (!townIdx.has(town)) { townIdx.set(town, townNames.length); townNames.push(town); }
+    a.push([streetIdx.get(street)!, `${f[cHnr]}${f[cAdz]}`, Math.round(e * 10) / 10, Math.round(n * 10) / 10, f[cPlz], townIdx.get(town)!]);
     towns.add(`${f[cPlz]} ${f[cOnm]}`);
   }
-  const out: AddressData = { v: 1, attribution: HK_ATTRIBUTION, streets, a };
+  const out: AddressData = { v: 1, attribution: HK_ATTRIBUTION, streets, towns: townNames, a };
   mkdirSync('public/data', { recursive: true });
   writeFileSync('public/data/addresses.json', JSON.stringify(out));
   console.log(`Addresses: ${a.length} in ${streets.length} streets (${[...towns].sort().join(', ')}) → public/data/addresses.json`);

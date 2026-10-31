@@ -54,7 +54,7 @@ export const missing = (what: string, dir: string, regions: RegionConfig[]) =>
 
 /** Bridge decks from DOM1 (where available), then lifts for crossings that still lack headroom. */
 export function roadHeights(ways: Way[], regions: RegionConfig[], height: (e: number, n: number) => number, log = (_: string) => {}) {
-  const dom = regions.some((r) => r.laser?.dom1?.length) ? laserSampler(paths.dom1) : undefined;
+  const dom = regions.some((r) => r.laser?.dom1?.length) ? laserSampler(paths.dom1, 128) : undefined;
   if (dom && !dom.tiles) throw missing('DOM1', paths.dom1, regions);
   const rough = demoteRoughFieldPaths(ways, height, (w) => isDrivable(w.tags));
   log(`Feldwege: ${rough.steep + rough.slope + rough.crossing} unpaved paths left as paths (${rough.steep} steep, ${rough.slope} on a steep slope, ${rough.crossing} crossing a road without a junction)`);

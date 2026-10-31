@@ -2,10 +2,11 @@ import { type Fillet, inFillet } from './fillets.ts';
 import { pointInRing, type Way } from './osm.ts';
 import { densify, isDrivable, roadWidth } from './roads.ts';
 import { roadSection } from '../../src/world/roadSpec.ts';
+import { CellSet } from './cellset.ts';
 
 /** Marks the drivable road surface plus a safety margin on a 2 m grid, so trees never stand on a road. */
 export class RoadMask {
-  private cells = new Set<number>();
+  private cells = new CellSet();
   private static readonly CELL = 2;
 
   private margin: number;
@@ -22,7 +23,7 @@ export class RoadMask {
         const ce = Math.round(e / C), cn = Math.round(n / C);
         for (let dx = -k; dx <= k; dx++)
           for (let dy = -k; dy <= k; dy++)
-            if (Math.hypot(dx * C, dy * C) <= r + C * 0.5) this.cells.add(RoadMask.key(ce + dx, cn + dy));
+            if (Math.hypot(dx * C, dy * C) <= r + C * 0.5) this.cells.add(ce + dx, cn + dy);
       }
     }
   }
@@ -36,7 +37,7 @@ export class RoadMask {
         const ce = Math.round(e / C), cn = Math.round(n / C);
         for (let dx = -k; dx <= k; dx++)
           for (let dy = -k; dy <= k; dy++)
-            if (Math.hypot(dx * C, dy * C) <= r + C * 0.5) this.cells.add(RoadMask.key(ce + dx, cn + dy));
+            if (Math.hypot(dx * C, dy * C) <= r + C * 0.5) this.cells.add(ce + dx, cn + dy);
       }
     }
   }
@@ -48,23 +49,19 @@ export class RoadMask {
       const pad = Math.max(0, m) + C;
       for (let cx = Math.floor((Math.min(...f.e) - pad) / C); cx <= Math.ceil((Math.max(...f.e) + pad) / C); cx++)
         for (let cy = Math.floor((Math.min(...f.n) - pad) / C); cy <= Math.ceil((Math.max(...f.n) + pad) / C); cy++)
-          if (inFillet(f, cx * C, cy * C, m + C * 0.5)) this.cells.add(RoadMask.key(cx, cy));
+          if (inFillet(f, cx * C, cy * C, m + C * 0.5)) this.cells.add(cx, cy);
     }
   }
 
-  private static key(cx: number, cy: number) {
-    return cx * 4_000_000 + cy;
-  }
-
   has(e: number, n: number) {
-    return this.cells.has(RoadMask.key(Math.round(e / RoadMask.CELL), Math.round(n / RoadMask.CELL)));
+    return this.cells.has(Math.round(e / RoadMask.CELL), Math.round(n / RoadMask.CELL));
   }
 }
 
 /** Points every 2 m on the centrelines of drivable roads with their half width, to find buildings standing on a road. */
 export class RoadLines {
-  /** Centreline samples: east, north, half width, way id and the previous sample (NaN at a way's start or a gap). */
-  private cells = new Map<number, [number, number, number, number, number, number][]>();
+  /** Per 16 m cell: east, north, half width, way id and the previous sample (NaN at a way's start or a gap) of each point, flat. */
+  private cells = new Map<number, number[]>();
   private static readonly CELL = 16;
 
   /** `keep` leaves out points of a way (a tunnel deep enough under the ground for a building on top). */
@@ -78,7 +75,7 @@ export class RoadLines {
         if (!keep(w, e, n)) { pe = pn = NaN; continue; }
         const k = Math.floor(e / C) * 4_000_000 + Math.floor(n / C);
         if (!this.cells.has(k)) this.cells.set(k, []);
-        this.cells.get(k)!.push([e, n, hw, w.id, pe, pn]);
+        this.cells.get(k)!.push(e, n, hw, w.id, pe, pn);
         pe = e; pn = n;
       }
     }
@@ -95,7 +92,8 @@ export class RoadLines {
     const r = 12;
     for (let x = Math.floor((x0 - r) / C); x <= Math.floor((x1 + r) / C); x++)
       for (let y = Math.floor((y0 - r) / C); y <= Math.floor((y1 + r) / C); y++)
-        for (const [e, n, hw, id, pe, pn] of this.cells.get(x * 4_000_000 + y) ?? []) {
+        for (let j = 0, c = this.cells.get(x * 4_000_000 + y) ?? []; j < c.length; j += 6) {
+          const e = c[j], n = c[j + 1], hw = c[j + 2], id = c[j + 3], pe = c[j + 4], pn = c[j + 5];
           if (e >= x0 && e <= x1 && n >= y0 && n <= y1 && pointInRing(e, n, ring)) return id;
           for (const [re, rn] of ring) if (Math.hypot(re - e, rn - n) < hw - margin) return id;
           // A wall thinner than the sample step: the centreline crosses one of its edges.

@@ -27,7 +27,7 @@ import { matchLevels } from './lib/levels.ts';
 import { matchRampHeights, planRamps } from './lib/ramps.ts';
 import { smoothBends, splineCurves } from './lib/smooth.ts';
 import { loadRegion, loadWorld, paths, unproject, useRoadProfile } from './lib/region.ts';
-import { builtTunnel, densify, isMotorRoad, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
+import { builtTunnel, densify, isDrivable, isMotorRoad, roadSurfaceHeights, roadWidth, ROAD_CLASSES } from './lib/roads.ts';
 import { tunnelChains } from './lib/tunnels.ts';
 import { readTunnels, tunnelOver } from '../src/world/tunnelGeom.ts';
 
@@ -35,7 +35,7 @@ import { readTunnels, tunnelOver } from '../src/world/tunnelGeom.ts';
 scaleCar(VEHICLE.scale);
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? def;
-const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'saarlouis';
+const region = process.argv.slice(2).find((a) => !a.startsWith('-')) ?? 'landkreis-saarlouis';
 const ROUTES = +arg('routes', '60');
 const SEED = +arg('seed', '1');
 const ONLY = arg('way', '');
@@ -253,7 +253,8 @@ async function main() {
   const fails: string[] = [];
   if (TUNNELS) {
     // Approach, tube and exit as one route, in both directions.
-    const roads = osm.ways.filter((w) => isMotorRoad(w.tags) && !builtTunnel(w.tags));
+    // Every drivable way, also one closed to cars: a farm track tunnel is approached on its tracks.
+    const roads = osm.ways.filter((w) => isDrivable(w.tags) && !builtTunnel(w.tags));
     const outside = (id: number) => {
       for (const r of roads) {
         const i = r.ids.indexOf(id);
@@ -271,7 +272,9 @@ async function main() {
       const first = parts[0], last = parts[parts.length - 1];
       const a = first.reversed ? first.way.ids[first.way.ids.length - 1] : first.way.ids[0];
       const b = last.reversed ? last.way.ids[0] : last.way.ids[last.way.ids.length - 1];
-      const fwd = [...outside(a).reverse(), ...tube.slice(1), ...outside(b).slice(1)];
+      // A portal with no motor road on (a track, or the region edge) starts or ends the run at the tube itself.
+      const head = outside(a).reverse();
+      const fwd = [...(head.length ? head : [tube[0]]), ...tube.slice(1), ...outside(b).slice(1)];
       for (const pts of [fwd, fwd.slice().reverse()]) {
         currentWay = `tunnel ${chain.name || chain.ways[0].id}`;
         const res = driveRoute(pts, height(...pts[0]) + 0.3, chain.ways[0].tags);

@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import type { GameSfx } from '../audio/gameSfx.ts';
 import { registerChoice, registerCommand, registerToggle, registerValue } from '../debug/registry.ts';
+import { addTeleportPlace } from '../debug/gameCommands.ts';
 import type { Navigation } from '../nav/navigation.ts';
 import type { MapMarker } from '../ui/mapDraw.ts';
 import { EventHud } from '../ui/eventHud.ts';
@@ -217,6 +218,8 @@ export class Game {
       const r = await fetch(`${this.d.tilesUrl}/districts.json`);
       if (r.ok && r.headers.get('content-type')?.includes('json')) this.discovery.districts = ((await r.json()) as { districts?: District[] }).districts ?? [];
     } catch { /* optional file (older worlds) */ }
+    // "tp <ort>" for every town, village and district of the world.
+    for (const dd of this.discovery.districts) addTeleportPlace(dd.name, dd.x, dd.z);
     this.collectibles.set(placeTokens(this.d.graph, this.discovery.districts));
     // sights.json (pipeline/lib/sights.ts): named sights and stations join the viewpoints, speed cameras, churches.
     try {

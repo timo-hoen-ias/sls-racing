@@ -34,10 +34,21 @@ describe('addresses', () => {
     expect(b.find('französische 7')[0].street).toBe('Französische Straße');
   });
 
-  it('ships the committed Saarlouis address file', () => {
+  it('tells towns apart that share a street name', () => {
+    const b = new AddressBook({
+      v: 1, attribution: 'test', streets: ['Hauptstraße'], towns: ['Lebach', 'Schmelz'],
+      a: [[0, '5', 350000, 5470000, '66822', 0], [0, '5', 340000, 5480000, '66839', 1]],
+    });
+    expect(b.find('Hauptstraße 5').map((a) => a.label)).toEqual(['Hauptstraße 5, Lebach', 'Hauptstraße 5, Schmelz']);
+    expect(b.find('hauptstr 5, schmelz').map((a) => a.town)).toEqual(['Schmelz']);
+    expect(b.find('hauptstr, 5').length).toBe(2);
+  });
+
+  it('ships the committed address file of the Landkreis', () => {
     const real = JSON.parse(readFileSync('public/data/addresses.json', 'utf8')) as AddressData;
     const b = new AddressBook(real);
-    expect(b.list.length).toBeGreaterThan(5000);
+    expect(b.list.length).toBeGreaterThan(50000);
+    expect(b.find('Pestalozzistraße 1, Lebach')[0]?.town).toBe('Lebach');
     expect(b.find('Großer Markt 1')[0]?.street).toBe('Großer Markt');
   });
 });

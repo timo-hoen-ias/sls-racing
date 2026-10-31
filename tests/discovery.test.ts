@@ -33,4 +33,16 @@ describe('discovering the town (W5)', () => {
     }, (e, n) => [e, -n]);
     expect(list).toEqual([{ name: 'Innenstadt', x: 50, z: -50 }, { name: 'Roden', x: 20, z: -80 }]);
   });
+
+  it('names only the home town "Innenstadt" in a district with several towns', () => {
+    const list = districtList({
+      boundary: [[[0, 0], [1000, 0], [1000, 1000], [0, 1000]]],
+      points: [
+        { id: 1, tags: { place: 'town', name: 'Dillingen/Saar' }, e: 800, n: 900 },
+        { id: 2, tags: { place: 'town', name: 'Saarlouis' }, e: 100, n: 100 },
+        { id: 3, tags: { place: 'town', name: 'Lebach' }, e: 900, n: 100 },
+      ],
+    }, (e, n) => [e, -n], [120, 90]);
+    expect(list.map((d) => d.name)).toEqual(['Dillingen/Saar', 'Innenstadt', 'Lebach']);
+  });
 });

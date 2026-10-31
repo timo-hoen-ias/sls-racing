@@ -60,19 +60,21 @@ export function footings(h: number, pole: boolean): [number, number][] {
   return [[-b, -b], [b, -b], [b, b], [-b, b]];
 }
 
-/** Steps (m) a support is moved along its line to get its footings off a carriageway: OSM places some a few metres
- * off, and a pylon leg or pole on the road is a wall to drive into. */
+/** Steps (m) a support is moved to get its footings off a carriageway: OSM places some a few metres off, and a
+ * pylon leg or pole on the road is a wall to drive into. Along the line first, across it where the line follows
+ * the road. */
 const SHIFTS = [2, -2, 4, -4, 6, -6, 8, -8, 10, -10, 12, -12];
 
 /**
- * The support position with no footing on a road (`onRoad`), moved along the line by the smallest step that
- * clears it; unchanged when it stands clear already or no step does.
+ * The support position with no footing on a road (`onRoad`), moved by the smallest step along the line (else
+ * across it) that clears it; unchanged when it stands clear already or no step does.
  */
 export function clearOfRoads(e: number, n: number, ae: number, an: number, feet: [number, number][], onRoad: (e: number, n: number) => boolean): [number, number] {
   const le = -an, ln = ae;
   const hits = (ce: number, cn: number) => feet.some(([x, z]) => onRoad(ce + ae * x + le * z, cn + an * x + ln * z));
   if (!hits(e, n)) return [e, n];
   for (const d of SHIFTS) if (!hits(e + le * d, n + ln * d)) return [e + le * d, n + ln * d];
+  for (const d of SHIFTS) if (!hits(e + ae * d, n + an * d)) return [e + ae * d, n + an * d];
   return [e, n];
 }
 

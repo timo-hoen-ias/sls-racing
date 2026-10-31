@@ -58,6 +58,11 @@ describe('power lines', () => {
     expect(n).toBe(0);
     expect(feet.every(([x, z]) => !onRoad(e + z))).toBe(true);
     expect(Math.abs(e - 5)).toBeLessThanOrEqual(4);
+    // A line along the road: moving along it never clears the legs, moving across does.
+    const [ae2, an2] = [1, 0];
+    const along = clearOfRoads(1, 50, ae2, an2, feet, onRoad);
+    expect(feet.every(([x]) => !onRoad(along[0] + x))).toBe(true);
+    expect(along[1]).toBe(50);
     // In the middle of a wide road nothing within reach clears it: it stays.
     expect(clearOfRoads(0, 0, 0, -1, feet, () => true)).toEqual([0, 0]);
   });

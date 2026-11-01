@@ -4,6 +4,8 @@
 #   ./unreal/sls.sh setup     textures from the web game + C++ build + content (materials via Content/Python/sls_setup.py)
 #   ./unreal/sls.sh build     C++ build (editor target, Development)
 #   ./unreal/sls.sh parity    headless drivability check of the whole world (road.parity all max=0), exit code
+#   ./unreal/sls.sh check     headless absolute road check (road.check all: holes, bumps, steps, snags, gaps, edges against
+#                             the drawn surface, no web reference) → Saved/road-check.json, exit code; extra args go to road.check
 #   ./unreal/sls.sh bench     headless car check against the web car (car.bench fun + real), exit code
 #   ./unreal/sls.sh play      game window (no cooking needed)
 #   ./unreal/sls.sh editor    open the project in the editor
@@ -54,6 +56,11 @@ case "${1:-play}" in
     headless "road.parity all max=0 exit"
     echo "Ergebnis: $SAVED/road-parity.json"
     ;;
+  check)
+    shift
+    headless "road.check all exit ${*:-max=0}"
+    echo "Ergebnis: $SAVED/road-check.json"
+    ;;
   bench)
     rc=0
     headless "car.bench fun exit" || rc=1; cp -f "$SAVED/car-bench.json" "$SAVED/car-bench-fun.json" 2>/dev/null || true
@@ -63,5 +70,5 @@ case "${1:-play}" in
     ;;
   play) need_engine; need_world; shift || true; "$EDITOR" "$PROJ" -game -windowed -ResX=1920 -ResY=1080 -log "$@" ;;
   editor) need_engine; "$EDITOR" "$PROJ" ;;
-  *) echo "usage: $0 world|setup|build|parity|bench|play|editor"; exit 1 ;;
+  *) echo "usage: $0 world|setup|build|parity|check|bench|play|editor"; exit 1 ;;
 esac

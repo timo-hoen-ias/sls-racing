@@ -354,7 +354,9 @@ void USlsWorldSubsystem::Tick(float DeltaTime)
 	{
 		const FIntPoint T(F->IX, F->IY);
 		Pending.Remove(T);
-		if (bPaused || FindTile(T) || F->Layers.Num() == 0) continue;
+		// A tile listed in the index without a readable file: drop it from the set, else it is read again every frame.
+		if (F->Layers.Num() == 0) { TileSet.Remove(T); UE_LOG(LogSls, Warning, TEXT("Kachel %d_%d nicht lesbar, wird nicht mehr geladen"), T.X, T.Y); continue; }
+		if (bPaused || FindTile(T)) continue;
 		Files.Add(T, F);
 		const FVector2D O = FVector2D(F->OriginUE) + FVector2D(World.TileSize * 50.0);
 		const bool bPhys = FVector2D::Distance(O, FVector2D(Focus)) < GStreamPhysRadius * 100.0 + World.TileSize * 71.0;

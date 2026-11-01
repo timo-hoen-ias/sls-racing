@@ -26,7 +26,7 @@ INCLUDE = '/SlsRacing/SlsPbr.ush'
 
 
 def import_textures():
-    names = ['T_Sls_%s_%s.png' % (a, m) for a in ATLASES for m in MAPS] + ['T_Sls_waternormals.jpg', 'T_Sls_puddles.png']
+    names = ['T_Sls_%s_%s.png' % (a, m) for a in ATLASES for m in MAPS] + ['T_Sls_waternormals.jpg', 'T_Sls_puddles.png', 'T_Sls_signs.png']
     missing = [n for n in names if not os.path.exists(os.path.join(TEX_SRC, n))]
     if missing:
         raise RuntimeError('Texturen fehlen in %s: %s (node unreal/tools/export-textures.ts)' % (TEX_SRC, ', '.join(missing)))
@@ -45,6 +45,8 @@ def import_textures():
         name = os.path.splitext(n)[0]
         tex = unreal.load_asset('/Game/Textures/' + name)
         if name.endswith('_albedo'):
+            tex.set_editor_property('srgb', True)
+        elif name == 'T_Sls_signs':
             tex.set_editor_property('srgb', True)
         elif name == 'T_Sls_puddles':
             # the mask the road shader and (later) the car's aquaplaning share: exact grey values, wraps over 180 m
@@ -86,11 +88,19 @@ def parameter_collection():
     return mpc
 
 
+def clear_material(m):
+    """Removes every expression. MEL.delete_all_material_expressions deletes while it iterates the same array, so it
+    skips every other node: each re-run left half the old graph behind (a stale Single Layer Water output without
+    inputs broke M_SlsWater)."""
+    for e in list(MEL.get_material_expressions(m)):
+        MEL.delete_material_expression(m, e)
+
+
 def material_in_place(name):
     path = '/Game/Materials/' + name
     if EAL.does_asset_exist(path):
         m = EAL.load_asset(path)
-        MEL.delete_all_material_expressions(m)
+        clear_material(m)
         return m
     return tools.create_asset(name, '/Game/Materials', unreal.Material, unreal.MaterialFactoryNew())
 
@@ -169,15 +179,19 @@ def head(body):
             'float3 n = normalize(SlsDirToWeb(VN));\n' + body)
 
 
-def surface_material(name, tex, mpc, body, uvs=0, vcol=False, bias=None, masked=False, metallic=None, puddles=False, two_sided=False):
+def surface_material(name, tex, mpc, body, uvs=0, vcol=False, bias=None, masked=False, metallic=None, puddles=False, two_sided=False,
+                     instanced=False, extra=None):
     m = material_in_place(name)
     m.set_editor_property('two_sided', two_sided)
+    if instanced:
+        m.set_editor_property('used_with_instanced_static_meshes', True)
     m.set_editor_property('tangent_space_normal', False)
     if masked:
         m.set_editor_property('blend_mode', unreal.BlendMode.BLEND_MASKED)
     g = Graph(m)
     outs = [('Rough', F1), ('NormalWS', F3)] + ([('Keep', F1)] if masked else [])
-    c = g.custom(head(body), F3, surface_inputs(g, tex, mpc, uvs, vcol, puddles), outs)
+    ins = surface_inputs(g, tex, mpc, uvs, vcol, puddles) + [(nm, (mk(g), '')) for nm, mk in (extra or [])]
+    c = g.custom(head(body), F3, ins, outs)
     g.out(c, unreal.MaterialProperty.MP_BASE_COLOR)
     g.out(c, unreal.MaterialProperty.MP_ROUGHNESS, 'Rough')
     g.out(c, unreal.MaterialProperty.MP_NORMAL, 'NormalWS')
@@ -219,6 +233,30 @@ def world_materials(tex, mpc):
     # buildings (until the facade shader is ported), tunnel tubes, stalls: the export's sRGB vertex colours
     surface_material('M_SlsVertexColor', tex, mpc,
                      'c.Albedo = SlsSrgbToLinear(VC.rgb);\nc.Rough = 0.8;\n' + wx(0.5, 0.9) + END, vcol=True, two_sided=True)
+
+
+def prop_materials(tex, mpc):
+    """Street furniture and parked cars (models.slsu parts, HISM per part): props.ts materials with the weather."""
+    # props: vertex colours with chipped paint and grime (patchPaintedMetal 'props'), roughness 0.7, metalness 0.1
+    surface_material('M_SlsProp', tex, mpc,
+                     'float l = SlsPaintedMetal(SLS_TEX_NODE, c, p, n);\n'
+                     'if (c.Debug < 0.5) c.Albedo = SlsSrgbToLinear(VC.rgb) * l;\nc.Rough = 0.7;\n' + wx(0.5, 0.8) +
+                     'return SlsEnd(c, p, n, 0.7, Rough, NormalWS);', vcol=True, metallic=0.1, instanced=True, two_sided=True)
+    # car paint: white paint geometry tinted per instance (CAR_PALETTE, custom data 0..2), glossy metallic
+    tint = ('Tint', lambda g: g.node(unreal.MaterialExpressionPerInstanceCustomData3Vector, data_index=0))
+    surface_material('M_SlsPaint', tex, mpc,
+                     'c.Albedo = SlsSrgbToLinear(VC.rgb) * Tint;\nc.Rough = 0.35;\n' + wx(0.3, 0.9, 0.7) +
+                     'return SlsEnd(c, p, n, 0.35, Rough, NormalWS);', vcol=True, metallic=0.45, instanced=True, extra=[tint])
+    # sign faces: the sign atlas from props.glb (uv 0), roughness 0.5
+    m = material_in_place('M_SlsSign')
+    m.set_editor_property('used_with_instanced_static_meshes', True)
+    g = Graph(m)
+    t = g.node(unreal.MaterialExpressionTextureSample, texture=tex['T_Sls_signs'])
+    g.out(t, unreal.MaterialProperty.MP_BASE_COLOR, 'RGB')
+    g.out(g.node(unreal.MaterialExpressionConstant, r=0.5), unreal.MaterialProperty.MP_ROUGHNESS)
+    MEL.recompile_material(m)
+    EAL.save_loaded_asset(m)
+    log('SLS setup: M_SlsSign')
 
 
 def light_material():
@@ -489,6 +527,9 @@ mpc = parameter_collection()
 world_materials(tex, mpc)
 light_material()
 water_material(tex)
+prop_materials(tex, mpc)
 precip_materials(mpc)
 vegetation(mpc)
+import sls_car  # the player car (unreal/tools/export-car.ts → Data/car → /Game/Cars)
+sls_car.car()
 setup_done()

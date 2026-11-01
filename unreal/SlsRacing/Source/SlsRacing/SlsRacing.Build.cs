@@ -8,6 +8,7 @@ public class SlsRacing : ModuleRules
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "ProceduralMeshComponent", "Json",
 			"ChaosVehicles", "ChaosVehiclesCore", "EnhancedInput", "Chaos", "RenderCore",
+			"MeshDescription", "StaticMeshDescription",
 		});
 		// includes like "World/SlsWeather.h" and "SlsRacing.h" are relative to the module root
 		PublicIncludePaths.Add(ModuleDirectory);

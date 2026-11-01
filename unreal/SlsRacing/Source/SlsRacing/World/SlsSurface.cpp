@@ -138,13 +138,32 @@ namespace SlsSurface
 		return Out;
 	}
 
+	TArray<FIssue> ScanImpl(const UWorld* World, const USlsWorldSubsystem* Sub, const FBox2D& Bounds, TFunctionRef<bool(const FVector2D&)> InArea,
+		const FThresholds& Th, bool bCluster, int32& OutCells);
+
 	TArray<FIssue> Scan(const UWorld* World, const USlsWorldSubsystem* Sub, double X, double Z, double Radius, int32& OutCells)
+	{
+		const FVector2D Centre(X, Z);
+		return ScanImpl(World, Sub, FBox2D(Centre - FVector2D(Radius), Centre + FVector2D(Radius)),
+			[Centre, Radius](const FVector2D& P) { return FVector2D::Distance(P, Centre) <= Radius; }, FThresholds(), true, OutCells);
+	}
+
+	TArray<FIssue> ScanRect(const UWorld* World, const USlsWorldSubsystem* Sub, const FBox2D& Rect, const FThresholds& Th, bool bCluster, int32& OutCells)
+	{
+		// Half-open rectangle so neighbouring tiles never check a cell twice.
+		return ScanImpl(World, Sub, Rect,
+			[Rect](const FVector2D& P) { return P.X >= Rect.Min.X && P.X < Rect.Max.X && P.Y >= Rect.Min.Y && P.Y < Rect.Max.Y; }, Th, bCluster, OutCells);
+	}
+
+	TArray<FIssue> ScanImpl(const UWorld* World, const USlsWorldSubsystem* Sub, const FBox2D& Bounds, TFunctionRef<bool(const FVector2D&)> InArea,
+		const FThresholds& Th, bool bCluster, int32& OutCells)
 	{
 		TArray<const AActor*> Ignore;
 		if (const APlayerController* PC = World->GetFirstPlayerController()) if (PC->GetPawn()) Ignore.Add(PC->GetPawn());
 		FGrid G;
-		G.C0 = FMath::FloorToInt((X - Radius) / G.Cell); G.C1 = FMath::CeilToInt((X + Radius) / G.Cell);
-		G.R0 = FMath::FloorToInt((Z - Radius) / G.Cell); G.R1 = FMath::CeilToInt((Z + Radius) / G.Cell);
+		// One cell of margin around the area: steps and slots look at neighbours.
+		G.C0 = FMath::FloorToInt(Bounds.Min.X / G.Cell) - 1; G.C1 = FMath::CeilToInt(Bounds.Max.X / G.Cell) + 1;
+		G.R0 = FMath::FloorToInt(Bounds.Min.Y / G.Cell) - 1; G.R1 = FMath::CeilToInt(Bounds.Max.Y / G.Cell) + 1;
 		const int32 Cols = G.Cols();
 		TMap<int32, TArray<double>> Levels, Paved;
 		for (const auto& [T, A] : Sub->Loaded())
@@ -154,10 +173,7 @@ namespace SlsSurface
 			Rasterize(A->RoadPos, A->RoadIdx, O, G, Levels);
 			Rasterize(A->PavedPos, A->PavedIdx, O, G, Paved);
 		}
-		auto Inside = [&](int32 C, int32 R) {
-			const FVector2D P((G.C0 + C + 0.5) * G.Cell, (G.R0 + R + 0.5) * G.Cell);
-			return FVector2D::Distance(P, FVector2D(X, Z)) <= Radius;
-		};
+		auto Inside = [&](int32 C, int32 R) { return InArea(FVector2D((G.C0 + C + 0.5) * G.Cell, (G.R0 + R + 0.5) * G.Cell)); };
 		TMap<int32, TArray<FCell>> Cells;
 		for (const auto& [Key, Ys] : Levels)
 		{
@@ -178,9 +194,9 @@ namespace SlsSurface
 			{
 				if (!S.Yw.IsSet() || S.Yw.GetValue() < S.Yd - Limits::Hole) { Add(Key, S.Yd, EKind::Hole, Limits::Hole, S.Wheel); continue; }
 				const double Yw = S.Yw.GetValue();
-				if (Yw > S.Yd + Limits::Bump) Add(Key, S.Yd, EKind::Bump, Yw - S.Yd, S.Wheel);
-				else if (Yw < S.Yd - Limits::Dip) Add(Key, S.Yd, EKind::Dip, S.Yd - Yw, S.Wheel);
-				if (S.Yc.IsSet() && S.Yc.GetValue() > Yw + Limits::Snag) Add(Key, S.Yd, EKind::Snag, S.Yc.GetValue() - Yw, S.Chassis);
+				if (Yw > S.Yd + Th.Bump) Add(Key, S.Yd, EKind::Bump, Yw - S.Yd, S.Wheel);
+				else if (Yw < S.Yd - Th.Dip) Add(Key, S.Yd, EKind::Dip, S.Yd - Yw, S.Wheel);
+				if (S.Yc.IsSet() && S.Yc.GetValue() > Yw + Th.Snag) Add(Key, S.Yd, EKind::Snag, S.Yc.GetValue() - Yw, S.Chassis);
 				for (const FIntPoint D : {FIntPoint(1, 0), FIntPoint(0, 1), FIntPoint(-1, 0), FIntPoint(0, -1)})
 				{
 					if ((D.X < 0 || D.Y < 0) && Inside(C + D.X, R + D.Y)) continue;
@@ -190,7 +206,7 @@ namespace SlsSurface
 					const FCell* O = N->FindByPredicate([&](const FCell& Q) { return FMath::Abs(Q.Yd - S.Yd) < Limits::Level; });
 					if (!O || !O->Yw.IsSet() || O->Yw.GetValue() < O->Yd - Limits::Hole) continue;
 					const double Dh = FMath::Abs(O->Yw.GetValue() - Yw);
-					if (Dh > Limits::Step) Add(Key, S.Yd, EKind::Step, Dh, O->Yw.GetValue() > Yw ? O->Wheel : S.Wheel);
+					if (Dh > Th.Step) Add(Key, S.Yd, EKind::Step, Dh, O->Yw.GetValue() > Yw ? O->Wheel : S.Wheel);
 				}
 			}
 		}
@@ -218,7 +234,7 @@ namespace SlsSurface
 			const FVector2D C = G.Centre(Key);
 			const FCell S = Probe(World, C.X, C.Y, Yd, Ignore);
 			const double Drop = S.Yw.IsSet() ? S.Yd - S.Yw.GetValue() : Limits::Hole;
-			if (Drop > Limits::Gap) Add(Key, Yd, EKind::Gap, FMath::Min(Drop, Limits::Hole), S.Wheel);
+			if (Drop > Th.Gap) Add(Key, Yd, EKind::Gap, FMath::Min(Drop, Limits::Hole), S.Wheel);
 		}
 		// edgeCells + edgeIssues
 		TMap<int32, double> Edges;
@@ -244,8 +260,9 @@ namespace SlsSurface
 			const FCell S = Probe(World, C.X, C.Y, Yd, Ignore);
 			if (!S.Yw.IsSet()) continue;
 			const double Drop = S.Yd - S.Yw.GetValue();
-			if (Drop > Limits::Edge && Drop <= Limits::EdgeWall) Add(Key, Yd, EKind::Edge, Drop, S.Wheel);
+			if (Drop > Th.Edge && Drop <= Limits::EdgeWall) Add(Key, Yd, EKind::Edge, Drop, S.Wheel);
 		}
+		if (!bCluster) return Out;
 		TArray<FIssue> Road, Edge;
 		for (const FIssue& I : Out) (I.Kind == EKind::Edge ? Edge : Road).Add(I);
 		TArray<FIssue> Kept = Cluster(Road);
@@ -280,6 +297,13 @@ namespace SlsSurface
 				if (bOneNone) Out.Missing++;
 				else Out.Worst = FMath::Max(Out.Worst, D);
 				Out.Points.Add(FVector(CX, Yd, CZ));
+				FParity::FCellReport& Rep = Out.Report.AddDefaulted_GetRef();
+				Rep.bChassis = K == 1;
+				Rep.Tile = FIntPoint(Tile->IX, Tile->IY);
+				Rep.X = CX; Rep.Z = CZ; Rep.Yd = Yd;
+				Rep.Unreal = Got[K]; Rep.Web = Want[K];
+				Rep.Hit = K ? S.Chassis : S.Wheel;
+				Rep.Dev = D;
 				if (Out.Examples.Num() < 20)
 					Out.Examples.Add(FString::Printf(TEXT("%s bei x %.2f z %.2f (Kachel %d_%d): Unreal %s (%s), Web %s"), K ? TEXT("Chassis") : TEXT("Rad"), CX, CZ, Tile->IX, Tile->IY,
 						Got[K].IsSet() ? *FString::Printf(TEXT("%.3f"), Got[K].GetValue()) : TEXT("nichts"), *(K ? S.Chassis : S.Wheel).ToString(),

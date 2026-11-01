@@ -15,6 +15,7 @@ namespace SlsCar
 	// Chassis box (half extents, m): x left/right, y up, z forward in the web frame.
 	constexpr double HalfWidth = 0.94 * Scale, HalfHeight = 0.38 * Scale, HalfLength = 2.25 * Scale;
 	constexpr double ColliderY = 0.28 * Scale;          // box centre above the body origin
+	constexpr double RideHeight = 0.284;                // body origin above the model's ground at real size (carView.ts)
 	constexpr double ComY = -0.25 * Scale, ComZ = 0.05 * Scale;
 	// Wheels (m): half track, axle positions, mount height, radius, rest length, travel, width.
 	constexpr double WheelX = 0.8 * Scale, WheelFront = 1.27 * Scale, WheelRear = -1.2 * Scale, WheelY = 0.3 * Scale;

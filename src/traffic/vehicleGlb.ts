@@ -8,8 +8,8 @@ import { buildVehicleParts, type VehicleParts } from './vehicleModels.ts';
 // passenger cars and a minivan from the CC-BY "Generic passenger car pack" (tools/import-traffic.ts). Several
 // variants per kind, each with the five instanced parts of vehicleModels.ts at two levels of detail.
 
-export const TRAFFIC_MODELS_URL = `${import.meta.env.BASE_URL}models/traffic.glb`;
-export const TRAFFIC_PACK_URL = `${import.meta.env.BASE_URL}models/traffic-cars.glb`;
+export const TRAFFIC_MODELS_URL = `${(import.meta.env?.BASE_URL ?? "/")}models/traffic.glb`;
+export const TRAFFIC_PACK_URL = `${(import.meta.env?.BASE_URL ?? "/")}models/traffic-cars.glb`;
 
 /** Which vehicles the traffic draws (traffic.models): pack cars over the Blender set, Blender only, or procedural. */
 export type VehicleModels = 'pack' | 'glb' | 'procedural';

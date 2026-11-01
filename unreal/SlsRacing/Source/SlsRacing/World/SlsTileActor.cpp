@@ -251,3 +251,59 @@ int32 ASlsTileActor::VegetationCount() const
 		if (H) N += H->GetInstanceCount();
 	return N;
 }
+
+void ASlsTileActor::BuildProps(const FSlsTileFile& File, TArrayView<UStaticMesh* const> Meshes, float CullCm)
+{
+	RemoveProps();
+	const TArrayView<const uint16> Part = File.View<uint16>(TEXT("p.part"));
+	const TArrayView<const float> In = File.View<float>(TEXT("p.inst"));
+	constexpr int32 Stride = 10; // X Y Z, yaw, scale X Y Z, tint r g b (tileProps.ts PART_STRIDE)
+	if (Part.Num() == 0 || In.Num() < Part.Num() * Stride) return;
+	TMap<int32, TArray<int32>> ByPart;
+	for (int32 I = 0; I < Part.Num(); I++) ByPart.FindOrAdd(Part[I]).Add(I);
+	for (const auto& [K, List] : ByPart)
+	{
+		UStaticMesh* Mesh = Meshes.IsValidIndex(K) ? Meshes[K] : nullptr;
+		if (!Mesh) continue;
+		UHierarchicalInstancedStaticMeshComponent* H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, *FString::Printf(TEXT("Prop_%d"), K));
+		H->SetStaticMesh(Mesh);
+		H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		H->SetCanEverAffectNavigation(false);
+		H->SetCastShadow(true);
+		H->NumCustomDataFloats = 3;
+		H->InstanceStartCullDistance = int32(CullCm * 0.8f);
+		H->InstanceEndCullDistance = int32(CullCm);
+		H->SetupAttachment(Render);
+		H->RegisterComponent();
+		TArray<FTransform> Xf;
+		Xf.Reserve(List.Num());
+		for (int32 I : List)
+		{
+			const float* F = In.GetData() + I * Stride;
+			Xf.Add(FTransform(FRotator(0.f, F[3], 0.f), FVector(F[0], F[1], F[2]), FVector(F[4], F[5], F[6])));
+		}
+		H->AddInstances(Xf, false, false);
+		for (int32 N = 0; N < List.Num(); N++)
+		{
+			const float* F = In.GetData() + List[N] * Stride;
+			H->SetCustomData(N, TArray<float>({ F[7], F[8], F[9] }), false);
+		}
+		H->MarkRenderStateDirty();
+		PropComponents.Add(H);
+	}
+}
+
+void ASlsTileActor::RemoveProps()
+{
+	for (UHierarchicalInstancedStaticMeshComponent* H : PropComponents)
+		if (H) H->DestroyComponent();
+	PropComponents.Reset();
+}
+
+int32 ASlsTileActor::PropCount() const
+{
+	int32 N = 0;
+	for (const UHierarchicalInstancedStaticMeshComponent* H : PropComponents)
+		if (H) N += H->GetInstanceCount();
+	return N;
+}

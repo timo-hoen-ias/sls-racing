@@ -7,7 +7,7 @@ import type { PropLods } from './propGlb.ts';
 // walls and roofs (<id>_lod0/1, vertex colours, uv.x surface code, uv.y tint code) and window glass (<id>_glas0/1);
 // garden parts garten-<name>_lod0/1.
 
-export const HOUSES_URL = `${import.meta.env.BASE_URL}models/houses.glb`;
+export const HOUSES_URL = `${(import.meta.env?.BASE_URL ?? "/")}models/houses.glb`;
 
 export interface HouseLods { lod0: THREE.BufferGeometry; lod1: THREE.BufferGeometry; glass0: THREE.BufferGeometry; glass1: THREE.BufferGeometry }
 

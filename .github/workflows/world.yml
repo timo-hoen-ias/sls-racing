@@ -242,7 +242,7 @@ jobs:
         run: |
           key=${{ needs.key.outputs.key }}
           # The export depends on the tiles and on the exporter and the web code it replays.
-          ukey="$key-$(cat unreal/tools/*.ts src/world/tileColliders.ts src/world/tileBuild.ts src/world/surfaceScan.ts src/world/vegPlacement.ts src/world/treeGen.ts src/world/treeSpecies.ts | sha256sum | cut -c1-8)"
+          ukey="$key-$(cat unreal/tools/*.ts src/world/tileColliders.ts src/world/tileBuild.ts src/world/surfaceScan.ts src/world/vegPlacement.ts src/world/treeGen.ts src/world/treeSpecies.ts src/world/prop*.ts src/world/rails.ts src/world/guardRail.ts src/traffic/vehicle*.ts public/models/props.glb public/models/traffic*.glb | sha256sum | cut -c1-8)"
           echo "ukey=$ukey" >> "$GITHUB_OUTPUT"
           assets=$(gh release view world-tiles --json assets -q '.assets[].name' 2>/dev/null || true)
           skip=false

@@ -5,7 +5,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 // Street furniture, traffic lights and traffic signs built in Blender (tools/blender/make_props.py).
 // Model space as propModels.ts: ground at y = 0, +z is the side a prop faces, linear props 1 m along z.
 
-export const PROPS_URL = `${import.meta.env.BASE_URL}models/props.glb`;
+export const PROPS_URL = `${(import.meta.env?.BASE_URL ?? "/")}models/props.glb`;
 
 /** Camera distance (m) from which props switch to lod1. */
 export const PROP_LOD_DISTANCE = 60;

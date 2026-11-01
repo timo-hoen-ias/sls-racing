@@ -86,7 +86,9 @@ Wahrzeichen und Brücken-GLBs, Bahn, Strom, Sportplätze, Fernsicht (`far/`-Kach
 - [x] Bäume und Büsche: Pflanzorte aus `vegPlacement.ts` (gemeinsam mit dem Web), Arten aus `treeGen.ts` als glTF
       mit 2 LODs, HISM je Art und Kachel mit Farbfaktor als Custom Data, Wind/Nässe/Schnee im Material; `veg.*`.
       Offen: Gras (`veg.grass`), Impostors durch Nanite-Foliage ersetzen, wenn die Leistung es braucht.
-- [ ] Props, geparkte Autos, Laternen, Leitplanken, Schilder, Tankstellen.
+- [x] Props, geparkte Autos, Schildflächen, Leitplanken: Modellbibliothek `models.slsu` + Instanzen je Kachel,
+      Static Meshes zur Laufzeit, HISM je Teil; `props.*`. Offen: Prop-Kollision (Knockdown), Ampelköpfe.
+- [ ] Laternen, Wegweiser/Schilderbrücken (`guideSignLayer.ts`), Tankstellen, Häuser-GLBs, Läden.
 
 **Parität:** gleiche Anzahl und Lage je Kachel (Export-Zählung gegen Unreal-Zählung), Kollision schon in Phase 0.
 

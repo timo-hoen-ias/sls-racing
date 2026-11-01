@@ -3,6 +3,7 @@
 // (unreal/SlsRacing/Content/Python/sls_setup.py) imports them; the materials sample them with the same cell layout,
 // gutter and packing as the web shaders (albedo sRGB with AO, normal X in R / Y in A, roughness in G / height in A).
 //   node unreal/tools/export-textures.ts [--quality=hoch|mittel|niedrig] [--out=unreal/SlsRacing/Data/textures]
+import { signAtlasPng } from './tileProps.ts';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -70,5 +71,7 @@ for (const a of ATLASES) {
   writeFileSync(join(OUT, 'T_Sls_puddles.png'), PNG.sync.write(png));
 }
 copyFileSync('public/textures/waternormals.jpg', join(OUT, 'T_Sls_waternormals.jpg'));
+// The sign atlas embedded in props.glb (sign faces of the props, M_SlsSign).
+writeFileSync(join(OUT, 'T_Sls_signs.png'), signAtlasPng());
 copyFileSync(join(SRC, 'manifest.json'), join(OUT, 'manifest.json'));
 console.log(`Fertig: ${OUT} (${quality}, ${px} px je Zelle)`);

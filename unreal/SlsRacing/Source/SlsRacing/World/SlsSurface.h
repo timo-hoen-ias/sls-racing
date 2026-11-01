@@ -38,8 +38,16 @@ namespace SlsSurface
 
 	struct FIssue { double X = 0, Y = 0, Z = 0; EKind Kind = EKind::Hole; double Size = 0; FName What; };
 
+	/** Thresholds of the scan (m), the web game's SURFACE_LIMITS by default; road.check can tighten them. */
+	struct FThresholds { double Bump = Limits::Bump, Dip = Limits::Dip, Step = Limits::Step, Snag = Limits::Snag, Gap = Limits::Gap, Edge = Limits::Edge; };
+
 	/** Issues within Radius m of (X, Z): road.scan. Uses the drawn roads and colliders of the loaded tiles. */
 	TArray<FIssue> Scan(const UWorld* World, const USlsWorldSubsystem* Sub, double X, double Z, double Radius, int32& OutCells);
+	/**
+	 * Issues of the cells inside a rectangle (local metres, x0..x1 × z0..z1), unclustered when bCluster is false:
+	 * road.check walks the world tile by tile with this, so every cell is checked exactly once.
+	 */
+	TArray<FIssue> ScanRect(const UWorld* World, const USlsWorldSubsystem* Sub, const FBox2D& Rect, const FThresholds& Th, bool bCluster, int32& OutCells);
 
 	/** Worst issue per place (clusterIssues). */
 	TArray<FIssue> Cluster(TArray<FIssue> Issues, double Radius = 6);
@@ -51,6 +59,18 @@ namespace SlsSurface
 		TArray<FString> Examples;
 		/** Local x, y, z of the mismatching cells (for drawing). */
 		TArray<FVector> Points;
+		/** Every mismatching cell for the report (road-parity.json "cells"). */
+		struct FCellReport
+		{
+			bool bChassis = false;
+			FIntPoint Tile;
+			double X = 0, Z = 0, Yd = 0;
+			TOptional<double> Unreal, Web;
+			FName Hit;
+			/** Deviation in m, max when only one side hit something. */
+			double Dev = 0;
+		};
+		TArray<FCellReport> Report;
 	};
 
 	/**

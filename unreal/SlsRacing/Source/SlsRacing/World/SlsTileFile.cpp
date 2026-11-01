@@ -47,6 +47,7 @@ bool FSlsTileFile::Load(const FString& Path, FString& OutError)
 		OutError = FString::Printf(TEXT("Kopf nicht lesbar: %s"), *Path);
 		return false;
 	}
+	Header = H;
 	IX = int32(H->GetNumberField(TEXT("ix")));
 	IY = int32(H->GetNumberField(TEXT("iy")));
 	auto Vec2 = [&H](const TCHAR* Field) {

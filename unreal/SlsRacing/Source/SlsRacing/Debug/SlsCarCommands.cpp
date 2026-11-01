@@ -92,6 +92,29 @@ namespace
 					C->bDiag = A.Num() ? FCString::Atoi(*A[0]) != 0 : !C->bDiag;
 					Say(FString::Printf(TEXT("car.diag = %d (Ausgabe im Log, LogSls)"), C->bDiag));
 				});
+			Add(TEXT("car.model"), TEXT("Automodell (sportscar.glb aus /Game/Cars) oder Platzhalter: car.model [1|0]"),
+				[](const TArray<FString>& A, UWorld* W) {
+					ASlsCarPawn* C = NeedCar(W);
+					if (!C) return;
+					const bool bOn = A.Num() ? FCString::Atoi(*A[0]) != 0 : !C->IsModelShown();
+					if (!C->SetModel(bOn)) Say(TEXT("car.model: /Game/Cars fehlt (./unreal/sls.sh setup), Platzhalter bleibt"), FColor::Yellow);
+					else Say(FString::Printf(TEXT("car.model = %d (%s)"), C->IsModelShown(), C->IsModelShown() ? TEXT("sportscar.glb") : TEXT("Platzhalter")));
+				});
+			Add(TEXT("car.model.wheels"), TEXT("Radmitten (Kugeln) und Aufstandspunkte (gelb) zeigen und ins Log schreiben: car.model.wheels [1|0]"),
+				[](const TArray<FString>& A, UWorld* W) {
+					ASlsCarPawn* C = NeedCar(W);
+					if (!C) return;
+					C->bShowWheelPoints = A.Num() ? FCString::Atoi(*A[0]) != 0 : !C->bShowWheelPoints;
+					for (int32 I = 0; I < C->Vehicle->GetNumWheels() && I < C->Vehicle->WheelSetups.Num(); I++)
+					{
+						const FVector Rest = C->Vehicle->WheelSetups[I].AdditionalOffset;
+						const FWheelStatus& S = C->Vehicle->GetWheelState(I);
+						Say(FString::Printf(TEXT("Rad %d: Ruhelage %s cm (zur Box-Mitte), Federweg %.1f cm, Boden %s"), I, *Rest.ToCompactString(),
+							C->Vehicle->Wheels.IsValidIndex(I) && C->Vehicle->Wheels[I] ? C->Vehicle->Wheels[I]->GetSuspensionOffset() : 0.f,
+							S.bInContact ? *S.ContactPoint.ToCompactString() : TEXT("-")));
+					}
+					Say(FString::Printf(TEXT("car.model.wheels = %d"), C->bShowWheelPoints));
+				});
 			Add(TEXT("car.reset"), TEXT("Auto auf die nächste Straße setzen (wie R / Y)"), [](const TArray<FString>&, UWorld* W) {
 				if (ASlsCarPawn* C = NeedCar(W)) C->ResetToRoad();
 			});
@@ -156,6 +179,9 @@ namespace
 				if (!C) return;
 				if (A.Num()) { C->Assists.bAbs = FCString::Atoi(*A[0]) != 0; C->ApplyTuning(); }
 				Say(FString::Printf(TEXT("assist.abs = %d"), C->Assists.bAbs));
+			});
+			Add(TEXT("cam.orbit"), TEXT("Verfolgerkamera um das Auto drehen (Grad, 90 = von rechts, 0 = normal): cam.orbit [Grad]"), [](const TArray<FString>& A, UWorld* W) {
+				if (ASlsCarPawn* C = NeedCar(W)) FloatSetting(TEXT("cam.orbit"), C->CamOrbit, A, C, false);
 			});
 			Add(TEXT("cam.mode"), TEXT("Kamera: cam.mode 0 Verfolger | 1 weit | 2 Haube | 3 Cockpit (wie C)"), [](const TArray<FString>& A, UWorld* W) {
 				ASlsCarPawn* C = NeedCar(W);

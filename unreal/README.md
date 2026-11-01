@@ -108,11 +108,31 @@ $UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject
 # Ergebnis: Exit-Code 0/1 und unreal/SlsRacing/Saved/road-parity.json
 ```
 
+
+Das Web-Spiel hat selbst noch Löcher, deshalb gibt es zusätzlich den absoluten Test `road.check` (ohne
+Web-Referenz): jede 0,5-m-Fahrbahnzelle gegen die gezeichnete Oberfläche, mit Rad- und Chassis-Strahl wie
+`road.scan`, aber über die ganze Welt, jede Zelle genau einmal. Schwellen in mm einstellbar (Standard wie
+`SURFACE_LIMITS` im Web), Ergebnis mit allen Stellen in `Saved/road-check.json`:
+
+```bash
+./unreal/sls.sh check                       # road.check all max=0, Exit-Code 0 nur ohne jede Stelle
+./unreal/sls.sh check bump=20 dip=20 step=20 max=0   # strenger: 2 cm
+```
+## Straßenmöbel, geparkte Autos, Leitplanken
+
+Dieselben Modelle wie im Web-Spiel: Blender-Props aus `props.glb` (sonst die prozeduralen aus `propModels.ts`),
+geparkte Autos aus dem Car-Pack (`traffic.glb` + `traffic-cars.glb`) in den Palettenfarben, Schildflächen mit dem
+Schilder-Atlas. Der Export (`unreal/tools/tileProps.ts`) schreibt sie einmal als Modellbibliothek
+`WorldData/models.slsu` (schon im Unreal-Koordinatensystem, mit LOD0/LOD1) und pro Kachel als Instanzen
+(`p.part`/`p.inst`). Unreal baut daraus zur Laufzeit Static Meshes (`BuildFromMeshDescriptions`, kein Import, kein
+Achsenraten) und pro Teil eine HISM-Komponente. Leitplanken sind ein eigener Kachel-Layer `rails`.
+
 ## Debug-Konsole (^ oder F1)
 
 | Befehl | Wirkung |
 | --- | --- |
 | `road.parity [radius \| all \| tiles=<n>] [tol=<mm>] [max=<n>] [exit] [nodraw]` | Unreal-Strahlen gegen die Referenzhöhen des Web-Spiels, Zelle für Zelle |
+| `road.check [radius \| all] [bump= dip= step= snag= gap= edge= mm] [max=] [exit]` | Absolute Lochprüfung gegen die gezeichnete Straße, ohne Web-Referenz |
 | `road.scan [radius]` | Löcher, Stufen, Buckel, Senken, Hänger, Spalten und schwebende Kanten um die Kamera (wie im Web-Spiel) |
 | `world.surface [list \| next \| show \| <art>]` | Stellen aus der Flächenprüfung der Pipeline (`surface.json`) anzeigen und anspringen |
 | `tp <x> <z>` · `tp utm <E> <N>` · `tp spawn` · `tp` | Springen in lokalen Metern / UTM, ohne Argument die Position |
@@ -135,6 +155,7 @@ $UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject
 | `sky.overcast` · `sky.sun` · `sky.ambient` · `sky.exposure` · `sky.fog` | Bewölkung, Licht, Belichtung, Dunst |
 | `weather clear\|rain\|snow [stärke] [now]` · `weather.now` · `weather.intensity` · `weather.wet` · `weather.snowcover` · `weather.auto` · `weather.timescale` · `weather.grip` | Wetter, nasse Straße, Pfützen, Schneedecke, Grip |
 | `veg.on [0\|1]` · `veg.cull <m>` · `veg.info` · `veg.species [art\|index]` · `veg.wind` · `veg.translucency` · `veg.shadows [0\|1]` · `veg.reload` | Bäume und Büsche: an/aus, Sichtweite, Zählung je Art, eine Art zeigen, Wind, Gegenlicht, Schatten |
+| `props.on [0\|1]` · `props.radius <m>` · `props.info [filter]` · `props.near [m]` · `props.reload` | Straßenmöbel und geparkte Autos: an/aus, Sichtweite, Zählung je Modellteil, was um die Kamera steht |
 | `sls.data <ordner>` | Anderer Export-Ordner |
 
 ## Aufbau

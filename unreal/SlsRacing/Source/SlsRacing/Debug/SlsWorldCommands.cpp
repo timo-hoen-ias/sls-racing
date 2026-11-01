@@ -85,8 +85,15 @@ public:
 	double Tol = 0.005;
 	int32 Max = 0;
 	bool bExit = false, bDraw = true;
+	/** Report file in Saved (out=…, for shards running side by side). */
+	FString OutName = TEXT("road-parity.json");
 	double Started = 0;
 	SlsSurface::FParity Result;
+	/** road.check: the absolute check (no web reference) with these thresholds; issues per kind, all kept. */
+	bool bCheck = false;
+	SlsSurface::FThresholds Th;
+	TArray<SlsSurface::FIssue> Issues;
+	int32 CheckCells = 0;
 	FTSTicker::FDelegateHandle Handle;
 	static TUniquePtr<FSlsParityJob> Active;
 
@@ -119,6 +126,21 @@ public:
 		// Two frames for the physics scene to take the new bodies into its query structure.
 		if (Wait++ < 3) return true;
 		Wait = 0;
+		if (bCheck)
+		{
+			const FVector2D O = S->TileOriginLocal(T);
+			int32 Cells = 0;
+			TArray<SlsSurface::FIssue> Found = SlsSurface::ScanRect(W, S, FBox2D(O, O + FVector2D(S->Info().TileSize)), Th, false, Cells);
+			CheckCells += Cells;
+			Result.Tiles++;
+			if (bDraw)
+				for (const SlsSurface::FIssue& I : Found)
+					DrawDebugSphere(W, USlsWorldSubsystem::LocalToUE(FVector(I.X, I.Y, I.Z)), 30.f, 6, KindColor(I.Kind), false, 120.f);
+			Issues.Append(Found);
+			Next++;
+			if (Next % 50 == 0) Say(FString::Printf(TEXT("road.check: %d/%d Kacheln, %d Zellen, %d Stellen"), Next, Queue.Num(), CheckCells, Issues.Num()), FColor::Cyan, 3.f);
+			return true;
+		}
 		if (const ASlsTileActor* A = S->FindTile(T))
 		{
 			const int32 Before = Result.Points.Num();
@@ -134,8 +156,47 @@ public:
 		return true;
 	}
 
+	void FinishCheck()
+	{
+		// Count per kind (cells), places after clustering, critical ones like the pipeline's isCritical.
+		TMap<FString, int32> PerKind;
+		int32 Critical = 0;
+		for (const SlsSurface::FIssue& I : Issues) { PerKind.FindOrAdd(SlsSurface::KindName(I.Kind))++; Critical += SlsSurface::IsCritical(I.Kind, I.Size); }
+		TArray<SlsSurface::FIssue> Road, Edge;
+		for (const SlsSurface::FIssue& I : Issues) (I.Kind == SlsSurface::EKind::Edge ? Edge : Road).Add(I);
+		TArray<SlsSurface::FIssue> Places = SlsSurface::Cluster(Road);
+		Places.Append(SlsSurface::Cluster(Edge));
+		Places.Sort([](const SlsSurface::FIssue& A, const SlsSurface::FIssue& B) { return A.Size > B.Size; });
+		const bool bFail = Issues.Num() > Max;
+		FString Kinds;
+		for (const auto& [K, N] : PerKind) Kinds += FString::Printf(TEXT(" %s %d"), *K, N);
+		Say(FString::Printf(TEXT("road.check: %d Kacheln, %d Straßenzellen, %d Zellen mit Problem (%d kritisch) an %d Stellen:%s, in %.0f s → %s"),
+			Result.Tiles, CheckCells, Issues.Num(), Critical, Places.Num(), *Kinds, FPlatformTime::Seconds() - Started, bFail ? TEXT("FAIL") : TEXT("OK")),
+			bFail ? FColor::Red : FColor::Green, 30.f);
+		FString Json = FString::Printf(TEXT("{\"tiles\":%d,\"cells\":%d,\"issues\":%d,\"critical\":%d,\"places\":%d,\"thresholds\":{\"bump\":%.3f,\"dip\":%.3f,\"step\":%.3f,\"snag\":%.3f,\"gap\":%.3f,\"edge\":%.3f},\"kinds\":{"),
+			Result.Tiles, CheckCells, Issues.Num(), Critical, Places.Num(), Th.Bump, Th.Dip, Th.Step, Th.Snag, Th.Gap, Th.Edge);
+		int32 N = 0;
+		for (const auto& [K, C] : PerKind) Json += FString::Printf(TEXT("%s\"%s\":%d"), N++ ? TEXT(",") : TEXT(""), *K, C);
+		// Worst places first, as [x, y, z, kind, size, critical, collider] in local metres like surface.json.
+		Json += TEXT("},\"places\":[");
+		for (int32 I = 0; I < Places.Num(); I++)
+		{
+			const SlsSurface::FIssue& P = Places[I];
+			Json += FString::Printf(TEXT("%s[%.2f,%.2f,%.2f,\"%s\",%.3f,%d,\"%s\"]"), I ? TEXT(",") : TEXT(""), P.X, P.Y, P.Z, SlsSurface::KindName(P.Kind), P.Size,
+				SlsSurface::IsCritical(P.Kind, P.Size) ? 1 : 0, *P.What.ToString());
+			if (I < 15) Say(FString::Printf(TEXT("  %s %.2f m bei x %.1f z %.1f (%s)"), SlsSurface::KindName(P.Kind), P.Size, P.X, P.Z, *P.What.ToString()), FColor::Orange, 30.f);
+		}
+		Json += TEXT("]}");
+		FFileHelper::SaveStringToFile(Json, *FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("road-check.json")));
+		if (USlsWorldSubsystem* S = USlsWorldSubsystem::Get(World.Get())) S->bPaused = false;
+		if (bExit) FPlatformMisc::RequestExitWithStatus(false, bFail ? 1 : 0);
+		FTSTicker::GetCoreTicker().RemoveTicker(Handle);
+		Active.Reset();
+	}
+
 	void Finish()
 	{
+		if (bCheck) { FinishCheck(); return; }
 		const bool bFail = Result.Bad > Max;
 		const FString Line = FString::Printf(TEXT("road.parity: %d Kacheln, %d Straßenzellen, %d Abweichungen über %.0f mm (%d nur auf einer Seite getroffen, größte %.1f mm) in %.0f s → %s"),
 			Result.Tiles, Result.Cells, Result.Bad, Tol * 1000.0, Result.Missing, Result.Worst * 1000.0, FPlatformTime::Seconds() - Started, bFail ? TEXT("FAIL") : TEXT("OK"));
@@ -144,8 +205,19 @@ public:
 		// Report for CI and for comparing runs.
 		FString Json = FString::Printf(TEXT("{\"tiles\":%d,\"cells\":%d,\"bad\":%d,\"missing\":%d,\"worstMm\":%.1f,\"tolMm\":%.1f,\"examples\":["), Result.Tiles, Result.Cells, Result.Bad, Result.Missing, Result.Worst * 1000.0, Tol * 1000.0);
 		for (int32 I = 0; I < Result.Examples.Num(); I++) Json += (I ? TEXT(",\"") : TEXT("\"")) + Result.Examples[I].ReplaceCharWithEscapedChar() + TEXT("\"");
+		// Every mismatching cell, worst first: [kind, tile, x, z, yd, unreal, web, collider hit by Unreal, deviation mm]
+		// (null = that side's ray hit nothing, deviation -1 then).
+		Json += TEXT("],\"cells\":[");
+		Result.Report.Sort([](const SlsSurface::FParity::FCellReport& A, const SlsSurface::FParity::FCellReport& B) { return A.Dev > B.Dev; });
+		auto Opt = [](const TOptional<double>& V) { return V.IsSet() ? FString::Printf(TEXT("%.3f"), V.GetValue()) : FString(TEXT("null")); };
+		for (int32 I = 0; I < Result.Report.Num(); I++)
+		{
+			const SlsSurface::FParity::FCellReport& R = Result.Report[I];
+			Json += FString::Printf(TEXT("%s[\"%s\",\"%d_%d\",%.2f,%.2f,%.3f,%s,%s,\"%s\",%.1f]"), I ? TEXT(",") : TEXT(""), R.bChassis ? TEXT("chassis") : TEXT("wheel"),
+				R.Tile.X, R.Tile.Y, R.X, R.Z, R.Yd, *Opt(R.Unreal), *Opt(R.Web), *R.Hit.ToString(), R.Unreal.IsSet() && R.Web.IsSet() ? R.Dev * 1000.0 : -1.0);
+		}
 		Json += TEXT("]}");
-		FFileHelper::SaveStringToFile(Json, *FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("road-parity.json")));
+		FFileHelper::SaveStringToFile(Json, *FPaths::Combine(FPaths::ProjectSavedDir(), OutName));
 		if (USlsWorldSubsystem* S = USlsWorldSubsystem::Get(World.Get())) S->bPaused = false;
 		if (bExit) FPlatformMisc::RequestExitWithStatus(false, bFail ? 1 : 0);
 		FTSTicker::GetCoreTicker().RemoveTicker(Handle);
@@ -156,7 +228,7 @@ TUniquePtr<FSlsParityJob> FSlsParityJob::Active;
 
 static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 	TEXT("road.parity"),
-	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [max=<erlaubte Abweichungen>] [exit] [nodraw]"),
+	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [max=<erlaubte Abweichungen>] [shard=<i>/<n>] [out=<datei in Saved>] [exit] [nodraw]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* W) {
 		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 		if (!S || !S->IsReady()) { Say(TEXT("road.parity: keine Welt geladen"), FColor::Red); return; }
@@ -165,7 +237,8 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 		J->World = W;
 		double Radius = 300;
 		bool bAll = false;
-		int32 Limit = MAX_int32;
+		int32 Limit = MAX_int32, Shard = 0, Shards = 1;
+		FString ShardS, ShardN;
 		for (const FString& A : Args)
 		{
 			if (A == TEXT("all")) bAll = true;
@@ -174,9 +247,58 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 			else if (A.StartsWith(TEXT("tol="))) J->Tol = FCString::Atod(*A.Mid(4)) / 1000.0;
 			else if (A.StartsWith(TEXT("max="))) J->Max = FCString::Atoi(*A.Mid(4));
 			else if (A.StartsWith(TEXT("tiles="))) { bAll = true; Limit = FCString::Atoi(*A.Mid(6)); }
+			else if (A.StartsWith(TEXT("shard=")) && A.Mid(6).Split(TEXT("/"), &ShardS, &ShardN)) { Shard = FCString::Atoi(*ShardS); Shards = FMath::Max(1, FCString::Atoi(*ShardN)); }
+			else if (A.StartsWith(TEXT("out="))) J->OutName = A.Mid(4);
 			else if (A.IsNumeric()) Radius = FCString::Atod(*A);
 		}
 		// Same order as the exporter (north to south, west to east).
+		TArray<FIntPoint> Tiles = S->Info().Tiles;
+		Tiles.Sort([](const FIntPoint& A, const FIntPoint& B) { return A.Y != B.Y ? A.Y > B.Y : A.X < B.X; });
+		const FVector L = PlayerLocal(W);
+		int32 Index = 0;
+		for (const FIntPoint& T : Tiles)
+		{
+			if (J->Queue.Num() >= Limit) break;
+			if (Index++ % Shards != Shard) continue; // shard=i/n: every n-th tile, so n editors can share the world
+			const FVector2D C = S->TileOriginLocal(T) + FVector2D(S->Info().TileSize / 2);
+			if (bAll || FVector2D::Distance(C, FVector2D(L.X, L.Z)) < Radius) J->Queue.Add(T);
+		}
+		if (J->bExit) J->bDraw = false;
+		FSlsParityJob::Active = MoveTemp(J);
+		FSlsParityJob::Active->Start();
+	}));
+
+// --- road.check ---------------------------------------------------------------------------------------------
+
+static FAutoConsoleCommandWithWorldAndArgs CmdRoadCheck(
+	TEXT("road.check"),
+	TEXT("Absolute Befahrbarkeit ohne Web-Referenz: jede 0,5-m-Fahrbahnzelle gegen die gezeichnete Oberfläche (Loch, Buckel, Senke, Stufe, Hänger, Spalt, Kante). road.check [radius m | all | tiles=<n>] [bump=<mm>] [dip=<mm>] [step=<mm>] [snag=<mm>] [gap=<mm>] [edge=<mm>] [max=<erlaubte Zellen>] [exit] [nodraw] → Saved/road-check.json"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* W) {
+		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
+		if (!S || !S->IsReady()) { Say(TEXT("road.check: keine Welt geladen"), FColor::Red); return; }
+		if (FSlsParityJob::Active) { Say(TEXT("road.parity/road.check läuft schon"), FColor::Orange); return; }
+		TUniquePtr<FSlsParityJob> J = MakeUnique<FSlsParityJob>();
+		J->World = W;
+		J->bCheck = true;
+		double Radius = 300;
+		bool bAll = false;
+		int32 Limit = MAX_int32;
+		auto Mm = [](const FString& A) { return FCString::Atod(*A.Mid(A.Find(TEXT("=")) + 1)) / 1000.0; };
+		for (const FString& A : Args)
+		{
+			if (A == TEXT("all")) bAll = true;
+			else if (A == TEXT("exit")) J->bExit = true;
+			else if (A == TEXT("nodraw")) J->bDraw = false;
+			else if (A.StartsWith(TEXT("bump="))) J->Th.Bump = Mm(A);
+			else if (A.StartsWith(TEXT("dip="))) J->Th.Dip = Mm(A);
+			else if (A.StartsWith(TEXT("step="))) J->Th.Step = Mm(A);
+			else if (A.StartsWith(TEXT("snag="))) J->Th.Snag = Mm(A);
+			else if (A.StartsWith(TEXT("gap="))) J->Th.Gap = Mm(A);
+			else if (A.StartsWith(TEXT("edge="))) J->Th.Edge = Mm(A);
+			else if (A.StartsWith(TEXT("max="))) J->Max = FCString::Atoi(*A.Mid(4));
+			else if (A.StartsWith(TEXT("tiles="))) { bAll = true; Limit = FCString::Atoi(*A.Mid(6)); }
+			else if (A.IsNumeric()) Radius = FCString::Atod(*A);
+		}
 		TArray<FIntPoint> Tiles = S->Info().Tiles;
 		Tiles.Sort([](const FIntPoint& A, const FIntPoint& B) { return A.Y != B.Y ? A.Y > B.Y : A.X < B.X; });
 		const FVector L = PlayerLocal(W);

@@ -91,7 +91,7 @@ async function main() {
         if (!inWorld.has(k)) continue;
         const x = p.x - p.dy * o, z = p.z - p.dx * o;
         if (!probes.has(k)) probes.set(k, []);
-        probes.get(k)!.push([x, p.y, z, w.id, lane, i]);
+        probes.get(k)!.push([x, p.y + p.cx * o, z, w.id, lane, i]);
         nProbes++;
       }
     });
@@ -140,12 +140,14 @@ async function main() {
         const h = hits.get(`${w.id}:${lane}:${i}`);
         const o = laneOffset(w, p.dist, lane);
         const x = p.x - p.dy * o, z = p.z - p.dx * o;
-        const add = (kind: Kind, size: number, what: string) => issues.push({ x, y: p.y, z, kind, size, way: w.id, what, lane });
-        if (!h || h.y < p.y - 2.4) { add('hole', 2.5, h?.what ?? 'nothing'); prev = undefined; return; }
-        if (h.y > p.y + BUMP) add('bump', h.y - p.y, h.what);
-        else if (h.y < p.y - DIP) add('dip', p.y - h.y, h.what);
-        else if (prev && Math.abs(h.y - prev.y - (p.y - prev.road)) > STEP) add('step', Math.abs(h.y - prev.y - (p.y - prev.road)), h.what);
-        prev = { y: h.y, road: p.y };
+        // Drawn height in this wheel track (junction plateaus tilt the road across).
+        const py = p.y + p.cx * o;
+        const add = (kind: Kind, size: number, what: string) => issues.push({ x, y: py, z, kind, size, way: w.id, what, lane });
+        if (!h || h.y < py - 2.4) { add('hole', 2.5, h?.what ?? 'nothing'); prev = undefined; return; }
+        if (h.y > py + BUMP) add('bump', h.y - py, h.what);
+        else if (h.y < py - DIP) add('dip', py - h.y, h.what);
+        else if (prev && Math.abs(h.y - prev.y - (py - prev.road)) > STEP) add('step', Math.abs(h.y - prev.y - (py - prev.road)), h.what);
+        prev = { y: h.y, road: py };
       });
     }
   }

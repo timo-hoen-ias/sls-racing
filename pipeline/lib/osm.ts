@@ -25,8 +25,9 @@ export interface Way {
   raise?: number[];
   /** Bridges: measured deck height per node, from the surface model. */
   deck?: number[];
-  /** Roads: smoothed terrain height along the way (see profiles.ts), by distance from the first node. */
-  profile?: { dist: Float32Array; y: Float32Array };
+  /** Roads: smoothed terrain height along the way (see profiles.ts), by distance from the first node; `x` the
+   *  cross slope (rise per metre to the left) where a junction plateau tilts the road across. */
+  profile?: { dist: Float32Array; y: Float32Array; x?: Float32Array };
   /** Extra height by distance from the first node where the road was matched to an overlapping one (levels.ts). */
   level?: { dist: Float32Array; dy: Float32Array };
   /** Roads: pavement with a raised kerb on each side (kerbs.ts); unset means the old default by class. */

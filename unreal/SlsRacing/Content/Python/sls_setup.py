@@ -252,8 +252,12 @@ def water_material(tex):
         wo = g.node(unreal.MaterialExpressionSingleLayerWaterMaterialOutput)
         absorb = g.node(unreal.MaterialExpressionConstant3Vector, constant=unreal.LinearColor(0.35, 0.12, 0.08, 1.0))
         scatter = g.node(unreal.MaterialExpressionConstant3Vector, constant=unreal.LinearColor(0.01, 0.025, 0.02, 1.0))
-        MEL.connect_material_expressions(absorb, '', wo, 'AbsorptionCoefficients')
-        MEL.connect_material_expressions(scatter, '', wo, 'ScatteringCoefficients')
+        # pin names come from the engine (display names); look them up instead of guessing the spelling
+        pins = [str(n) for n in MEL.get_material_expression_input_names(wo)]
+        for src, key in ((absorb, 'Absorption'), (scatter, 'Scattering')):
+            pin = next((n for n in pins if key in n), None)
+            if not pin or not MEL.connect_material_expressions(src, '', wo, pin):
+                unreal.log_warning('SLS setup: water output pin %s not found in %s' % (key, pins))
     except Exception as e:
         unreal.log_warning('SLS setup: water output: %s' % e)
     MEL.recompile_material(m)
@@ -409,16 +413,15 @@ def veg_material(name, mpc, tex, leaf):
     # attribute, the trunk foot stays put)
     wind = g.node(unreal.MaterialExpressionMaterialFunctionCall)
     wind.set_editor_property('material_function', unreal.load_asset(WIND_FN))
-    wa = g.node(unreal.MaterialExpressionComponentMask, r=False, g=False, b=False, a=True)
-    MEL.connect_material_expressions(vc, '', wa, '')
     ws = g.node(unreal.MaterialExpressionComponentMask, r=True, g=False, b=False, a=False)
     MEL.connect_material_expressions(vegp, '', ws, '')
     ww = g.node(unreal.MaterialExpressionMultiply)
-    MEL.connect_material_expressions(wa, '', ww, 'A')
+    MEL.connect_material_expressions(vc, 'A', ww, 'A')
     MEL.connect_material_expressions(ws, '', ww, 'B')
     MEL.connect_material_expressions(ww, '', wind, 'WindWeight')
     MEL.connect_material_expressions(g.node(unreal.MaterialExpressionConstant, r=0.35 if leaf else 0.12), '', wind, 'WindIntensity')
     MEL.connect_material_expressions(g.node(unreal.MaterialExpressionConstant, r=0.6), '', wind, 'WindSpeed')
+    MEL.connect_material_expressions(g.node(unreal.MaterialExpressionConstant3Vector), '', wind, 'AdditionalWPO')
     g.out(wind, unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
     MEL.recompile_material(m)
     EAL.save_loaded_asset(m)
@@ -454,10 +457,13 @@ def vegetation(mpc):
             folder = '%s/%s_%d' % (tmp, sid, i)
             import_files([os.path.join(VEG_SRC, 'SM_Sls_%s_LOD%d.gltf' % (sid, i))], folder)
             meshes.append(imported_mesh(folder))
+        # re-run: refill the existing mesh (deleting it leaves the object in memory and blocks the rename)
         if EAL.does_asset_exist(dest):
-            EAL.delete_asset(dest)
-        EAL.rename_asset(meshes[0].get_path_name(), dest)
-        mesh = EAL.load_asset(dest)
+            mesh = EAL.load_asset(dest)
+            sms.set_lod_from_static_mesh(mesh, 0, meshes[0], 0, True)
+        else:
+            EAL.rename_asset(meshes[0].get_path_name(), dest)
+            mesh = EAL.load_asset(dest)
         for i, lod in enumerate(meshes[1:], start=1):
             sms.set_lod_from_static_mesh(mesh, i, lod, 0, True)
         # slots by name (Bark / Leaf from the glTF); bushes may only have leaves

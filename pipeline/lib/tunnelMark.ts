@@ -157,7 +157,7 @@ function moveJunctionPortals(ways: Way[], car: (w: Way) => boolean) {
       const ids = head ? w.ids : w.ids.slice().reverse();
       const outPts = [...pts.slice(0, k), cut], outIds = [...ids.slice(0, k), nid];
       const inPts = [cut, ...pts.slice(k)], inIds = [nid, ...ids.slice(k)];
-      const tags = { ...w.tags, 'sls:portal-moved': String(w.id) };
+      const tags: Record<string, string> = { ...w.tags, 'sls:portal-moved': String(w.id) };
       delete tags.tunnel; delete tags['sls:tunnel']; delete tags.layer; delete tags.covered;
       const stub: Way = { id: syntheticWay--, tags, pts: head ? outPts : outPts.reverse(), ids: head ? outIds : outIds.reverse(), closed: false };
       w.pts = head ? inPts : inPts.reverse();

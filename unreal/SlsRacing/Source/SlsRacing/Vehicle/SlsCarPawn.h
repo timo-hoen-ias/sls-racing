@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "World/SlsWeather.h"
 #include "SlsCarPawn.generated.h"
 
 class UBoxComponent;
@@ -76,6 +77,8 @@ public:
 	FSlsFeel Feel;
 	FSlsAssists Assists;
 	bool bInfiniteNitro = false;
+	/** Road grip from the weather (USlsEnvironment, weather.ts surface()): friction, brakes, steering. */
+	FSlsSurfaceGrip WeatherGrip;
 	/** Camera mode: 0 chase, 1 far, 2 hood, 3 cockpit (cam.mode, C). */
 	int32 CamMode = 0;
 

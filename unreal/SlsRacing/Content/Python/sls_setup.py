@@ -23,7 +23,7 @@ INCLUDE = '/SlsRacing/SlsPbr.ush'
 
 
 def import_textures():
-    names = ['T_Sls_%s_%s.png' % (a, m) for a in ATLASES for m in MAPS] + ['T_Sls_waternormals.jpg']
+    names = ['T_Sls_%s_%s.png' % (a, m) for a in ATLASES for m in MAPS] + ['T_Sls_waternormals.jpg', 'T_Sls_puddles.png']
     missing = [n for n in names if not os.path.exists(os.path.join(TEX_SRC, n))]
     if missing:
         raise RuntimeError('Texturen fehlen in %s: %s (node unreal/tools/export-textures.ts)' % (TEX_SRC, ', '.join(missing)))
@@ -43,6 +43,10 @@ def import_textures():
         tex = unreal.load_asset('/Game/Textures/' + name)
         if name.endswith('_albedo'):
             tex.set_editor_property('srgb', True)
+        elif name == 'T_Sls_puddles':
+            # the mask the road shader and (later) the car's aquaplaning share: exact grey values, wraps over 180 m
+            tex.set_editor_property('compression_settings', unreal.TextureCompressionSettings.TC_GRAYSCALE)
+            tex.set_editor_property('srgb', False)
         elif name == 'T_Sls_waternormals':
             tex.set_editor_property('compression_settings', unreal.TextureCompressionSettings.TC_NORMALMAP)
             tex.set_editor_property('srgb', False)
@@ -65,7 +69,9 @@ def parameter_collection():
         mpc = tools.create_asset('MPC_Sls', '/Game/Materials', unreal.MaterialParameterCollection, unreal.MaterialParameterCollectionFactoryNew())
     # defaults as pbrTextures.ts / groundCommands.ts (SlsTexCommands.cpp pushes changes)
     params = []
-    for name, value in (('Pbr0', (1, 1, 1, 1)), ('Pbr1', (0.85, 1, 0, -1)), ('Pbr2', (1, 1, 1, 1)), ('Pbr3', (0, 0, 0, 0))):
+    # Wx = weather (wetness, snow cover, puddles, rain), Precip = (rain, snow, box cm, light), set by USlsEnvironment
+    for name, value in (('Pbr0', (1, 1, 1, 1)), ('Pbr1', (0.85, 1, 0, -1)), ('Pbr2', (1, 1, 1, 1)), ('Pbr3', (0, 0, 0, 0)),
+                        ('Wx', (0, 0, 0, 0)), ('Precip', (0, 0, 4000, 1))):
         p = unreal.CollectionVectorParameter()
         p.set_editor_property('parameter_name', name)
         p.set_editor_property('default_value', unreal.LinearColor(*value))
@@ -124,12 +130,14 @@ class Graph:
         MEL.connect_material_property(src, out, prop)
 
 
-def surface_inputs(g, tex, mpc, uvs=0, vcol=False):
-    """WP, VN, P0..P3, the nine atlas textures (SA SN SR NA NN NR BA BN BR), UV0..UVn, VC."""
+def surface_inputs(g, tex, mpc, uvs=0, vcol=False, puddles=False):
+    """WP, VN, P0..P3, Wx, T, the nine atlas textures (SA SN SR NA NN NR BA BN BR), UV0..UVn, VC, PM (puddles)."""
     ins = [('WP', (g.node(unreal.MaterialExpressionWorldPosition), '')),
            ('VN', (g.node(unreal.MaterialExpressionVertexNormalWS), ''))]
     for i in range(4):
         ins.append(('P%d' % i, (g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Pbr%d' % i), '')))
+    ins.append(('Wx', (g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Wx'), '')))
+    ins.append(('T', (g.node(unreal.MaterialExpressionTime), '')))
     for a in ATLASES:
         for k, mp in zip('ANR', MAPS):
             ins.append((a[0].upper() + k, (g.node(unreal.MaterialExpressionTextureObject, texture=tex['T_Sls_%s_%s' % (a, mp)]), '')))
@@ -137,6 +145,8 @@ def surface_inputs(g, tex, mpc, uvs=0, vcol=False):
         ins.append(('UV%d' % i, (g.node(unreal.MaterialExpressionTextureCoordinate, coordinate_index=i), '')))
     if vcol:
         ins.append(('VC', (g.node(unreal.MaterialExpressionVertexColor), '')))
+    if puddles:
+        ins.append(('PM', (g.node(unreal.MaterialExpressionTextureObject, texture=tex['T_Sls_puddles']), '')))
     return ins
 
 
@@ -154,14 +164,15 @@ def head(body):
             'float3 n = normalize(SlsDirToWeb(VN));\n' + body)
 
 
-def surface_material(name, tex, mpc, body, uvs=0, vcol=False, bias=None, masked=False, metallic=None):
+def surface_material(name, tex, mpc, body, uvs=0, vcol=False, bias=None, masked=False, metallic=None, puddles=False, two_sided=False):
     m = material_in_place(name)
+    m.set_editor_property('two_sided', two_sided)
     m.set_editor_property('tangent_space_normal', False)
     if masked:
         m.set_editor_property('blend_mode', unreal.BlendMode.BLEND_MASKED)
     g = Graph(m)
     outs = [('Rough', F1), ('NormalWS', F3)] + ([('Keep', F1)] if masked else [])
-    c = g.custom(head(body), F3, surface_inputs(g, tex, mpc, uvs, vcol), outs)
+    c = g.custom(head(body), F3, surface_inputs(g, tex, mpc, uvs, vcol, puddles), outs)
     g.out(c, unreal.MaterialProperty.MP_BASE_COLOR)
     g.out(c, unreal.MaterialProperty.MP_ROUGHNESS, 'Rough')
     g.out(c, unreal.MaterialProperty.MP_NORMAL, 'NormalWS')
@@ -177,35 +188,32 @@ def surface_material(name, tex, mpc, body, uvs=0, vcol=False, bias=None, masked=
     return m
 
 
+# Weather per surface as weatherMaterials.ts: SlsWeather(c, p, n, Wx, T, wet, snow, upFrom, road, roadX, puddle).
+def wx(wet, snow, up=0.55):
+    return 'SlsWeather(c, p, n, Wx, T, %.2f, %.2f, %.2f, false, 0.0, 0.0);\n' % (wet, snow, up)
+
+
+END = 'return SlsEnd(c, p, n, 1.0, Rough, NormalWS);'
+
+
 def world_materials(tex, mpc):
     surface_material('M_SlsGround', tex, mpc,
-                     'SlsGround(SLS_TEX_NODE, c, p, UV0, UV1, UV2, SlsSrgbToLinear(VC.rgb));\n'
-                     'return SlsEnd(c, p, n, 1.0, Rough, NormalWS);', uvs=3, vcol=True)
+                     'SlsGround(SLS_TEX_NODE, c, p, UV0, UV1, UV2, SlsSrgbToLinear(VC.rgb));\n' + wx(0.6, 1.0) + END, uvs=3, vcol=True)
     surface_material('M_SlsRoad', tex, mpc,
                      'SlsRoad(SLS_TEX_NODE, c, p, UV0, UV1);\n'
-                     'return SlsEnd(c, p, n, 1.0, Rough, NormalWS);', uvs=2, bias=(2.0, 0.02))
+                     'SlsWeather(c, p, n, Wx, T, 1.0, 0.9, 0.55, true, saturate(UV0.x), PM.Sample(PMSampler, p.xz / SLS_PUDDLE_SIZE).r);\n' + END,
+                     uvs=2, bias=(2.0, 0.02), puddles=True)
     surface_material('M_SlsMarking', tex, mpc,
-                     'Keep = SlsMarking(SLS_TEX_NODE, c, p);\n'
-                     'return SlsEnd(c, p, n, 1.0, Rough, NormalWS);', bias=(4.0, 0.04), masked=True)
+                     'Keep = SlsMarking(SLS_TEX_NODE, c, p);\n' + wx(0.8, 0.9) + END, bias=(4.0, 0.04), masked=True)
     surface_material('M_SlsSidewalk', tex, mpc,
-                     'SlsSidewalk(SLS_TEX_NODE, c, p, n);\n'
-                     'return SlsEnd(c, p, n, 1.0, Rough, NormalWS);', bias=(1.0, 0.01))
+                     'SlsSidewalk(SLS_TEX_NODE, c, p, n);\n' + wx(0.9, 1.0) + END, bias=(1.0, 0.01))
     surface_material('M_SlsDetail', tex, mpc,
                      'float l = SlsPaintedMetal(SLS_TEX_NODE, c, p, n);\n'
-                     'float3 col = SlsEnd(c, p, n, 0.75, Rough, NormalWS);\n'
-                     'return c.Debug > 0.5 ? col : SlsSrgbToLinear(VC.rgb) * l;', vcol=True, bias=(1.0, 0.01), metallic=0.15)
-
-
-def vertex_color_material():
+                     'if (c.Debug < 0.5) c.Albedo = SlsSrgbToLinear(VC.rgb) * l;\n' + wx(0.5, 0.8, 0.6) +
+                     'return SlsEnd(c, p, n, 0.75, Rough, NormalWS);', vcol=True, bias=(1.0, 0.01), metallic=0.15)
     # buildings (until the facade shader is ported), tunnel tubes, stalls: the export's sRGB vertex colours
-    m = material_in_place('M_SlsVertexColor')
-    m.set_editor_property('two_sided', True)
-    g = Graph(m)
-    c = g.custom('return SlsSrgbToLinear(VC.rgb);', F3, [('VC', (g.node(unreal.MaterialExpressionVertexColor), ''))])
-    g.out(c, unreal.MaterialProperty.MP_BASE_COLOR)
-    g.out(g.node(unreal.MaterialExpressionConstant, r=0.8), unreal.MaterialProperty.MP_ROUGHNESS)
-    MEL.recompile_material(m)
-    EAL.save_loaded_asset(m)
+    surface_material('M_SlsVertexColor', tex, mpc,
+                     'c.Albedo = SlsSrgbToLinear(VC.rgb);\nc.Rough = 0.8;\n' + wx(0.5, 0.9) + END, vcol=True, two_sided=True)
 
 
 def light_material():
@@ -247,6 +255,70 @@ def water_material(tex):
     EAL.save_loaded_asset(m)
 
 
+# Rain streaks and snow flakes (web: src/weather/precipitation.ts), like going-vertical's snowfall: every particle is
+# a quad whose four corners sit on its seed (ASlsPrecipitation: position = seed in a box at the world origin, UV the
+# corner ±1, vertex colour R = random w). All motion is in the World Position Offset: the seeds fall, wrap around
+# the camera in a box of Precip.z cm, and only a share of them (rain/snow strength) is drawn.
+PRECIP_HLSL = """
+float w = Seed.r;
+float box = max(Precip.z, 100.0);
+float amount = %(amount)s;
+float3 p = WP;
+p.z -= T * %(speed)f * (0.75 + 0.5 * w);
+p.x += sin(T * (0.6 + w) + WP.y / box * 40.0) * %(sway)f;
+p.y += cos(T * (0.5 + w) + WP.x / box * 40.0) * %(sway)f;
+float3 rel = (frac((p - Cam) / box + 0.5) - 0.5) * box;
+float d = length(rel);
+float fade = step(w, amount) * smoothstep(0.5 * box, 0.3 * box, d) * smoothstep(30.0, 150.0, d);
+float3 q = Cam + rel + (Right * UV.x * %(width)f + float3(0.0, 0.0, 1.0) * UV.y * %(length)f) * fade;
+return q - WP;
+"""
+
+
+def precip_material(name, mpc, amount, speed, sway, width, length, opacity):
+    m = material_in_place(name)
+    m.set_editor_property('blend_mode', unreal.BlendMode.BLEND_TRANSLUCENT)
+    m.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_UNLIT)
+    m.set_editor_property('two_sided', True)
+    g = Graph(m)
+    right = g.node(unreal.MaterialExpressionTransform,
+                   transform_source_type=unreal.MaterialVectorCoordTransformSource.TRANSFORMSOURCE_VIEW,
+                   transform_type=unreal.MaterialVectorCoordTransform.TRANSFORM_WORLD)
+    MEL.connect_material_expressions(g.node(unreal.MaterialExpressionConstant3Vector, constant=unreal.LinearColor(1, 0, 0, 1)), '', right, '')
+    precip = (g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Precip'), '')
+    ins = [('WP', (g.node(unreal.MaterialExpressionWorldPosition), '')), ('Cam', (g.node(unreal.MaterialExpressionCameraPositionWS), '')),
+           ('UV', (g.node(unreal.MaterialExpressionTextureCoordinate, coordinate_index=0), '')), ('Seed', (g.node(unreal.MaterialExpressionVertexColor), '')),
+           ('Right', (right, '')), ('T', (g.node(unreal.MaterialExpressionTime), '')), ('Precip', precip)]
+    code = PRECIP_HLSL % {'amount': amount, 'speed': speed, 'sway': sway, 'width': width, 'length': length}
+    wpo = MEL.create_material_expression(m, unreal.MaterialExpressionCustom, -600, 0)
+    wpo.set_editor_property('code', code)
+    wpo.set_editor_property('output_type', F3)
+    cis = []
+    for nm, _ in ins:
+        ci = unreal.CustomInput()
+        ci.set_editor_property('input_name', nm)
+        cis.append(ci)
+    wpo.set_editor_property('inputs', cis)
+    for nm, (src, out) in ins:
+        MEL.connect_material_expressions(src, out, wpo, nm)
+    g.out(wpo, unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    # soft edges across the quad, brightness follows the daylight (Precip.w)
+    em = g.custom('float e = 1.0 - abs(UV.x); return float3(0.75, 0.78, 0.82) * Precip.w * e;', F3,
+                  [('UV', (g.node(unreal.MaterialExpressionTextureCoordinate, coordinate_index=0), '')), ('Precip', precip)])
+    g.out(em, unreal.MaterialProperty.MP_EMISSIVE_COLOR)
+    op = g.custom('return %f * saturate(1.0 - abs(UV.x)) * saturate(1.0 - abs(UV.y) * 0.6);' % opacity, F1,
+                  [('UV', (g.node(unreal.MaterialExpressionTextureCoordinate, coordinate_index=0), ''))])
+    g.out(op, unreal.MaterialProperty.MP_OPACITY)
+    MEL.recompile_material(m)
+    EAL.save_loaded_asset(m)
+
+
+def precip_materials(mpc):
+    # rain: thin 1.2 cm x 70 cm streaks falling at 9 m/s; snow: 4 cm flakes at 1.2 m/s, swaying
+    precip_material('M_SlsRain', mpc, 'Precip.x', 900.0, 4.0, 0.6, 35.0, 0.35)
+    precip_material('M_SlsSnow', mpc, 'Precip.y', 120.0, 60.0, 2.0, 2.0, 0.9)
+
+
 def setup_done():
     if os.environ.get('SLS_DONE'):
         open(os.environ['SLS_DONE'], 'w').write('done\n')
@@ -258,7 +330,7 @@ def setup_done():
 tex = import_textures()
 mpc = parameter_collection()
 world_materials(tex, mpc)
-vertex_color_material()
 light_material()
 water_material(tex)
+precip_materials(mpc)
 setup_done()

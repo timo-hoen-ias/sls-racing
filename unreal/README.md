@@ -71,6 +71,14 @@ Layer Water. Die Texturen sind dieselben Atlanten wie im Web-Spiel (`export-text
 - Die Straßen-Codes und Bodengewichte kommen so gepackt in den UV-Kanälen an, dass sie auch Half-Float-UVs
   überstehen (`SlsTileActor.cpp`).
 
+## Tageszeit und Wetter
+
+`USlsEnvironment` nutzt Unreals Himmel statt eines eigenen: Sky Atmosphere (Farben aus dem Sonnenstand),
+Volumetric Clouds, Exponential Height Fog mit volumetrischem Nebel, Sky Light mit Echtzeit-Erfassung, Mondlicht
+und Auto-Belichtung. Die Sonne folgt der Uhr des Web-Spiels (`daylight.ts`). Das Wetter ist ein 1:1-Port von
+`weather.ts` (Nässe, Schneedecke, Pfützen, zufällige Wechsel, Grip-Tabelle) und wirkt auf Straßen (gleiche
+Pfützenmaske wie im Web), Regen/Schnee (`ASlsPrecipitation`, Bewegung komplett im Material) und das Auto.
+
 ## Fahrphysik gegen das Web-Auto prüfen
 
 ```bash
@@ -111,6 +119,9 @@ $UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject
 | `tex.enabled on\|off` · `tex.normal <0..3>` · `tex.tiling on\|off` · `tex.macro` · `tex.wear` · `tex.groundtint` | Oberflächen wie im Web-Spiel |
 | `tex.debug off\|albedo\|normal\|rough\|height\|cells\|uv` · `tex.road auto\|<belag>` · `tex.info` · `tex.materials 0\|1` | Textur-Ansichten, Belag erzwingen, Status, Platzhalter |
 | `ground.aerial` · `ground.rows` · `ground.view normal\|cover\|aerial` · `feldweg.ruts` · `feldweg.grass` | Gelände und Feldwege |
+| `time [hh:mm]` · `time.set` · `day` `night` `dusk` `dawn` · `time.cycle [on\|off\|h/min]` | Tageszeit wie im Web-Spiel (Sonnenstand Saarlouis, Mitte September) |
+| `sky.overcast` · `sky.sun` · `sky.ambient` · `sky.exposure` · `sky.fog` | Bewölkung, Licht, Belichtung, Dunst |
+| `weather clear\|rain\|snow [stärke] [now]` · `weather.now` · `weather.intensity` · `weather.wet` · `weather.snowcover` · `weather.auto` · `weather.timescale` · `weather.grip` | Wetter, nasse Straße, Pfützen, Schneedecke, Grip |
 | `sls.data <ordner>` | Anderer Export-Ordner |
 
 ## Aufbau

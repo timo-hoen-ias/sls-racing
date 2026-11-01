@@ -324,8 +324,9 @@ void ASlsCarPawn::Tick(float Dt)
 	FSlsDriveInput In = Bench.Phase ? FSlsDriveInput() : ReadInput();
 	if (Bench.Phase) TickBench(Dt, In);
 	Vehicle->SetThrottleInput(In.Throttle);
-	Vehicle->SetBrakeInput(In.Brake);
-	Vehicle->SetSteeringInput(In.Steer);
+	// Wet or snowy roads: weaker brakes and vaguer steering (weather.ts surface()); friction is set in ArcadeLayer.
+	Vehicle->SetBrakeInput(In.Brake * WeatherGrip.Brake);
+	Vehicle->SetSteeringInput(In.Steer * WeatherGrip.Steer);
 	Vehicle->SetHandbrakeInput(In.bHandbrake);
 	ArcadeLayer(In, Dt);
 	UpdateWheels();
@@ -382,6 +383,14 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 	Vehicle->SetMaxEngineTorque(Vehicle->EngineSetup.MaxTorque * (bBoosting ? NitroTorque : 1.0));
 	if (bBoosting && !bAirborne) Add(Fwd * NitroPush * Dt);
 
+	// Tyre friction with the weather's grip; the rear also carries the drift release (RearSide).
+	{
+		const float Gk = WeatherGrip.Grip;
+		Vehicle->SetWheelFrictionMultiplier(0, float(Mu * Gk));
+		Vehicle->SetWheelFrictionMultiplier(1, float(Mu * Gk));
+		Vehicle->SetWheelFrictionMultiplier(2, float(Mu * RearMu * RearSide * Gk));
+		Vehicle->SetWheelFrictionMultiplier(3, float(Mu * RearMu * RearSide * Gk));
+	}
 	if (!bAirborne)
 	{
 		// Road hold (feel.stick): speed away from the road is taken out; with a wheel in the air the car is pressed down.
@@ -417,8 +426,8 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 		else DriftDir = 0;
 		const float RearTarget = DriftDir && !In.bHandbrake ? 0.6f : 1.f;
 		RearSide += (RearTarget - RearSide) * FMath::Min(1.f, Dt * 6);
-		Vehicle->SetWheelFrictionMultiplier(2, float(Mu * RearMu * RearSide));
-		Vehicle->SetWheelFrictionMultiplier(3, float(Mu * RearMu * RearSide));
+		Vehicle->SetWheelFrictionMultiplier(2, float(Mu * RearMu * RearSide * WeatherGrip.Grip));
+		Vehicle->SetWheelFrictionMultiplier(3, float(Mu * RearMu * RearSide * WeatherGrip.Grip));
 		if (Fv > 5)
 		{
 			// Slip angle, + = sliding to the right.

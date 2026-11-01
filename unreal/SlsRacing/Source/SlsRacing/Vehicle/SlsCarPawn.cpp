@@ -246,8 +246,8 @@ float ASlsCarPawn::ActionValue(const UInputAction* A) const
 {
 	const APlayerController* PC = Cast<APlayerController>(GetController());
 	const UEnhancedInputLocalPlayerSubsystem* S = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr;
-	const UEnhancedPlayerInput* PI = S ? S->GetPlayerInput() : nullptr;
-	return PI && A ? PI->GetActionValue(A).Get<float>() : 0.f;
+	const UEnhancedPlayerInput* PlayerInput = S ? S->GetPlayerInput() : nullptr;
+	return PlayerInput && A ? PlayerInput->GetActionValue(A).Get<float>() : 0.f;
 }
 
 FSlsDriveInput ASlsCarPawn::ReadInput()
@@ -444,7 +444,7 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 			}
 			LastSlip = Slip;
 			// Drift assist: bleed some sideways speed into forward speed while drifting.
-			if ((In.bHandbrake && AbsV > 8 || DriftDir) && Assists.Drift > 0)
+			if (((In.bHandbrake && AbsV > 8) || DriftDir) && Assists.Drift > 0)
 			{
 				const double Bleed = Sv * 0.9 * Assists.Drift * Dt;
 				Add((-Right * Bleed + Fwd * FMath::Abs(Bleed) * 0.6) * Mass);

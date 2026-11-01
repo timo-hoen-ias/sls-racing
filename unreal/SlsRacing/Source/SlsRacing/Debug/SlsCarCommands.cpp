@@ -27,7 +27,7 @@ namespace
 	{
 		if (const APlayerController* PC = PlayerController(W))
 			if (ASlsCarPawn* C = Cast<ASlsCarPawn>(PC->GetPawn())) return C;
-		if (W) for (TActorIterator<ASlsCarPawn> It(W); It; ++It) return *It;
+		if (W) if (TActorIterator<ASlsCarPawn> It(W); It) return *It;
 		return nullptr;
 	}
 

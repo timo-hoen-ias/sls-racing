@@ -9,5 +9,7 @@ public class SlsRacing : ModuleRules
 			"Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "ProceduralMeshComponent", "Json",
 			"ChaosVehicles", "ChaosVehiclesCore", "EnhancedInput", "Chaos", "RenderCore",
 		});
+		// includes like "World/SlsWeather.h" and "SlsRacing.h" are relative to the module root
+		PublicIncludePaths.Add(ModuleDirectory);
 	}
 }

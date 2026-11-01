@@ -78,7 +78,7 @@ namespace
 				}
 				Say(FString::Printf(TEXT("Props: %d Instanzen in %d HISM, %d Modellteile (%d ohne Mesh), Sichtweite %.0f m"), Total, Comps, M.Num(), Missing, GPropsCull));
 			});
-			Add(TEXT("props.near"), TEXT("Props im Umkreis der Kamera in m (Standard 30): Teil und Abstand"), [](const TArray<FString>& A, UWorld* W) {
+			Add(TEXT("props.near"), TEXT("Props im Umkreis der Kamera in m (Standard 30), optional nur Teile mit <filter>: Teil, Abstand, Gier, Ort (für tp)"), [](const TArray<FString>& A, UWorld* W) {
 				USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 				APlayerController* PC = W ? W->GetFirstPlayerController() : nullptr;
 				if (!S || !PC || !PC->PlayerCameraManager) return;
@@ -88,6 +88,7 @@ namespace
 				int32 N = 0;
 				ForEachHism(W, [&](UHierarchicalInstancedStaticMeshComponent* H) {
 					const int32 K = M.Find(H->GetStaticMesh());
+					if (A.Num() > 1 && !(S->PropNames().IsValidIndex(K) && S->PropNames()[K].Contains(A[1]))) return;
 					for (int32 I = 0; I < H->GetInstanceCount() && N < 40; I++)
 					{
 						FTransform X;
@@ -95,7 +96,8 @@ namespace
 						const double D = FVector::Dist(X.GetLocation(), Cam);
 						if (D > R) continue;
 						N++;
-						Say(FString::Printf(TEXT("  %-34s %5.1f m  Gier %.0f°"), S->PropNames().IsValidIndex(K) ? *S->PropNames()[K] : TEXT("?"), D / 100.0, X.Rotator().Yaw));
+						const FVector L = USlsWorldSubsystem::UEToLocal(X.GetLocation());
+						Say(FString::Printf(TEXT("  %-34s %5.1f m  Gier %.0f°  bei x %.1f z %.1f"), S->PropNames().IsValidIndex(K) ? *S->PropNames()[K] : TEXT("?"), D / 100.0, X.Rotator().Yaw, L.X, L.Z));
 					}
 				});
 				if (!N) Say(TEXT("keine Props in der Nähe"));

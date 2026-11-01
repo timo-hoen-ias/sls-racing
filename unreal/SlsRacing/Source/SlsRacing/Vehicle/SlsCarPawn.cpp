@@ -193,7 +193,8 @@ void ASlsCarPawn::SetupInput()
 {
 	if (Mapping) return;
 	auto Make = [this](const TCHAR* Name, EInputActionValueType Type) {
-		UInputAction* A = NewObject<UInputAction>(this, Name);
+		// IA_ prefix: the pawn's subobjects share one namespace ("Camera" is also the camera component)
+		UInputAction* A = NewObject<UInputAction>(this, *FString::Printf(TEXT("IA_%s"), Name));
 		A->ValueType = Type;
 		return A;
 	};
@@ -246,8 +247,8 @@ float ASlsCarPawn::ActionValue(const UInputAction* A) const
 {
 	const APlayerController* PC = Cast<APlayerController>(GetController());
 	const UEnhancedInputLocalPlayerSubsystem* S = PC ? ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PC->GetLocalPlayer()) : nullptr;
-	const UEnhancedPlayerInput* PI = S ? S->GetPlayerInput() : nullptr;
-	return PI && A ? PI->GetActionValue(A).Get<float>() : 0.f;
+	const UEnhancedPlayerInput* PlayerInput = S ? S->GetPlayerInput() : nullptr;
+	return PlayerInput && A ? PlayerInput->GetActionValue(A).Get<float>() : 0.f;
 }
 
 FSlsDriveInput ASlsCarPawn::ReadInput()
@@ -336,7 +337,8 @@ void ASlsCarPawn::Tick(float Dt)
 void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 {
 	using namespace SlsCar;
-	if (Dt <= 0 || !Box->IsSimulatingPhysics()) return;
+	// wheel states exist only once the Chaos vehicle simulation runs (a frame or two after physics is switched on)
+	if (Dt <= 0 || !Box->IsSimulatingPhysics() || Vehicle->GetNumWheels() < 4) return;
 	const FVector Up = Box->GetUpVector(), Fwd = Box->GetForwardVector(), Right = Box->GetRightVector();
 	const FVector V = Box->GetPhysicsLinearVelocity() / 100.0; // m/s
 	const FVector W = Box->GetPhysicsAngularVelocityInRadians();
@@ -444,7 +446,7 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 			}
 			LastSlip = Slip;
 			// Drift assist: bleed some sideways speed into forward speed while drifting.
-			if ((In.bHandbrake && AbsV > 8 || DriftDir) && Assists.Drift > 0)
+			if (((In.bHandbrake && AbsV > 8) || DriftDir) && Assists.Drift > 0)
 			{
 				const double Bleed = Sv * 0.9 * Assists.Drift * Dt;
 				Add((-Right * Bleed + Fwd * FMath::Abs(Bleed) * 0.6) * Mass);

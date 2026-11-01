@@ -49,6 +49,8 @@ export interface SlsuHeader {
   layers: LayerInfo[];
   colliders: ColliderGroup[];
   ref?: { cell: number; n: number; count: number };
+  /** Tree and bush instances in v.sp / v.inst (export-tiles.ts vegetationSections). */
+  veg?: number;
 }
 
 export interface Section { name: string; type: SectionType; bytes: Uint8Array }
@@ -56,7 +58,7 @@ export interface Section { name: string; type: SectionType; bytes: Uint8Array }
 export const bytesOf = (a: ArrayBufferView) => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
 
 export function packSlsu(h: SlsuHeader, sections: Section[]): Uint8Array {
-  const out = packSections(h.ix, h.iy, sections, { v: h.v, originLocal: h.originLocal, originUE: h.originUE, layers: h.layers, colliders: h.colliders, ...(h.ref ? { ref: h.ref } : {}) });
+  const out = packSections(h.ix, h.iy, sections, { v: h.v, originLocal: h.originLocal, originUE: h.originUE, layers: h.layers, colliders: h.colliders, ...(h.ref ? { ref: h.ref } : {}), ...(h.veg ? { veg: h.veg } : {}) });
   out.set(new TextEncoder().encode(SLSU_MAGIC), 0);
   new DataView(out.buffer).setUint32(4, SLSU_VERSION, true);
   return out;

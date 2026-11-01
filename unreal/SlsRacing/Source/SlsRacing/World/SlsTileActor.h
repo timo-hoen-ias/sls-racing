@@ -7,6 +7,8 @@
 class FSlsTileFile;
 class UProceduralMeshComponent;
 class UMaterialInterface;
+class UStaticMesh;
+class UHierarchicalInstancedStaticMeshComponent;
 
 /**
  * One 256 m world tile: the drawn layers (terrain, roads, markings, buildings …) in one render mesh, and the
@@ -21,13 +23,21 @@ class SLSRACING_API ASlsTileActor : public AActor
 public:
 	ASlsTileActor();
 
-	/** Creates the render mesh from the file. */
 	/** Assigns the materials again (tex.materials, after sls_setup.py). */
 	void ApplyMaterials(TFunctionRef<UMaterialInterface*(const FString&, bool)> MaterialFor);
+	/** Creates the render mesh from the file. */
 	void BuildVisual(const FSlsTileFile& File, TFunctionRef<UMaterialInterface*(const FString& Layer, bool bVertexColor)> MaterialFor);
 	/** Creates the collision components. bAsync: cook on worker threads (streaming); off for tests that trace right away. */
 	void BuildCollision(const FSlsTileFile& File, bool bAsync);
 	void RemoveCollision();
+	/**
+	 * Trees and bushes from v.sp / v.inst (export-tiles.ts vegetationSections): one HISM per species, instance
+	 * scale (w, w, h) on the unit-size species mesh, per-instance custom data 0..2 = tint (linear rgb). Meshes[i]
+	 * belongs to species index i (index.json vegetation.species); null entries are skipped.
+	 */
+	void BuildVegetation(const FSlsTileFile& File, TArrayView<UStaticMesh* const> Meshes, float CullCm);
+	void RemoveVegetation();
+	int32 VegetationCount() const;
 	bool HasCollision() const { return CollisionComponents.Num() > 0; }
 
 	int32 IX = 0, IY = 0;
@@ -57,4 +67,7 @@ public:
 
 	UPROPERTY()
 	TArray<TObjectPtr<UProceduralMeshComponent>> CollisionComponents;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> VegetationComponents;
 };

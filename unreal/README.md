@@ -30,7 +30,9 @@ node unreal/tools/verify-export.ts                                              
 ```
 
 Die World-Build-Action veröffentlicht den fertigen Export zusätzlich als `ue-tiles-<key>-<teil>.tar` (3 Teile) im Release
-`world-tiles`. Kürzester Weg auf dem PC: `unreal/tools/fetch-world.sh` (braucht `gh auth login`).
+`world-tiles`. Kürzester Weg auf dem PC: `unreal/tools/fetch-world.sh` (braucht `gh auth login`). Der Landkreis ist
+entpackt etwa 4 GB groß: `SLS_WORLD_DIR=/var/tmp/sls-ue ./unreal/sls.sh world` legt ihn dort ab und verlinkt `WorldData`;
+ein vorhandener Link bleibt erhalten, und derselbe Export wird nicht zweimal geladen.
 
 ## Projekt bauen und starten (Linux)
 

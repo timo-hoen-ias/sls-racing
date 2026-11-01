@@ -97,7 +97,9 @@ ASlsCarPawn::ASlsCarPawn()
 	{
 		FChaosWheelSetup& S = Vehicle->WheelSetups[I];
 		S.WheelClass = I < 2 ? USlsWheelFront::StaticClass() : USlsWheelRear::StaticClass();
-		S.BoneName = NAME_None;
+		// No skeleton: Chaos only uses the bone of a skinned mesh (LocateBoneOffset), but refuses to create the vehicle
+		// without a name, so every wheel gets a placeholder; the position is AdditionalOffset alone.
+		S.BoneName = *FString::Printf(TEXT("Wheel%d"), I);
 		// Wheel centre at rest: mount point WheelY above the body origin, rest length below it (box-centre relative).
 		S.AdditionalOffset = BodyToUE(Ys[I], WheelY - WheelRest - ColliderY, Zs[I]);
 	}
@@ -319,6 +321,7 @@ void ASlsCarPawn::Tick(float Dt)
 		{
 			const FSlsWorldInfo& I = S->Info();
 			PlaceAt(I.SpawnLocal, I.SpawnHeading);
+			if (Bench.Phase) BenchReset(); // car.bench from -ExecCmds starts before the spawn placement
 		}
 		return;
 	}
@@ -576,7 +579,16 @@ void ASlsCarPawn::TickBench(float Dt, FSlsDriveInput& In)
 {
 	FBenchState& B = Bench;
 	B.T += Dt;
+	B.Total += Dt;
 	const double V = SpeedMs();
+	if (B.Total >= B.NextLog)
+	{
+		B.NextLog += 5;
+		int32 Contacts = 0;
+		for (int32 I = 0; I < Vehicle->GetNumWheels(); I++) Contacts += Vehicle->GetWheelState(I).bInContact ? 1 : 0;
+		UE_LOG(LogSls, Display, TEXT("car.bench: Phase %d, t %.1f s, %.1f km/h, Gang %d, %d Räder am Boden, z %.0f cm"),
+			B.Phase, B.T, V * 3.6, Gear(), Contacts, GetActorLocation().Z);
+	}
 	switch (B.Phase)
 	{
 	case 1: // settle, then full throttle for 60 s
@@ -592,6 +604,7 @@ void ASlsCarPawn::TickBench(float Dt, FSlsDriveInput& In)
 		if (B.T < 1) break;
 		In.Throttle = 1;
 		if (V >= 100 / 3.6) { B.Start = GetActorLocation(); B.Phase = 4; B.T = 0; }
+		else if (B.T > 30) { B.Phase = 5; BenchReset(); } // never reached 100: no brake values
 		break;
 	case 4:
 		In.Brake = 1;
@@ -601,6 +614,7 @@ void ASlsCarPawn::TickBench(float Dt, FSlsDriveInput& In)
 		if (B.T < 1) break;
 		In.Throttle = 1;
 		if (V >= 80 / 3.6) { B.Phase = 6; B.T = 0; }
+		else if (B.T > 30) { B.Phase = 0; BenchReport(); } // never reached 80: no lateral value
 		break;
 	case 6:
 	{

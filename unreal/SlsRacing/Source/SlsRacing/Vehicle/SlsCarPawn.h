@@ -126,6 +126,7 @@ private:
 		int32 Phase = 0;
 		bool bExit = false;
 		double T = 0, T100 = 0, T200 = 0, TopKmh = 0, BrakeM = 0, BrakeS = 0, Lat = 0;
+		double Total = 0, NextLog = 0; // headless runs: progress line every 5 s
 		int32 LatN = 0;
 		FVector Start = FVector::ZeroVector;
 	} Bench;

@@ -78,6 +78,37 @@ namespace
 				}
 				Say(FString::Printf(TEXT("Props: %d Instanzen in %d HISM, %d Modellteile (%d ohne Mesh), Sichtweite %.0f m"), Total, Comps, M.Num(), Missing, GPropsCull));
 			});
+			Add(TEXT("props.look"), TEXT("Freie Kamera vor das nächste Prop mit <filter>: props.look <filter> [Winkel° um das Teil, 0 = von seiner +X-Seite] [Abstand m]"),
+				[](const TArray<FString>& A, UWorld* W) {
+					USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
+					APlayerController* PC = W ? W->GetFirstPlayerController() : nullptr;
+					if (!S || !PC || !PC->PlayerCameraManager || !A.Num()) return;
+					const FVector Cam = PC->PlayerCameraManager->GetCameraLocation();
+					TArrayView<UStaticMesh* const> M = S->PropMeshes();
+					FTransform Best; double BestD = TNumericLimits<double>::Max(); FString Name;
+					ForEachHism(W, [&](UHierarchicalInstancedStaticMeshComponent* H) {
+						const int32 K = M.Find(H->GetStaticMesh());
+						if (!(S->PropNames().IsValidIndex(K) && S->PropNames()[K].Contains(A[0]))) return;
+						for (int32 I = 0; I < H->GetInstanceCount(); I++)
+						{
+							FTransform X;
+							H->GetInstanceTransform(I, X, true);
+							const double D = FVector::Dist(X.GetLocation(), Cam);
+							if (D < BestD) { BestD = D; Best = X; Name = S->PropNames()[K]; }
+						}
+					});
+					if (Name.IsEmpty()) { Say(TEXT("props.look: nichts gefunden")); return; }
+					// The free camera (fly) is moved; the car stays where it is.
+					if (!PC->GetPawn() || PC->GetPawn()->GetClass()->GetName() != TEXT("SlsFlyPawn")) PC->ConsoleCommand(TEXT("fly"));
+					const double Angle = A.Num() > 1 ? FCString::Atod(*A[1]) : 0.0, Dist = (A.Num() > 2 ? FCString::Atod(*A[2]) : 6.0) * 100.0;
+					const FVector Dir = Best.GetRotation().RotateVector(FRotator(0, Angle, 0).Vector());
+					const FVector Target = Best.GetLocation() + FVector(0, 0, 150);
+					const FVector Eye = Target + Dir * Dist;
+					if (APawn* P = PC->GetPawn()) P->SetActorLocation(Eye, false, nullptr, ETeleportType::TeleportPhysics);
+					PC->SetControlRotation((Target - Eye).Rotation());
+					const FVector L = USlsWorldSubsystem::UEToLocal(Best.GetLocation());
+					Say(FString::Printf(TEXT("props.look: %s bei x %.1f z %.1f, Gier %.0f°, Kamera von %.0f°"), *Name, L.X, L.Z, Best.Rotator().Yaw, Angle));
+				});
 			Add(TEXT("props.near"), TEXT("Props im Umkreis der Kamera in m (Standard 30), optional nur Teile mit <filter>: Teil, Abstand, Gier, Ort (für tp)"), [](const TArray<FString>& A, UWorld* W) {
 				USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 				APlayerController* PC = W ? W->GetFirstPlayerController() : nullptr;

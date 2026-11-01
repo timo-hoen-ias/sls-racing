@@ -11,9 +11,12 @@ namespace
 		W->SweepShape = ESweepShape::Raycast;
 		W->bAffectedByEngine = true;
 		W->bAffectedByBrake = true;
-		// Suspension: rest length ± travel like the Rapier raycast vehicle; spring per wheel = 50 N/m per kg of car.
+		// Suspension: spring per wheel = 50 N/m per kg of car. Rapier pushes with stiffness × (rest − length), so the
+		// force is zero at the rest length and the car settles ~5 cm below it. Chaos's spring is zero at full droop
+		// (SuspensionSystem.h: SpringDisplacement = MaxLength − length), so droop below rest would lift the body by the
+		// droop travel (the model rode ~9 cm high on its wheels): no droop, the travel all upwards from rest.
 		W->SuspensionMaxRaise = WheelTravel * 100.f;
-		W->SuspensionMaxDrop = WheelTravel * 100.f;
+		W->SuspensionMaxDrop = 0.f;
 		// Force-based suspension (p.Vehicle.DisableConstraintSuspension=1, DefaultEngine.ini): Chaos builds its
 		// suspension constraints only for skeletal meshes, so on our box nothing held the body up. The force path takes
 		// MToCm(SpringRate) per cm of travel (SuspensionSystem.cpp), i.e. SpringRate is N/cm.

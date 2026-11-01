@@ -7,6 +7,7 @@
 #include "ChaosWheeledVehicleMovementComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
@@ -85,6 +86,28 @@ ASlsCarPawn::ASlsCarPawn()
 		W->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		if (Cylinder.Succeeded()) W->SetStaticMesh(Cylinder.Object);
 		WheelMeshes.Add(W);
+	}
+
+	// The GLB car (loaded in BeginPlay when sls_car.py has imported it). Model space after Interchange: X = web left,
+	// Y = forward, Z = up, centimetres at real size; yaw -90 turns it onto the car (forward +X, right +Y), and it is
+	// scaled by VEHICLE.scale and lowered like carView.ts (model ground at RIDE_HEIGHT below the body origin).
+	ModelBody = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ModelBody"));
+	ModelBody->SetupAttachment(Box);
+	ModelBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ModelBody->SetRelativeLocation(FVector(0, 0, (-RideHeight * Scale - ColliderY) * 100.0));
+	ModelBody->SetRelativeRotation(FRotator(0, -90, 0));
+	ModelBody->SetRelativeScale3D(FVector(Scale));
+	ModelBody->SetVisibility(false);
+	for (int32 I = 0; I < 4; I++)
+	{
+		for (int32 K = 0; K < 2; K++)
+		{
+			UStaticMeshComponent* C = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("Model%s%d"), K ? TEXT("Caliper") : TEXT("Wheel"), I));
+			C->SetupAttachment(Box);
+			C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			C->SetVisibility(false);
+			(K ? ModelCalipers : ModelWheels).Add(C);
+		}
 	}
 
 	Vehicle = CreateDefaultSubobject<UChaosWheeledVehicleMovementComponent>(TEXT("Vehicle"));
@@ -192,6 +215,18 @@ void ASlsCarPawn::BeginPlay()
 		const double D = SlsCar::WheelRadius * 2, W = SlsCar::WheelWidth;
 		WheelMeshes[I]->SetRelativeScale3D(FVector(D, D, W)); // cylinder is 1 m, axis Z; turned onto Y below
 	}
+	// The GLB model when the setup has imported it (sls_car.py), else the box and cylinders stay.
+	UStaticMesh* MBody = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Cars/SM_SlsCar_Body.SM_SlsCar_Body"), nullptr, LOAD_Quiet | LOAD_NoWarn);
+	UStaticMesh* MWheel = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Cars/SM_SlsCar_Wheel.SM_SlsCar_Wheel"), nullptr, LOAD_Quiet | LOAD_NoWarn);
+	UStaticMesh* MCaliper = LoadObject<UStaticMesh>(nullptr, TEXT("/Game/Cars/SM_SlsCar_Caliper.SM_SlsCar_Caliper"), nullptr, LOAD_Quiet | LOAD_NoWarn);
+	if (MBody && MWheel && MCaliper)
+	{
+		ModelBody->SetStaticMesh(MBody);
+		for (int32 I = 0; I < 4; I++) { ModelWheels[I]->SetStaticMesh(MWheel); ModelCalipers[I]->SetStaticMesh(MCaliper); }
+		bModelLoaded = true;
+	}
+	else UE_LOG(LogSls, Warning, TEXT("Automodell fehlt (/Game/Cars, ./unreal/sls.sh setup): Platzhalter"));
+	SetModel(bModelLoaded);
 	// Hold the car until the ground under the spawn has its colliders.
 	Box->SetSimulatePhysics(false);
 }
@@ -547,6 +582,17 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 	}
 }
 
+bool ASlsCarPawn::SetModel(bool bOn)
+{
+	bModelShown = bOn && bModelLoaded;
+	BodyMesh->SetVisibility(!bModelShown);
+	for (UStaticMeshComponent* W : WheelMeshes) W->SetVisibility(!bModelShown);
+	ModelBody->SetVisibility(bModelShown);
+	for (UStaticMeshComponent* W : ModelWheels) W->SetVisibility(bModelShown);
+	for (UStaticMeshComponent* C : ModelCalipers) C->SetVisibility(bModelShown);
+	return bModelShown == bOn;
+}
+
 void ASlsCarPawn::UpdateWheels()
 {
 	for (int32 I = 0; I < 4 && I < Vehicle->Wheels.Num(); I++)
@@ -557,6 +603,27 @@ void ASlsCarPawn::UpdateWheels()
 		WheelMeshes[I]->SetRelativeLocation(Rest + FVector(0, 0, W->GetSuspensionOffset()));
 		// Cylinder axis (Z) onto the axle (Y), steered, spinning.
 		WheelMeshes[I]->SetRelativeRotation(FRotator(W->GetRotationAngle(), W->GetSteerAngle(), 90.f));
+		if (bModelShown)
+		{
+			// GLB wheel: axle along model X facing the left side; the right wheels (1, 3) mirrored like carView.ts.
+			// Model -> car is yaw -90, then the spin about the axle (car Y), then the steering about Z.
+			const FVector Center = Rest + FVector(0, 0, W->GetSuspensionOffset());
+			const double Side = (I % 2 == 0) ? 1.0 : -1.0;
+			const FQuat Steer(FVector::UpVector, FMath::DegreesToRadians(W->GetSteerAngle()));
+			const FQuat Spin(FVector::RightVector, -FMath::DegreesToRadians(W->GetRotationAngle()));
+			const FQuat Base(FVector::UpVector, FMath::DegreesToRadians(-90.0));
+			ModelWheels[I]->SetRelativeLocationAndRotation(Center, Steer * Spin * Base);
+			ModelWheels[I]->SetRelativeScale3D(FVector(Side, 1, 1) * SlsCar::Scale);
+			ModelCalipers[I]->SetRelativeLocationAndRotation(Center, Steer * Base);
+			ModelCalipers[I]->SetRelativeScale3D(FVector(Side, 1, 1) * SlsCar::Scale);
+		}
+		if (bShowWheelPoints)
+		{
+			const FVector C = Box->GetComponentTransform().TransformPosition(Rest + FVector(0, 0, W->GetSuspensionOffset()));
+			DrawDebugSphere(GetWorld(), C, SlsCar::WheelRadius * 100.0, 16, FColor::Cyan, false, -1.f, 0, 1.5f);
+			const FWheelStatus& St = Vehicle->GetWheelState(I);
+			if (St.bInContact) DrawDebugPoint(GetWorld(), St.ContactPoint, 12.f, FColor::Yellow, false, -1.f);
+		}
 	}
 }
 
@@ -574,7 +641,7 @@ void ASlsCarPawn::UpdateCamera(const FSlsDriveInput& In, float Dt)
 	Arm->bEnableCameraRotationLag = CamMode < 2;
 	Arm->CameraRotationLagSpeed = Feel.CamSwing > 0 ? 8.f / Feel.CamSwing : 20.f;
 	Arm->bDoCollisionTest = CamMode < 2;
-	Arm->SetRelativeRotation(FRotator(CamMode < 2 ? -8.f : 0.f, In.bLookBack ? 180.f : 0.f, 0));
+	Arm->SetRelativeRotation(FRotator(CamMode < 2 ? -8.f : 0.f, (In.bLookBack ? 180.f : 0.f) + CamOrbit, 0));
 	const float Fov = 82.f + Feel.CamSpeedFov * FMath::Clamp(float(Kmh) / Feel.CamMaxKmh, 0.f, 1.f) + (bBoosting ? Feel.CamBoostFov : 0.f);
 	Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, CamMode == 3 ? 88.f : Fov, Dt, 4.f));
 }

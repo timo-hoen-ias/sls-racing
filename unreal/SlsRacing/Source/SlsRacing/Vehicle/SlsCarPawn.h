@@ -81,6 +81,8 @@ public:
 	FSlsSurfaceGrip WeatherGrip;
 	/** Camera mode: 0 chase, 1 far, 2 hood, 3 cockpit (cam.mode, C). */
 	int32 CamMode = 0;
+	/** cam.orbit: the chase camera turned around the car (degrees, 90 = from the right), to look at the model. */
+	float CamOrbit = 0.f;
 
 	/** car.bench: drives the reference runs of unreal/tools/car-reference.ts on a flat plane and compares. */
 	void StartBench(bool bExitWhenDone);
@@ -91,6 +93,16 @@ public:
 	UPROPERTY(VisibleAnywhere) TObjectPtr<UBoxComponent> Box;
 	UPROPERTY(VisibleAnywhere) TObjectPtr<UStaticMeshComponent> BodyMesh;
 	UPROPERTY(VisibleAnywhere) TArray<TObjectPtr<UStaticMeshComponent>> WheelMeshes;
+	/** The web game's sports coupé (public/models/sportscar.glb via export-car.ts / sls_car.py, /Game/Cars). */
+	UPROPERTY(VisibleAnywhere) TObjectPtr<UStaticMeshComponent> ModelBody;
+	UPROPERTY(VisibleAnywhere) TArray<TObjectPtr<UStaticMeshComponent>> ModelWheels;
+	UPROPERTY(VisibleAnywhere) TArray<TObjectPtr<UStaticMeshComponent>> ModelCalipers;
+	/** car.model: true = the GLB model, false = box and cylinders. Returns false when /Game/Cars is missing. */
+	bool SetModel(bool bOn);
+	bool HasModel() const { return bModelLoaded; }
+	bool IsModelShown() const { return bModelShown; }
+	/** car.model.wheels: draw the wheel centres and contact points for a few seconds. */
+	bool bShowWheelPoints = false;
 	UPROPERTY(VisibleAnywhere) TObjectPtr<USpringArmComponent> Arm;
 	UPROPERTY(VisibleAnywhere) TObjectPtr<UCameraComponent> Camera;
 	UPROPERTY(VisibleAnywhere) TObjectPtr<UChaosWheeledVehicleMovementComponent> Vehicle;
@@ -102,6 +114,7 @@ private:
 	void ArcadeLayer(const FSlsDriveInput& In, float Dt);
 	void UpdateCamera(const FSlsDriveInput& In, float Dt);
 	void UpdateWheels();
+	bool bModelLoaded = false, bModelShown = false;
 	void TickBench(float Dt, FSlsDriveInput& In);
 
 	bool bFun = true;

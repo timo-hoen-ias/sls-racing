@@ -85,6 +85,8 @@ public:
 	/** car.bench: drives the reference runs of unreal/tools/car-reference.ts on a flat plane and compares. */
 	void StartBench(bool bExitWhenDone);
 	bool IsBenching() const { return Bench.Phase != 0; }
+	/** car.diag: drivetrain and per-wheel log every 0.25 s (where the force goes). */
+	bool bDiag = false;
 
 	UPROPERTY(VisibleAnywhere) TObjectPtr<UBoxComponent> Box;
 	UPROPERTY(VisibleAnywhere) TObjectPtr<UStaticMeshComponent> BodyMesh;
@@ -126,10 +128,13 @@ private:
 		int32 Phase = 0;
 		bool bExit = false;
 		double T = 0, T100 = 0, T200 = 0, TopKmh = 0, BrakeM = 0, BrakeS = 0, Lat = 0;
+		double Total = 0, NextLog = 0; // headless runs: progress line every 5 s
 		int32 LatN = 0;
 		FVector Start = FVector::ZeroVector;
 	} Bench;
 	UPROPERTY() TObjectPtr<AActor> BenchPlane;
+	double DiagT = 0;
+	void DiagLog(float Dt, const FSlsDriveInput& In);
 	void BenchReset();
 	void BenchReport();
 };

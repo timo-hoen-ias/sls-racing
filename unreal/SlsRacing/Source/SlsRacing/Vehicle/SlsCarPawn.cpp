@@ -21,6 +21,7 @@
 #include "InputModifiers.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/FileHelper.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -92,12 +93,18 @@ ASlsCarPawn::ASlsCarPawn()
 	Vehicle->ChassisWidth = HalfWidth * 200.0;
 	Vehicle->ChassisHeight = HalfHeight * 200.0;
 	Vehicle->bReverseAsBrake = true;
+	// The web game feeds throttle and brake straight to the car (src/input/input.ts has no ramp for them); Chaos
+	// would ease them in at 6/s, which cost ~0.17 s of every stop and launch.
+	Vehicle->ThrottleInputRate.RiseRate = Vehicle->ThrottleInputRate.FallRate = 1000.f;
+	Vehicle->BrakeInputRate.RiseRate = Vehicle->BrakeInputRate.FallRate = 1000.f;
 	Vehicle->WheelSetups.SetNum(4);
 	for (int32 I = 0; I < 4; I++)
 	{
 		FChaosWheelSetup& S = Vehicle->WheelSetups[I];
 		S.WheelClass = I < 2 ? USlsWheelFront::StaticClass() : USlsWheelRear::StaticClass();
-		S.BoneName = NAME_None;
+		// No skeleton: Chaos only uses the bone of a skinned mesh (LocateBoneOffset), but refuses to create the vehicle
+		// without a name, so every wheel gets a placeholder; the position is AdditionalOffset alone.
+		S.BoneName = *FString::Printf(TEXT("Wheel%d"), I);
 		// Wheel centre at rest: mount point WheelY above the body origin, rest length below it (box-centre relative).
 		S.AdditionalOffset = BodyToUE(Ys[I], WheelY - WheelRest - ColliderY, Zs[I]);
 	}
@@ -132,7 +139,10 @@ void ASlsCarPawn::ApplyTuning()
 	E.MaxTorque = Peak * Feel.Torque;
 	E.MaxRPM = MaxRpm;
 	E.EngineIdleRPM = IdleRpm;
-	E.EngineBrakeEffect = 0.2f; // ~100 Nm at mid revs, like engineBrake in tuning.ts
+	// Chaos brakes every driven wheel with EngineRPM × EngineBrakeEffect (Nm at the wheel, no gearing;
+	// ChaosWheeledVehicleMovementComponent.cpp). Matched to the web's (base + perRpm × rpm) × gearing in 3rd gear at
+	// 5 000/min, shared by the four driven wheels: 0.2 was ten times that and braked like a second brake pedal.
+	E.EngineBrakeEffect = float((EngineBrakeBase + EngineBrakePerRpm * 5000) * Gears()[2] * Final * Efficiency / 4 / 5000);
 	E.EngineRevUpMOI = 5.f;
 	E.EngineRevDownRate = 600.f;
 	FRichCurve* TC = E.TorqueCurve.GetRichCurve();
@@ -149,7 +159,10 @@ void ASlsCarPawn::ApplyTuning()
 	Tr.FinalRatio = Final;
 	Tr.ForwardGearRatios = Gears();
 	Tr.ReverseGearRatios = {float(Reverse)};
-	Tr.ChangeUpRPM = ShiftRpm;
+	// Chaos shifts when its (lagging, see the arcade layer) engine rpm reaches ChangeUpRPM, but cuts the drive as soon
+	// as the wheels ask for more than MaxRPM: at 8 800 the car hung at the limiter in 1st and 2nd for half a second.
+	// Shifting a bit earlier lands at the web's 8 800 in the low gears.
+	Tr.ChangeUpRPM = ShiftRpm - 1000;
 	Tr.ChangeDownRPM = 3000;
 	Tr.GearChangeTime = ShiftTime;
 	Tr.TransmissionEfficiency = Efficiency;
@@ -319,17 +332,20 @@ void ASlsCarPawn::Tick(float Dt)
 		{
 			const FSlsWorldInfo& I = S->Info();
 			PlaceAt(I.SpawnLocal, I.SpawnHeading);
+			if (Bench.Phase) BenchReset(); // car.bench from -ExecCmds starts before the spawn placement
 		}
 		return;
 	}
 	FSlsDriveInput In = Bench.Phase ? FSlsDriveInput() : ReadInput();
 	if (Bench.Phase) TickBench(Dt, In);
-	Vehicle->SetThrottleInput(In.Throttle);
+	// Chaos squares the throttle (PEngine.SetThrottle(Throttle²)); the web's torque is linear in the pedal.
+	Vehicle->SetThrottleInput(FMath::Sqrt(FMath::Clamp(In.Throttle, 0.f, 1.f)));
 	// Wet or snowy roads: weaker brakes and vaguer steering (weather.ts surface()); friction is set in ArcadeLayer.
 	Vehicle->SetBrakeInput(In.Brake * WeatherGrip.Brake);
 	Vehicle->SetSteeringInput(In.Steer * WeatherGrip.Steer);
 	Vehicle->SetHandbrakeInput(In.bHandbrake);
 	ArcadeLayer(In, Dt);
+	if (bDiag) DiagLog(Dt, In);
 	UpdateWheels();
 	UpdateCamera(In, Dt);
 }
@@ -385,14 +401,40 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 	Vehicle->SetMaxEngineTorque(Vehicle->EngineSetup.MaxTorque * (bBoosting ? NitroTorque : 1.0));
 	if (bBoosting && !bAirborne) Add(Fwd * NitroPush * Dt);
 
-	// Tyre friction with the weather's grip; the rear also carries the drift release (RearSide).
+	// Engine speed like the web drivetrain: the revs follow the wheels at once (Chaos eases them at 4/s, so in 1st
+	// gear the engine lagged ~1 000/min behind and pulled with the torque of a lower rpm), and with the throttle the
+	// engine runs at least at idle + throttle × (stall − idle) against a standing car (launch). The torque difference
+	// between that rpm and Chaos's is added (or taken) as a push along the car, geared like the drive force.
+	if (!bAirborne && Contacts == 4 && Gear() > 0 && In.Throttle > 0.05f)
 	{
-		const float Gk = WeatherGrip.Grip;
-		Vehicle->SetWheelFrictionMultiplier(0, float(Mu * Gk));
-		Vehicle->SetWheelFrictionMultiplier(1, float(Mu * Gk));
-		Vehicle->SetWheelFrictionMultiplier(2, float(Mu * RearMu * RearSide * Gk));
-		Vehicle->SetWheelFrictionMultiplier(3, float(Mu * RearMu * RearSide * Gk));
+		const double Ratio = Gears()[FMath::Min(Gear(), Gears().Num()) - 1] * Final;
+		const double Locked = FMath::Abs(Fv) / WheelRadius * 60.0 / UE_TWO_PI * Ratio;
+		const double Web = FMath::Min(FMath::Max(Locked, IdleRpm + In.Throttle * (StallRpm - IdleRpm)), MaxRpm);
+		const double Have = FMath::Clamp(Rpm(), IdleRpm, MaxRpm);
+		if (Locked < MaxRpm)
+		{
+			const double Extra = (TorqueAt(Web) - TorqueAt(Have)) * Feel.Torque * (bBoosting ? NitroTorque : 1.0) * In.Throttle;
+			Add(Fwd * Extra * Ratio * Efficiency / WheelRadius * Dt);
+		}
 	}
+
+	// Tyre friction with the weather's grip; the rear also carries the drift release (RearSide).
+	// Chaos multiplies the grip with the friction of the physical material under the wheel (ApplyWheelFrictionForces:
+	// SetSurfaceFriction). The web tyre model ignores the collider friction (Rapier's tyre friction is off,
+	// carPhysics.ts), its grip is mu × load alone, so the surface friction is divided out again per wheel.
+	auto SetGrip = [this](int32 I, double K) {
+		const UPhysicalMaterial* PM = Vehicle->GetWheelState(I).PhysMaterial.Get();
+		const double Surface = PM ? FMath::Max(0.05, double(PM->Friction)) : 1.0;
+		Vehicle->SetWheelFrictionMultiplier(I, float(K / Surface));
+	};
+	auto SetAllGrip = [&]() {
+		const double Gk = WeatherGrip.Grip;
+		SetGrip(0, Mu * Gk);
+		SetGrip(1, Mu * Gk);
+		SetGrip(2, Mu * RearMu * RearSide * Gk);
+		SetGrip(3, Mu * RearMu * RearSide * Gk);
+	};
+	SetAllGrip();
 	if (!bAirborne)
 	{
 		// Road hold (feel.stick): speed away from the road is taken out; with a wheel in the air the car is pressed down.
@@ -428,8 +470,7 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 		else DriftDir = 0;
 		const float RearTarget = DriftDir && !In.bHandbrake ? 0.6f : 1.f;
 		RearSide += (RearTarget - RearSide) * FMath::Min(1.f, Dt * 6);
-		Vehicle->SetWheelFrictionMultiplier(2, float(Mu * RearMu * RearSide * WeatherGrip.Grip));
-		Vehicle->SetWheelFrictionMultiplier(3, float(Mu * RearMu * RearSide * WeatherGrip.Grip));
+		SetAllGrip();
 		if (Fv > 5)
 		{
 			// Slip angle, + = sliding to the right.
@@ -538,6 +579,30 @@ void ASlsCarPawn::UpdateCamera(const FSlsDriveInput& In, float Dt)
 	Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, CamMode == 3 ? 88.f : Fov, Dt, 4.f));
 }
 
+// --- car.diag -----------------------------------------------------------------------------------------------
+
+void ASlsCarPawn::DiagLog(float Dt, const FSlsDriveInput& In)
+{
+	DiagT += Dt;
+	if (DiagT < 0.25 || Vehicle->GetNumWheels() < 4) return;
+	DiagT = 0;
+	FString Line = FString::Printf(TEXT("car.diag %.1f km/h gas %.2f brems %.2f | Gang %d (Ziel %d) Motor %.0f U/min | Masse %.0f kg |"),
+		SpeedMs() * 3.6, In.Throttle, In.Brake, Gear(), Vehicle->GetTargetGear(), Rpm(), Box->GetMass());
+	static const TCHAR* Names[4] = {TEXT("VL"), TEXT("VR"), TEXT("HL"), TEXT("HR")};
+	for (int32 I = 0; I < 4; I++)
+	{
+		const FWheelStatus& S = Vehicle->GetWheelState(I);
+		const UChaosVehicleWheel* W = Vehicle->Wheels.IsValidIndex(I) ? Vehicle->Wheels[I].Get() : nullptr;
+		// wheel rpm from rad/s; ground rpm = what the wheel would turn at without slip
+		const double WheelRpm = W ? W->GetWheelAngularVelocity() * 60.0 / UE_TWO_PI : 0;
+		const double GroundRpm = SpeedMs() / SlsCar::WheelRadius * 60.0 / UE_TWO_PI;
+		Line += FString::Printf(TEXT(" %s %s %.0f/%.0f U/min Schlupf %.2f%s Last %.0f N Antrieb %.0f Bremse %.0f |"),
+			Names[I], S.bInContact ? TEXT("") : TEXT("(Luft)"), WheelRpm, GroundRpm, S.SlipMagnitude, S.bIsSlipping ? TEXT("!") : TEXT(""),
+			S.SpringForce / 100.0, S.DriveTorque, S.BrakeTorque);
+	}
+	UE_LOG(LogSls, Display, TEXT("%s"), *Line);
+}
+
 // --- car.bench ----------------------------------------------------------------------------------------------
 
 void ASlsCarPawn::StartBench(bool bExitWhenDone)
@@ -576,7 +641,16 @@ void ASlsCarPawn::TickBench(float Dt, FSlsDriveInput& In)
 {
 	FBenchState& B = Bench;
 	B.T += Dt;
+	B.Total += Dt;
 	const double V = SpeedMs();
+	if (B.Total >= B.NextLog)
+	{
+		B.NextLog += 5;
+		int32 Contacts = 0;
+		for (int32 I = 0; I < Vehicle->GetNumWheels(); I++) Contacts += Vehicle->GetWheelState(I).bInContact ? 1 : 0;
+		UE_LOG(LogSls, Display, TEXT("car.bench: Phase %d, t %.1f s, %.1f km/h, Gang %d, %d Räder am Boden, z %.0f cm"),
+			B.Phase, B.T, V * 3.6, Gear(), Contacts, GetActorLocation().Z);
+	}
 	switch (B.Phase)
 	{
 	case 1: // settle, then full throttle for 60 s
@@ -592,6 +666,7 @@ void ASlsCarPawn::TickBench(float Dt, FSlsDriveInput& In)
 		if (B.T < 1) break;
 		In.Throttle = 1;
 		if (V >= 100 / 3.6) { B.Start = GetActorLocation(); B.Phase = 4; B.T = 0; }
+		else if (B.T > 30) { B.Phase = 5; BenchReset(); } // never reached 100: no brake values
 		break;
 	case 4:
 		In.Brake = 1;
@@ -601,6 +676,7 @@ void ASlsCarPawn::TickBench(float Dt, FSlsDriveInput& In)
 		if (B.T < 1) break;
 		In.Throttle = 1;
 		if (V >= 80 / 3.6) { B.Phase = 6; B.T = 0; }
+		else if (B.T > 30) { B.Phase = 0; BenchReport(); } // never reached 80: no lateral value
 		break;
 	case 6:
 	{

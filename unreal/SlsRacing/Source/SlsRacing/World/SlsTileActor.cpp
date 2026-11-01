@@ -37,6 +37,11 @@ ASlsTileActor::ASlsTileActor()
 	SetRootComponent(Render);
 }
 
+void ASlsTileActor::ApplyMaterials(TFunctionRef<UMaterialInterface*(const FString&, bool)> MaterialFor)
+{
+	for (const auto& [Name, Section] : LayerSections) Render->SetMaterial(Section, MaterialFor(Name, LayerColor.FindRef(Name)));
+}
+
 void ASlsTileActor::BuildVisual(const FSlsTileFile& File, TFunctionRef<UMaterialInterface*(const FString&, bool)> MaterialFor)
 {
 	IX = File.IX;
@@ -57,28 +62,47 @@ void ASlsTileActor::BuildVisual(const FSlsTileFile& File, TFunctionRef<UMaterial
 		for (const FVector3f& X : Nrm) N.Add(FVector(X));
 		TArray<int32> T; T.Reserve(Idx.Num());
 		for (uint32 I : Idx) T.Add(int32(I));
-		TArray<FVector2D> UV0;
-		if (L.bUV)
-			for (const FVector2f& X : File.View<FVector2f>(P + TEXT(".uv"))) UV0.Add(FVector2D(X));
 		TArray<FColor> Col;
 		if (L.bColor)
 			for (const FColor& X : File.View<FColor>(P + TEXT(".col"))) Col.Add(FColor(X.B, X.G, X.R, X.A)); // file is RGBA, FColor is BGRA
-		// Ground shader weights (8 splat channels + crop rows) ride in UV1..UV3 until the terrain material exists.
-		TArray<FVector2D> UV1, UV2, UV3;
-		if (L.bSplat)
+		// Shader inputs, packed so every value survives half-float UVs (integers up to 2048 are exact):
+		//  roads/paths: the 20-bit road code (roadCode.ts) split into UV0 = (lateral, surface + lines*8 + gutter*32),
+		//               UV1 = (shoulder q + inner*16, width q)
+		//  terrain:     8 splat weights as two 5-bit values per float (a*32 + b) in UV0/UV1, crop rows bytes in UV2
+		// Read by Shaders/SlsPbr.ush (SlsRoad, SlsGround).
+		TArray<FVector2D> UV0, UV1, UV2, UV3;
+		TArrayView<const FVector2f> SrcUV = L.bUV ? File.View<FVector2f>(P + TEXT(".uv")) : TArrayView<const FVector2f>();
+		const bool bRoadCode = SrcUV.Num() && (L.Name == TEXT("roads") || L.Name == TEXT("paths"));
+		if (bRoadCode)
 		{
-			TArrayView<const uint8> A = File.View<uint8>(P + TEXT(".splatA")), B = File.View<uint8>(P + TEXT(".splatB")), R = File.View<uint8>(P + TEXT(".rows"));
-			for (int32 I = 0; I < Pos.Num(); I++)
+			UV0.Reserve(SrcUV.Num());
+			UV1.Reserve(SrcUV.Num());
+			for (const FVector2f& X : SrcUV)
 			{
-				UV1.Add(FVector2D(A[I * 4] / 255.0, A[I * 4 + 1] / 255.0));
-				UV2.Add(FVector2D(A[I * 4 + 2] / 255.0, A[I * 4 + 3] / 255.0));
-				UV3.Add(FVector2D(R[I * 2] / 255.0, R[I * 2 + 1] / 255.0));
+				const uint32 Code = uint32(FMath::RoundToInt(X.Y));
+				UV0.Add(FVector2D(X.X, double(Code & 63)));
+				UV1.Add(FVector2D(double(((Code >> 6) & 15) + ((Code >> 18) & 3) * 16), double((Code >> 10) & 255)));
 			}
 		}
+		else if (L.bSplat)
+		{
+			TArrayView<const uint8> A = File.View<uint8>(P + TEXT(".splatA")), B = File.View<uint8>(P + TEXT(".splatB")), R = File.View<uint8>(P + TEXT(".rows"));
+			auto Q = [](uint8 V) { return FMath::RoundToInt(V * 31.0 / 255.0); };
+			auto Pack = [&Q](uint8 X, uint8 Y) { return double(Q(X) * 32 + Q(Y)); };
+			for (int32 I = 0; I < Pos.Num(); I++)
+			{
+				UV0.Add(FVector2D(Pack(A[I * 4], A[I * 4 + 1]), Pack(A[I * 4 + 2], A[I * 4 + 3])));
+				UV1.Add(FVector2D(Pack(B[I * 4], B[I * 4 + 1]), Pack(B[I * 4 + 2], B[I * 4 + 3])));
+				UV2.Add(FVector2D(R[I * 2], R[I * 2 + 1]));
+			}
+		}
+		else
+			for (const FVector2f& X : SrcUV) UV0.Add(FVector2D(X));
 		TArray<FProcMeshTangent> Tangents;
 		Render->CreateMeshSection(Section, V, T, N, UV0, UV1, UV2, UV3, Col, Tangents, false);
 		Render->SetMaterial(Section, MaterialFor(L.Name, L.bColor));
 		LayerSections.Add(L.Name, Section);
+		LayerColor.Add(L.Name, L.bColor);
 		Section++;
 
 		if (L.Name == TEXT("roads"))

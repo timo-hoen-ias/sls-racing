@@ -7,7 +7,7 @@ public class SlsRacing : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core", "CoreUObject", "Engine", "InputCore", "PhysicsCore", "ProceduralMeshComponent", "Json",
-			"ChaosVehicles", "ChaosVehiclesCore", "EnhancedInput", "Chaos",
+			"ChaosVehicles", "ChaosVehiclesCore", "EnhancedInput", "Chaos", "RenderCore",
 		});
 	}
 }

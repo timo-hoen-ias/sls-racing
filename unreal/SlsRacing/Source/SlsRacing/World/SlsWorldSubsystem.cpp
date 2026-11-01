@@ -14,6 +14,9 @@
 #include "HAL/IConsoleManager.h"
 
 // Same names, units and defaults as the web game's stream.* commands (src/world/streamCommands.ts, quality "hoch").
+/** tex.materials: 1 = the PBR materials from the setup, 0 = the placeholders (SlsTexCommands.cpp). */
+int32 GPbrMaterials = 1;
+
 static float GStreamRadius = 720.f;
 static float GStreamPhysRadius = 420.f;
 static float GStreamBudget = 4.f;
@@ -103,12 +106,25 @@ FVector2D USlsWorldSubsystem::TileOriginLocal(FIntPoint T) const
 
 UMaterialInterface* USlsWorldSubsystem::MaterialFor(const FString& Layer, bool bVertexColor)
 {
-	// Placeholder looks until the PBR materials are ported (unreal/PLAN.md, phase 3): vertex colours where the
-	// web tiles carry them (terrain survey tint, buildings, details), flat colours per layer otherwise.
 	const FString Key = Layer + (bVertexColor ? TEXT("#c") : TEXT(""));
 	if (TObjectPtr<UMaterialInterface>* Found = Materials.Find(Key)) return *Found;
+	// The PBR materials built by Content/Python/sls_setup.py (./unreal/sls.sh setup), ported from the web shaders
+	// (Shaders/SlsPbr.ush). Same assignment as streamer.ts: paths share the road material.
+	static const TMap<FString, const TCHAR*> Built = {
+		{TEXT("terrain"), TEXT("M_SlsGround")}, {TEXT("roads"), TEXT("M_SlsRoad")}, {TEXT("paths"), TEXT("M_SlsRoad")},
+		{TEXT("markings"), TEXT("M_SlsMarking")}, {TEXT("sidewalks"), TEXT("M_SlsSidewalk")}, {TEXT("water"), TEXT("M_SlsWater")},
+		{TEXT("details"), TEXT("M_SlsDetail")}, {TEXT("tunnelLights"), TEXT("M_SlsLight")},
+	};
 	UMaterialInterface* M = nullptr;
-	if (bVertexColor)
+	if (GPbrMaterials)
+	{
+		const TCHAR* const* Name = Built.Find(Layer);
+		const FString Asset = Name ? FString(*Name) : bVertexColor ? FString(TEXT("M_SlsVertexColor")) : FString();
+		if (!Asset.IsEmpty()) M = LoadObject<UMaterialInterface>(nullptr, *FString::Printf(TEXT("/Game/Materials/%s.%s"), *Asset, *Asset), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	}
+	// Placeholders while the setup has not run (or with tex.materials 0): vertex colours where the tiles carry them,
+	// flat colours per layer otherwise.
+	if (!M && bVertexColor)
 		M = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/EngineDebugMaterials/VertexColorMaterial.VertexColorMaterial"));
 	if (!M)
 	{
@@ -127,6 +143,13 @@ UMaterialInterface* USlsWorldSubsystem::MaterialFor(const FString& Layer, bool b
 	}
 	Materials.Add(Key, M);
 	return M;
+}
+
+void USlsWorldSubsystem::RefreshMaterials()
+{
+	Materials.Reset();
+	for (const auto& [T, A] : Tiles)
+		if (A) A->ApplyMaterials([this](const FString& L, bool bC) { return MaterialFor(L, bC); });
 }
 
 ASlsTileActor* USlsWorldSubsystem::Spawn(const FSlsTileFile& File, bool bCollision, bool bAsyncCooking)

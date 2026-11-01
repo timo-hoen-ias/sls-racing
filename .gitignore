@@ -9,6 +9,9 @@ public/tiles/
 __pycache__/
 # Unreal port: exported world and engine build output
 unreal/SlsRacing/WorldData/
+unreal/SlsRacing/Data/
+unreal/SlsRacing/Content/*
+!unreal/SlsRacing/Content/Python/
 unreal/SlsRacing/Binaries/
 unreal/SlsRacing/Intermediate/
 unreal/SlsRacing/Saved/

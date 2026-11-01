@@ -69,6 +69,8 @@ namespace SlsSurface
 			FName Hit;
 			/** Deviation in m, max when only one side hit something. */
 			double Dev = 0;
+			/** Every collider along the probe ray, top down ("kind@height owner/component"), to see which surface wins and why. */
+			FString Hits;
 		};
 		TArray<FCellReport> Report;
 	};

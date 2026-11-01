@@ -17,6 +17,26 @@ namespace SlsSurface
 		return C && C->ComponentTags.Num() ? C->ComponentTags[0] : FName(TEXT("?"));
 	}
 
+	/** All static and road colliders under the ray (object query, so nothing blocks), top down, for the parity report. */
+	static FString AllHits(const UWorld* World, double X, double Z, double Top, const FCollisionQueryParams& Q)
+	{
+		TArray<FHitResult> Hits;
+		const FVector A(X * 100.0, Z * 100.0, Top * 100.0);
+		const FVector B = A - FVector(0, 0, (Limits::Above + Limits::Below) * 100.0);
+		FCollisionObjectQueryParams O;
+		O.AddObjectTypesToQuery(ECC_WorldStatic);
+		O.AddObjectTypesToQuery(ECC_SlsRoad);
+		World->LineTraceMultiByObjectType(Hits, A, B, O, Q);
+		FString Out;
+		for (const FHitResult& H : Hits)
+		{
+			const UPrimitiveComponent* C = H.GetComponent();
+			Out += FString::Printf(TEXT("%s%s@%.3f %s/%s"), Out.IsEmpty() ? TEXT("") : TEXT("; "), *WhatOf(H).ToString(),
+				H.bStartPenetrating ? Top : H.ImpactPoint.Z / 100.0, C && C->GetOwner() ? *C->GetOwner()->GetName() : TEXT("?"), C ? *C->GetName() : TEXT("?"));
+		}
+		return Out;
+	}
+
 	static bool Ray(const UWorld* World, double X, double Z, double Top, ECollisionChannel Channel, const FCollisionQueryParams& Q, double& OutY, FName& OutWhat)
 	{
 		FHitResult H;
@@ -304,6 +324,11 @@ namespace SlsSurface
 				Rep.Unreal = Got[K]; Rep.Web = Want[K];
 				Rep.Hit = K ? S.Chassis : S.Wheel;
 				Rep.Dev = D;
+				{
+					FCollisionQueryParams Q(SCENE_QUERY_STAT(SlsSurface), false);
+					for (const AActor* A : Ignore) Q.AddIgnoredActor(A);
+					Rep.Hits = AllHits(World, CX + 0.013, CZ + 0.007, Yd + Limits::Above, Q);
+				}
 				if (Out.Examples.Num() < 20)
 					Out.Examples.Add(FString::Printf(TEXT("%s bei x %.2f z %.2f (Kachel %d_%d): Unreal %s (%s), Web %s"), K ? TEXT("Chassis") : TEXT("Rad"), CX, CZ, Tile->IX, Tile->IY,
 						Got[K].IsSet() ? *FString::Printf(TEXT("%.3f"), Got[K].GetValue()) : TEXT("nichts"), *(K ? S.Chassis : S.Wheel).ToString(),

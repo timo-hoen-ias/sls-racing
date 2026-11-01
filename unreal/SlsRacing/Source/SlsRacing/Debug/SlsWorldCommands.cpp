@@ -205,7 +205,7 @@ public:
 		// Report for CI and for comparing runs.
 		FString Json = FString::Printf(TEXT("{\"tiles\":%d,\"cells\":%d,\"bad\":%d,\"missing\":%d,\"worstMm\":%.1f,\"tolMm\":%.1f,\"examples\":["), Result.Tiles, Result.Cells, Result.Bad, Result.Missing, Result.Worst * 1000.0, Tol * 1000.0);
 		for (int32 I = 0; I < Result.Examples.Num(); I++) Json += (I ? TEXT(",\"") : TEXT("\"")) + Result.Examples[I].ReplaceCharWithEscapedChar() + TEXT("\"");
-		// Every mismatching cell, worst first: [kind, tile, x, z, yd, unreal, web, collider hit by Unreal, deviation mm]
+		// Every mismatching cell, worst first: [kind, tile, x, z, yd, unreal, web, collider hit by Unreal, deviation mm, all hits on the ray]
 		// (null = that side's ray hit nothing, deviation -1 then).
 		Json += TEXT("],\"cells\":[");
 		Result.Report.Sort([](const SlsSurface::FParity::FCellReport& A, const SlsSurface::FParity::FCellReport& B) { return A.Dev > B.Dev; });
@@ -213,8 +213,8 @@ public:
 		for (int32 I = 0; I < Result.Report.Num(); I++)
 		{
 			const SlsSurface::FParity::FCellReport& R = Result.Report[I];
-			Json += FString::Printf(TEXT("%s[\"%s\",\"%d_%d\",%.2f,%.2f,%.3f,%s,%s,\"%s\",%.1f]"), I ? TEXT(",") : TEXT(""), R.bChassis ? TEXT("chassis") : TEXT("wheel"),
-				R.Tile.X, R.Tile.Y, R.X, R.Z, R.Yd, *Opt(R.Unreal), *Opt(R.Web), *R.Hit.ToString(), R.Unreal.IsSet() && R.Web.IsSet() ? R.Dev * 1000.0 : -1.0);
+			Json += FString::Printf(TEXT("%s[\"%s\",\"%d_%d\",%.2f,%.2f,%.3f,%s,%s,\"%s\",%.1f,\"%s\"]"), I ? TEXT(",") : TEXT(""), R.bChassis ? TEXT("chassis") : TEXT("wheel"),
+				R.Tile.X, R.Tile.Y, R.X, R.Z, R.Yd, *Opt(R.Unreal), *Opt(R.Web), *R.Hit.ToString(), R.Unreal.IsSet() && R.Web.IsSet() ? R.Dev * 1000.0 : -1.0, *R.Hits.ReplaceCharWithEscapedChar());
 		}
 		Json += TEXT("]}");
 		FFileHelper::SaveStringToFile(Json, *FPaths::Combine(FPaths::ProjectSavedDir(), OutName));
@@ -228,7 +228,7 @@ TUniquePtr<FSlsParityJob> FSlsParityJob::Active;
 
 static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 	TEXT("road.parity"),
-	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [max=<erlaubte Abweichungen>] [shard=<i>/<n>] [out=<datei in Saved>] [exit] [nodraw]"),
+	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [max=<erlaubte Abweichungen>] [shard=<i>/<n>] [only=<ix_iy>+<ix_iy>…] [out=<datei in Saved>] [exit] [nodraw]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* W) {
 		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 		if (!S || !S->IsReady()) { Say(TEXT("road.parity: keine Welt geladen"), FColor::Red); return; }
@@ -239,9 +239,22 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 		bool bAll = false;
 		int32 Limit = MAX_int32, Shard = 0, Shards = 1;
 		FString ShardS, ShardN;
+		TSet<FIntPoint> Only;
 		for (const FString& A : Args)
 		{
-			if (A == TEXT("all")) bAll = true;
+			if (A.StartsWith(TEXT("only=")))
+			{
+				// only=ix_iy+ix_iy+…: rerun exactly these tiles (e.g. the ones a previous report listed).
+				TArray<FString> Keys;
+				A.Mid(5).Replace(TEXT("+"), TEXT(",")).ParseIntoArray(Keys, TEXT(",")); // + as well: -ExecCmds splits commands at commas
+				for (const FString& K : Keys)
+				{
+					FString X, Y;
+					if (K.Split(TEXT("_"), &X, &Y)) Only.Add(FIntPoint(FCString::Atoi(*X), FCString::Atoi(*Y)));
+				}
+				bAll = true;
+			}
+			else if (A == TEXT("all")) bAll = true;
 			else if (A == TEXT("exit")) J->bExit = true;
 			else if (A == TEXT("nodraw")) J->bDraw = false;
 			else if (A.StartsWith(TEXT("tol="))) J->Tol = FCString::Atod(*A.Mid(4)) / 1000.0;
@@ -260,12 +273,104 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 		{
 			if (J->Queue.Num() >= Limit) break;
 			if (Index++ % Shards != Shard) continue; // shard=i/n: every n-th tile, so n editors can share the world
+			if (Only.Num() && !Only.Contains(T)) continue;
 			const FVector2D C = S->TileOriginLocal(T) + FVector2D(S->Info().TileSize / 2);
 			if (bAll || FVector2D::Distance(C, FVector2D(L.X, L.Z)) < Radius) J->Queue.Add(T);
 		}
 		if (J->bExit) J->bDraw = false;
 		FSlsParityJob::Active = MoveTemp(J);
 		FSlsParityJob::Active->Start();
+	}));
+
+// --- road.ray -----------------------------------------------------------------------------------------------
+
+/**
+ * road.ray <x> <z> [top] [exit]: every collider under one vertical ray at local metres (x, z), from top (default 1000 m)
+ * down, after loading the 3 × 3 tiles around it with colliders. Lists the scene query hits (all static and road
+ * objects) and, per collision component of those tiles, its own trace (no broadphase) and bounds, to tell a missing
+ * body from a missing triangle.
+ */
+struct FSlsRayJob
+{
+	TWeakObjectPtr<UWorld> World;
+	double X = 0, Z = 0, Top = 1000;
+	int32 Frames = 0;
+	bool bExit = false;
+	FTSTicker::FDelegateHandle Handle;
+	static TUniquePtr<FSlsRayJob> Active;
+
+	bool Step(float)
+	{
+		UWorld* W = World.Get();
+		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
+		if (!W || !S) { Done(); return false; }
+		if (Frames++ == 0)
+		{
+			S->bPaused = true;
+			const FIntPoint T = S->TileOfLocal(X, Z);
+			for (int32 DX = -1; DX <= 1; DX++)
+				for (int32 DY = -1; DY <= 1; DY++) S->LoadTileSync(T + FIntPoint(DX, DY), true);
+			return true;
+		}
+		if (Frames < 4) return true;
+		const FVector A(X * 100.0, Z * 100.0, Top * 100.0), B(X * 100.0, Z * 100.0, -1000.0 * 100.0);
+		TArray<FHitResult> Hits;
+		FCollisionObjectQueryParams O;
+		O.AddObjectTypesToQuery(ECC_WorldStatic);
+		O.AddObjectTypesToQuery(ECC_SlsRoad);
+		W->LineTraceMultiByObjectType(Hits, A, B, O, FCollisionQueryParams(SCENE_QUERY_STAT(SlsRay), false));
+		Say(FString::Printf(TEXT("road.ray x %.3f z %.3f (Kachel %d_%d): %d Treffer in der Szene"), X, Z, S->TileOfLocal(X, Z).X, S->TileOfLocal(X, Z).Y, Hits.Num()), FColor::Cyan, 30.f);
+		for (const FHitResult& H : Hits)
+			Say(FString::Printf(TEXT("  Szene: y %.3f %s/%s Dreieck %d"), H.ImpactPoint.Z / 100.0, H.GetActor() ? *H.GetActor()->GetName() : TEXT("?"), H.GetComponent() ? *H.GetComponent()->GetName() : TEXT("?"), H.FaceIndex), FColor::White, 30.f);
+		const FIntPoint T = S->TileOfLocal(X, Z);
+		for (int32 DX = -1; DX <= 1; DX++)
+			for (int32 DY = -1; DY <= 1; DY++)
+			{
+				const ASlsTileActor* Tile = S->FindTile(T + FIntPoint(DX, DY));
+				if (!Tile) continue;
+				for (UProceduralMeshComponent* C : Tile->CollisionComponents)
+				{
+					if (!C) continue;
+					const FBox Box = C->Bounds.GetBox();
+					const bool bInBox = X * 100.0 >= Box.Min.X && X * 100.0 <= Box.Max.X && Z * 100.0 >= Box.Min.Y && Z * 100.0 <= Box.Max.Y;
+					FHitResult H;
+					const bool bHit = C->LineTraceComponent(H, A, B, FCollisionQueryParams(SCENE_QUERY_STAT(SlsRay), false));
+					if (!bInBox && !bHit) continue;
+					Say(FString::Printf(TEXT("  %s/%s: Bounds %s, Körper %s, eigener Strahl %s"), *Tile->GetName(), *C->GetName(), bInBox ? TEXT("enthalten Punkt") : TEXT("ohne Punkt"),
+						C->GetBodyInstance() && C->GetBodyInstance()->IsValidBodyInstance() ? TEXT("da") : TEXT("FEHLT"),
+						bHit ? *FString::Printf(TEXT("y %.3f Dreieck %d"), H.ImpactPoint.Z / 100.0, H.FaceIndex) : TEXT("kein Treffer")), bHit ? FColor::Green : FColor::Orange, 30.f);
+				}
+			}
+		Done();
+		return false;
+	}
+
+	void Done()
+	{
+		if (USlsWorldSubsystem* S = USlsWorldSubsystem::Get(World.Get())) S->bPaused = false;
+		if (bExit) FPlatformMisc::RequestExitWithStatus(false, 0);
+		Active.Reset();
+	}
+};
+TUniquePtr<FSlsRayJob> FSlsRayJob::Active;
+
+static FAutoConsoleCommandWithWorldAndArgs CmdRoadRay(
+	TEXT("road.ray"),
+	TEXT("Alle Collider unter einem senkrechten Strahl bei lokalen Metern x z (lädt die 3 × 3 Kacheln darum): Szenentreffer und je Kollisionskomponente eigener Strahl und Bounds. road.ray <x> <z> [top m] [exit]"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* W) {
+		if (FSlsRayJob::Active) { Say(TEXT("road.ray läuft schon"), FColor::Orange); return; }
+		TArray<double> Num;
+		TUniquePtr<FSlsRayJob> J = MakeUnique<FSlsRayJob>();
+		for (const FString& A : Args)
+		{
+			if (A == TEXT("exit")) J->bExit = true;
+			else Num.Add(FCString::Atod(*A));
+		}
+		if (Num.Num() < 2) { Say(TEXT("road.ray <x> <z> [top] [exit]"), FColor::Orange); return; }
+		J->World = W; J->X = Num[0]; J->Z = Num[1];
+		if (Num.Num() > 2) J->Top = Num[2];
+		FSlsRayJob::Active = MoveTemp(J);
+		FSlsRayJob::Active->Handle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(FSlsRayJob::Active.Get(), &FSlsRayJob::Step));
 	}));
 
 // --- road.check ---------------------------------------------------------------------------------------------

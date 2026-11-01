@@ -93,6 +93,10 @@ ASlsCarPawn::ASlsCarPawn()
 	Vehicle->ChassisWidth = HalfWidth * 200.0;
 	Vehicle->ChassisHeight = HalfHeight * 200.0;
 	Vehicle->bReverseAsBrake = true;
+	// The web game feeds throttle and brake straight to the car (src/input/input.ts has no ramp for them); Chaos
+	// would ease them in at 6/s, which cost ~0.17 s of every stop and launch.
+	Vehicle->ThrottleInputRate.RiseRate = Vehicle->ThrottleInputRate.FallRate = 1000.f;
+	Vehicle->BrakeInputRate.RiseRate = Vehicle->BrakeInputRate.FallRate = 1000.f;
 	Vehicle->WheelSetups.SetNum(4);
 	for (int32 I = 0; I < 4; I++)
 	{
@@ -155,7 +159,10 @@ void ASlsCarPawn::ApplyTuning()
 	Tr.FinalRatio = Final;
 	Tr.ForwardGearRatios = Gears();
 	Tr.ReverseGearRatios = {float(Reverse)};
-	Tr.ChangeUpRPM = ShiftRpm;
+	// Chaos shifts when its (lagging, see the arcade layer) engine rpm reaches ChangeUpRPM, but cuts the drive as soon
+	// as the wheels ask for more than MaxRPM: at 8 800 the car hung at the limiter in 1st and 2nd for half a second.
+	// Shifting a bit earlier lands at the web's 8 800 in the low gears.
+	Tr.ChangeUpRPM = ShiftRpm - 1000;
 	Tr.ChangeDownRPM = 3000;
 	Tr.GearChangeTime = ShiftTime;
 	Tr.TransmissionEfficiency = Efficiency;
@@ -394,18 +401,20 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 	Vehicle->SetMaxEngineTorque(Vehicle->EngineSetup.MaxTorque * (bBoosting ? NitroTorque : 1.0));
 	if (bBoosting && !bAirborne) Add(Fwd * NitroPush * Dt);
 
-	// Launch like the web drivetrain: with the throttle the engine runs at least at idle + throttle × (stall − idle).
-	// Chaos's engine follows the wheels (and eases towards them at 4/s), so the missing torque at low speed is added
-	// as a push along the car, scaled like the drive force (gearing, efficiency, wheel radius).
+	// Engine speed like the web drivetrain: the revs follow the wheels at once (Chaos eases them at 4/s, so in 1st
+	// gear the engine lagged ~1 000/min behind and pulled with the torque of a lower rpm), and with the throttle the
+	// engine runs at least at idle + throttle × (stall − idle) against a standing car (launch). The torque difference
+	// between that rpm and Chaos's is added (or taken) as a push along the car, geared like the drive force.
 	if (!bAirborne && Contacts == 4 && Gear() > 0 && In.Throttle > 0.05f)
 	{
-		const double Conv = IdleRpm + In.Throttle * (StallRpm - IdleRpm);
-		const double Have = Rpm();
-		if (Conv > Have)
+		const double Ratio = Gears()[FMath::Min(Gear(), Gears().Num()) - 1] * Final;
+		const double Locked = FMath::Abs(Fv) / WheelRadius * 60.0 / UE_TWO_PI * Ratio;
+		const double Web = FMath::Min(FMath::Max(Locked, IdleRpm + In.Throttle * (StallRpm - IdleRpm)), MaxRpm);
+		const double Have = FMath::Clamp(Rpm(), IdleRpm, MaxRpm);
+		if (Locked < MaxRpm)
 		{
-			const double Extra = (TorqueAt(Conv) - TorqueAt(Have)) * Feel.Torque * (bBoosting ? NitroTorque : 1.0) * In.Throttle;
-			const double Ratio = Gears()[FMath::Clamp(Gear(), 1, Gears().Num()) - 1] * Final * Efficiency;
-			Add(Fwd * Extra * Ratio / WheelRadius * Dt);
+			const double Extra = (TorqueAt(Web) - TorqueAt(Have)) * Feel.Torque * (bBoosting ? NitroTorque : 1.0) * In.Throttle;
+			Add(Fwd * Extra * Ratio * Efficiency / WheelRadius * Dt);
 		}
 	}
 

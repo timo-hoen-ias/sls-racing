@@ -178,7 +178,7 @@ jobs:
           - name: Surface check (every 0.5 m of every carriageway, no holes, ledges or snags; road edges not floating)
             # ratchet (2026-10-31, Landkreis 18.9 km² carriageway: 300 critical, 65 on main roads, 6677 total, 28070 road edges
             # floating 0.3 m or more; the same density as Saarlouis alone): lower as fixes land
-            run: npm run world:surface -- --max-critical=320 --max=7000 --max-critical-main=70 --max-edge-critical=29500
+            run: npm run world:surface -- --max-critical=300 --max=7000 --max-critical-main=70 --max-edge-critical=29500
     name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4

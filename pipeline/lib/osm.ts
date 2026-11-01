@@ -1,6 +1,7 @@
 // Minimal reader for Overpass JSON ("out body" with nodes, ways and relations).
 import { coreWay, extraWay } from './osmTags.ts';
 import { promoteFieldPaths } from './fieldWays.ts';
+import { promoteParkDecks } from './parkDecks.ts';
 import { markTunnels } from './tunnelMark.ts';
 
 export interface OsmJson {
@@ -158,6 +159,8 @@ export function readOsm(json: OsmJson, project: (lon: number, lat: number) => [n
   }
   // Which mapped tunnels are built as roads (car roads through, not into a garage or under a hall).
   markTunnels(ways, polygons);
+  // Upper parking decks (level ≥ 1 aisles) are decks, not ground roads.
+  promoteParkDecks(ways);
   const fieldPaths = promoteFieldPaths(ways, polygons);
   return { ways, polygons, trees, points, boundary, extra, restrictions, busRoutes, fieldPaths };
 }

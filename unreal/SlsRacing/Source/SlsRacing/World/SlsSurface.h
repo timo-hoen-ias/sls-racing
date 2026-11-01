@@ -55,6 +55,14 @@ namespace SlsSurface
 	struct FParity
 	{
 		int32 Tiles = 0, Cells = 0, Bad = 0, Missing = 0;
+		/**
+		 * Input: probe shift (m) for the tie test. A mismatching cell whose web value Unreal reproduces with the probe
+		 * moved this far along x or z lies on a collider edge (the two engines break the tie differently): it counts
+		 * in Ties, not in Bad. 0 = every mismatch is a deviation.
+		 */
+		double TieShift = 0.003;
+		/** Mismatches that are edge ties (see TieShift); listed in the report, never counted against max=. */
+		int32 Ties = 0;
 		double Worst = 0;
 		TArray<FString> Examples;
 		/** Local x, y, z of the mismatching cells (for drawing). */
@@ -71,6 +79,8 @@ namespace SlsSurface
 			double Dev = 0;
 			/** Every collider along the probe ray, top down ("kind@height owner/component"), to see which surface wins and why. */
 			FString Hits;
+			/** Edge tie: Unreal hits the web value with the probe shifted by TieShift. */
+			bool bTie = false;
 		};
 		TArray<FCellReport> Report;
 	};

@@ -152,7 +152,7 @@ public:
 					DrawDebugSphere(W, USlsWorldSubsystem::LocalToUE(Result.Points[I]), 40.f, 6, FColor::Red, false, 120.f);
 		}
 		Next++;
-		if (Next % 50 == 0) Say(FString::Printf(TEXT("road.parity: %d/%d Kacheln, %d Zellen, %d Abweichungen"), Next, Queue.Num(), Result.Cells, Result.Bad), FColor::Cyan, 3.f);
+		if (Next % 50 == 0) Say(FString::Printf(TEXT("road.parity: %d/%d Kacheln, %d Zellen, %d Abweichungen, %d Kanten-Gleichstände"), Next, Queue.Num(), Result.Cells, Result.Bad, Result.Ties), FColor::Cyan, 3.f);
 		return true;
 	}
 
@@ -198,23 +198,23 @@ public:
 	{
 		if (bCheck) { FinishCheck(); return; }
 		const bool bFail = Result.Bad > Max;
-		const FString Line = FString::Printf(TEXT("road.parity: %d Kacheln, %d Straßenzellen, %d Abweichungen über %.0f mm (%d nur auf einer Seite getroffen, größte %.1f mm) in %.0f s → %s"),
-			Result.Tiles, Result.Cells, Result.Bad, Tol * 1000.0, Result.Missing, Result.Worst * 1000.0, FPlatformTime::Seconds() - Started, bFail ? TEXT("FAIL") : TEXT("OK"));
+		const FString Line = FString::Printf(TEXT("road.parity: %d Kacheln, %d Straßenzellen, %d Abweichungen über %.0f mm (%d nur auf einer Seite getroffen, größte %.1f mm), dazu %d Kanten-Gleichstände (±%.0f mm), in %.0f s → %s"),
+			Result.Tiles, Result.Cells, Result.Bad, Tol * 1000.0, Result.Missing, Result.Worst * 1000.0, Result.Ties, Result.TieShift * 1000.0, FPlatformTime::Seconds() - Started, bFail ? TEXT("FAIL") : TEXT("OK"));
 		Say(Line, bFail ? FColor::Red : FColor::Green, 30.f);
 		for (const FString& E : Result.Examples) Say(TEXT("  ") + E, FColor::Orange, 30.f);
 		// Report for CI and for comparing runs.
-		FString Json = FString::Printf(TEXT("{\"tiles\":%d,\"cells\":%d,\"bad\":%d,\"missing\":%d,\"worstMm\":%.1f,\"tolMm\":%.1f,\"examples\":["), Result.Tiles, Result.Cells, Result.Bad, Result.Missing, Result.Worst * 1000.0, Tol * 1000.0);
+		FString Json = FString::Printf(TEXT("{\"tiles\":%d,\"cells\":%d,\"bad\":%d,\"ties\":%d,\"tieMm\":%.1f,\"missing\":%d,\"worstMm\":%.1f,\"tolMm\":%.1f,\"examples\":["), Result.Tiles, Result.Cells, Result.Bad, Result.Ties, Result.TieShift * 1000.0, Result.Missing, Result.Worst * 1000.0, Tol * 1000.0);
 		for (int32 I = 0; I < Result.Examples.Num(); I++) Json += (I ? TEXT(",\"") : TEXT("\"")) + Result.Examples[I].ReplaceCharWithEscapedChar() + TEXT("\"");
-		// Every mismatching cell, worst first: [kind, tile, x, z, yd, unreal, web, collider hit by Unreal, deviation mm, all hits on the ray]
+		// Every mismatching cell, worst first: [kind, tile, x, z, yd, unreal, web, collider hit by Unreal, deviation mm, all hits on the ray, edge tie]
 		// (null = that side's ray hit nothing, deviation -1 then).
 		Json += TEXT("],\"cells\":[");
-		Result.Report.Sort([](const SlsSurface::FParity::FCellReport& A, const SlsSurface::FParity::FCellReport& B) { return A.Dev > B.Dev; });
+		Result.Report.Sort([](const SlsSurface::FParity::FCellReport& A, const SlsSurface::FParity::FCellReport& B) { return A.bTie != B.bTie ? !A.bTie : A.Dev > B.Dev; }); // deviations first, then edge ties
 		auto Opt = [](const TOptional<double>& V) { return V.IsSet() ? FString::Printf(TEXT("%.3f"), V.GetValue()) : FString(TEXT("null")); };
 		for (int32 I = 0; I < Result.Report.Num(); I++)
 		{
 			const SlsSurface::FParity::FCellReport& R = Result.Report[I];
-			Json += FString::Printf(TEXT("%s[\"%s\",\"%d_%d\",%.2f,%.2f,%.3f,%s,%s,\"%s\",%.1f,\"%s\"]"), I ? TEXT(",") : TEXT(""), R.bChassis ? TEXT("chassis") : TEXT("wheel"),
-				R.Tile.X, R.Tile.Y, R.X, R.Z, R.Yd, *Opt(R.Unreal), *Opt(R.Web), *R.Hit.ToString(), R.Unreal.IsSet() && R.Web.IsSet() ? R.Dev * 1000.0 : -1.0, *R.Hits.ReplaceCharWithEscapedChar());
+			Json += FString::Printf(TEXT("%s[\"%s\",\"%d_%d\",%.2f,%.2f,%.3f,%s,%s,\"%s\",%.1f,\"%s\",%s]"), I ? TEXT(",") : TEXT(""), R.bChassis ? TEXT("chassis") : TEXT("wheel"),
+				R.Tile.X, R.Tile.Y, R.X, R.Z, R.Yd, *Opt(R.Unreal), *Opt(R.Web), *R.Hit.ToString(), R.Unreal.IsSet() && R.Web.IsSet() ? R.Dev * 1000.0 : -1.0, *R.Hits.ReplaceCharWithEscapedChar(), R.bTie ? TEXT("true") : TEXT("false"));
 		}
 		Json += TEXT("]}");
 		FFileHelper::SaveStringToFile(Json, *FPaths::Combine(FPaths::ProjectSavedDir(), OutName));
@@ -228,7 +228,7 @@ TUniquePtr<FSlsParityJob> FSlsParityJob::Active;
 
 static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 	TEXT("road.parity"),
-	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [max=<erlaubte Abweichungen>] [shard=<i>/<n>] [only=<ix_iy>+<ix_iy>…] [out=<datei in Saved>] [exit] [nodraw]"),
+	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [tie=<mm, 0 = aus>] [max=<erlaubte Abweichungen>] [shard=<i>/<n>] [only=<ix_iy>+<ix_iy>…] [out=<datei in Saved>] [exit] [nodraw]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* W) {
 		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 		if (!S || !S->IsReady()) { Say(TEXT("road.parity: keine Welt geladen"), FColor::Red); return; }
@@ -258,6 +258,7 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 			else if (A == TEXT("exit")) J->bExit = true;
 			else if (A == TEXT("nodraw")) J->bDraw = false;
 			else if (A.StartsWith(TEXT("tol="))) J->Tol = FCString::Atod(*A.Mid(4)) / 1000.0;
+			else if (A.StartsWith(TEXT("tie="))) J->Result.TieShift = FCString::Atod(*A.Mid(4)) / 1000.0;
 			else if (A.StartsWith(TEXT("max="))) J->Max = FCString::Atoi(*A.Mid(4));
 			else if (A.StartsWith(TEXT("tiles="))) { bAll = true; Limit = FCString::Atoi(*A.Mid(6)); }
 			else if (A.StartsWith(TEXT("shard=")) && A.Mid(6).Split(TEXT("/"), &ShardS, &ShardN)) { Shard = FCString::Atoi(*ShardS); Shards = FMath::Max(1, FCString::Atoi(*ShardN)); }

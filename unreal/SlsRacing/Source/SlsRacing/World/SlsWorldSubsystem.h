@@ -74,6 +74,8 @@ public:
 	FVector Focus = FVector::ZeroVector;
 	int32 InFlight() const { return Pending.Num(); }
 
+	/** Drops the material cache and reassigns every loaded tile (after tex.materials or a new setup run). */
+	void RefreshMaterials();
 	UMaterialInterface* MaterialFor(const FString& Layer, bool bVertexColor);
 
 	/** Road network (graph.json). */

@@ -49,7 +49,13 @@ Auf timos Wunsch mit Unreal-Technik statt Eigenbau (2026-11-01):
 Debug: `car.bench`, `car.reset`, `car.info`, `car.gear`, `feel`, `feel.*`, `drift`, `nitro`, `nitro.refill`,
 `nitro.infinite`, `assist.esp|drift|tcs|abs`, `cam.mode|dist|height|lag|swing|fov|boostfov`, `fly`, `hud`, `hud.debug`.
 
-## Phase 2: Aussehen
+## Phase 2: Aussehen — begonnen
+
+- [x] Oberflächen-Shader als HLSL-Port (`Shaders/SlsPbr.ush`): Straße, Feldweg, Markierungen, Gehweg, Gelände,
+      Details; dieselben Atlanten (`export-textures.ts`), Konstanten generiert (`gen-shaders.ts`, CI-Prüfung).
+- [x] Materialien per Python-Setup (`sls_setup.py`, Custom-Node je Fläche, Parameter-Sammlung `MPC_Sls` für
+      `tex.*`/`ground.*`/`feldweg.*`), Wasser als Single Layer Water.
+- [ ] Fassaden-Shader (`facades.ts`: Fenster, Stockwerke, Dächer) statt Vertexfarben.
 
 - Materialien: KTX2-PBR-Atlanten (`public/textures`, `src/render/pbr`) als Unreal-Texturen, Straßen-Look-Code
   (`uv.y`), Markierungen, Gehwege; Gelände-Splat-Shader (8 Kanäle + Furchen + Luftbild-Tönung, die Gewichte

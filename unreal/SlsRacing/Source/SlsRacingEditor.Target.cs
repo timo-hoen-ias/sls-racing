@@ -7,6 +7,6 @@ public class SlsRacingEditorTarget : TargetRules
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
-		ExtraModuleNames.Add("SlsRacing");
+		ExtraModuleNames.AddRange(new string[] { "SlsRacing", "SlsRacingShaders" });
 	}
 }

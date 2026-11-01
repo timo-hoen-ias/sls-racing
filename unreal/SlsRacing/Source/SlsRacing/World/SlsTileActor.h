@@ -22,6 +22,8 @@ public:
 	ASlsTileActor();
 
 	/** Creates the render mesh from the file. */
+	/** Assigns the materials again (tex.materials, after sls_setup.py). */
+	void ApplyMaterials(TFunctionRef<UMaterialInterface*(const FString&, bool)> MaterialFor);
 	void BuildVisual(const FSlsTileFile& File, TFunctionRef<UMaterialInterface*(const FString& Layer, bool bVertexColor)> MaterialFor);
 	/** Creates the collision components. bAsync: cook on worker threads (streaming); off for tests that trace right away. */
 	void BuildCollision(const FSlsTileFile& File, bool bAsync);
@@ -48,6 +50,7 @@ public:
 
 	/** Render mesh section per layer name, for layer toggles. */
 	TMap<FString, int32> LayerSections;
+	TMap<FString, bool> LayerColor;
 
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UProceduralMeshComponent> Render;

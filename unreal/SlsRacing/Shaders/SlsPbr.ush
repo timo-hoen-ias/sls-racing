@@ -1,0 +1,471 @@
+// SLS Racing: the web game's PBR surface shaders (src/render/pbr/pbrShader.ts + surfaces.ts) in HLSL, for the
+// Custom nodes of the materials built by Content/Python/sls_setup.py. Included as /SlsRacing/SlsPbr.ush (shader
+// directory mapping in the SlsRacingShaders module).
+//
+// Everything runs in the web game's frame (x east, y up, z south, metres), so the GLSL ports 1:1 including the
+// handedness of the derivative tangent frame: SlsToWeb() swaps Unreal's Y (south) and Z (up) and scales cm to m;
+// SlsNormalToUE() swaps back. Vertex colours arrive as the sRGB bytes of the export and are decoded here.
+//
+// Shared parameters (Material Parameter Collection MPC_Sls, set by the tex.* / ground.* / feldweg.* console
+// commands): Pbr0 = (on, normal, tiling, macro), Pbr1 = (groundtint, wear, debug, roadforce),
+// Pbr2 = (feldweg ruts, feldweg grass, ground aerial, ground rows), Pbr3 = (ground view, -, -, -).
+#pragma once
+
+#include "/SlsRacing/SlsAtlases.ush"
+
+// The three atlases (albedo, normal, roughness/height + one sampler each) travel as explicit parameters:
+// resources inside structs are not portable across Unreal's shader compilers. The Custom nodes name their
+// texture inputs SA SN SR / NA NN NR / BA BN BR, so their samplers are SASampler, NASampler, BASampler.
+#define SLS_TEX_PARAMS Texture2D SA, Texture2D SN, Texture2D SR, SamplerState SS, Texture2D NA, Texture2D NN, Texture2D NR, SamplerState NS, Texture2D BA, Texture2D BN, Texture2D BR, SamplerState BS
+#define SLS_TEX_ARGS SA, SN, SR, SS, NA, NN, NR, NS, BA, BN, BR, BS
+#define SLS_TEX_NODE SA, SN, SR, SASampler, NA, NN, NR, NASampler, BA, BN, BR, BASampler
+
+struct SlsTexel { float3 a; float2 n; float r; float h; };
+
+struct SlsCtx
+{
+	float On, NormalK, Tiling, Macro, GroundTint, Wear, Debug, RoadForce, FieldRuts, FieldGrass, GroundAerial, GroundRows, GroundView;
+	// results (pbrAlbedo, pbrN, pbrRough, pbrHeight, pbrNormalK, pbrUv, pbrCell, triplanar world normal)
+	float3 Albedo; float3 N; float Rough; float Height; float NK; float2 Uv; float Cell; bool HasWorldN; float3 WorldN;
+};
+
+float3 SlsToWeb(float3 ue) { return float3(ue.x, ue.z, ue.y) * 0.01; }
+float3 SlsDirToWeb(float3 ue) { return float3(ue.x, ue.z, ue.y); }
+float3 SlsNormalToUE(float3 w) { return float3(w.x, w.z, w.y); }
+float3 SlsSrgbToLinear(float3 c) { return lerp(pow((c + 0.055) / 1.055, 2.4), c / 12.92, step(c, 0.04045)); }
+float SlsMod(float x, float y) { return x - y * floor(x / y); }
+
+float SlsHash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+float SlsNoise(float2 p)
+{
+	float2 i = floor(p);
+	float2 u = frac(p);
+	u = u * u * (3.0 - 2.0 * u);
+	return lerp(lerp(SlsHash(i), SlsHash(i + float2(1.0, 0.0)), u.x), lerp(SlsHash(i + float2(0.0, 1.0)), SlsHash(i + float2(1.0, 1.0)), u.x), u.y);
+}
+float SlsFbm(float2 p) { return SlsNoise(p) * 0.55 + SlsNoise(p * 2.13 + 7.1) * 0.3 + SlsNoise(p * 4.37 + 3.3) * 0.15; }
+
+/** Fetch from one atlas cell; the gutter keeps mipmaps clean, SampleGrad keeps frac() seams invisible. */
+SlsTexel SlsFetchAtlas(Texture2D tA, Texture2D tN, Texture2D tR, SamplerState s, float2 grid, float cell, float2 uv, float2 gx, float2 gy)
+{
+	const float G = SLS_GUTTER;
+	const float K = 1.0 - 2.0 * G;
+	float2 cxy = float2(SlsMod(cell, grid.x), floor(cell / grid.x));
+	float2 auv = (cxy + G + frac(uv) * K) / grid;
+	float2 sx = gx * K / grid, sy = gy * K / grid;
+	float4 nt = tN.SampleGrad(s, auv, sx, sy);
+	float4 rt = tR.SampleGrad(s, auv, sx, sy);
+	SlsTexel t;
+	t.a = tA.SampleGrad(s, auv, sx, sy).rgb;
+	t.n = float2(nt.r, nt.a);
+	t.r = rt.g;
+	t.h = rt.a;
+	return t;
+}
+SlsTexel SlsMix(SlsTexel A, SlsTexel B, float w)
+{
+	SlsTexel t;
+	t.a = lerp(A.a, B.a, w); t.n = lerp(A.n, B.n, w); t.r = lerp(A.r, B.r, w); t.h = lerp(A.h, B.h, w);
+	return t;
+}
+
+// Per-atlas fetch (with the albedo gain) and the anti-tiled variant (two offset fetches blended by a slow noise).
+SlsTexel SlsStreetFetch(SLS_TEX_PARAMS, in SlsCtx c, float cell, float2 uv, float2 gx, float2 gy)
+{
+	SlsTexel t = SlsFetchAtlas(SA, SN, SR, SS, float2(SLS_STREET_COLS, SLS_STREET_ROWS), cell, uv, gx, gy);
+	t.a *= SLS_STREET_GAIN[int(cell + 0.5)];
+	return t;
+}
+SlsTexel SlsNatureFetch(SLS_TEX_PARAMS, in SlsCtx c, float cell, float2 uv, float2 gx, float2 gy)
+{
+	SlsTexel t = SlsFetchAtlas(NA, NN, NR, NS, float2(SLS_NATURE_COLS, SLS_NATURE_ROWS), cell, uv, gx, gy);
+	t.a *= SLS_NATURE_GAIN[int(cell + 0.5)];
+	return t;
+}
+SlsTexel SlsBuildingFetch(SLS_TEX_PARAMS, in SlsCtx c, float cell, float2 uv, float2 gx, float2 gy)
+{
+	SlsTexel t = SlsFetchAtlas(BA, BN, BR, BS, float2(SLS_BUILDING_COLS, SLS_BUILDING_ROWS), cell, uv, gx, gy);
+	t.a *= SLS_BUILDING_GAIN[int(cell + 0.5)];
+	return t;
+}
+#define SLS_ANTITILE(NAME, FETCH) \
+SlsTexel NAME(SLS_TEX_PARAMS, in SlsCtx c, float cell, float2 uv, float2 gx, float2 gy) \
+{ \
+	if (c.Tiling < 0.5) return FETCH(SLS_TEX_ARGS, c, cell, uv, gx, gy); \
+	float l = SlsNoise(uv * 0.31 + cell * 17.0) * 7.0; \
+	float ia = floor(l); \
+	float fb = frac(l); \
+	float2 oa = float2(SlsHash(float2(ia, cell)), SlsHash(float2(cell, ia + 3.7))); \
+	float2 ob = float2(SlsHash(float2(ia + 1.0, cell)), SlsHash(float2(cell, ia + 4.7))); \
+	SlsTexel A = FETCH(SLS_TEX_ARGS, c, cell, uv + oa, gx, gy); \
+	SlsTexel B = FETCH(SLS_TEX_ARGS, c, cell, uv + ob, gx, gy); \
+	float w = smoothstep(0.25, 0.75, fb + (B.h - A.h) * 0.6); \
+	return SlsMix(A, B, w); \
+}
+SLS_ANTITILE(SlsStreet, SlsStreetFetch)
+SLS_ANTITILE(SlsNature, SlsNatureFetch)
+SLS_ANTITILE(SlsBuilding, SlsBuildingFetch)
+
+float3 SlsStreetMean(float cell) { return SLS_STREET_MEAN[int(cell + 0.5)]; }
+float3 SlsNatureMean(float cell) { return SLS_NATURE_MEAN[int(cell + 0.5)]; }
+float3 SlsBuildingMean(float cell) { return SLS_BUILDING_MEAN[int(cell + 0.5)]; }
+
+/** Tangent-space normal from the packed XY (Y flipped: the atlas rows start at the top). */
+float3 SlsDecodeN(float2 n)
+{
+	float2 xy = n * 2.0 - 1.0;
+	xy.y = -xy.y;
+	return float3(xy, sqrt(max(0.0, 1.0 - dot(xy, xy))));
+}
+void SlsUse(inout SlsCtx c, SlsTexel t) { c.Albedo = t.a; c.N = SlsDecodeN(t.n); c.Rough = t.r; c.Height = t.h; }
+
+/** World uv on a face: top-down for floors, along the wall for walls. */
+float2 SlsWorldUv(float3 p, float3 n)
+{
+	if (abs(n.y) > 0.7) return p.xz;
+	float2 t = normalize(float2(-n.z, n.x) + 1e-5);
+	return float2(dot(p.xz, t), -p.y);
+}
+
+/** Cotangent frame from screen derivatives (Schüler), for any uv set; web frame. */
+float3 SlsPerturb(float3 N, float3 p, float2 uv, float3 tn)
+{
+	float3 dp1 = ddx(p), dp2 = ddy(p);
+	float2 duv1 = ddx(uv), duv2 = ddy(uv);
+	float3 dp2perp = cross(dp2, N), dp1perp = cross(N, dp1);
+	float3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+	float3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+	float det = max(dot(T, T), dot(B, B));
+	if (det < 1e-20) return N;
+	float s = rsqrt(det);
+	return normalize(T * s * tn.x + B * s * tn.y + N * tn.z);
+}
+
+SlsCtx SlsBegin(float4 P0, float4 P1, float4 P2, float4 P3)
+{
+	SlsCtx c;
+	c.On = P0.x; c.NormalK = P0.y; c.Tiling = P0.z; c.Macro = P0.w;
+	c.GroundTint = P1.x; c.Wear = P1.y; c.Debug = P1.z; c.RoadForce = P1.w;
+	c.FieldRuts = P2.x; c.FieldGrass = P2.y; c.GroundAerial = P2.z; c.GroundRows = P2.w;
+	c.GroundView = P3.x;
+	c.Albedo = 1.0; c.N = float3(0.0, 0.0, 1.0); c.Rough = 1.0; c.Height = 0.5; c.NK = 1.0; c.Uv = 0.0; c.Cell = -1.0;
+	c.HasWorldN = false; c.WorldN = float3(0.0, 1.0, 0.0);
+	return c;
+}
+
+/**
+ * The shared tail of every surface (pbrHooks): roughness clamp, normal perturbation (flattened with tex.normal),
+ * the tex.debug views. Returns the base colour; Rough and NormalWS (Unreal world space) are written out.
+ */
+float3 SlsEnd(inout SlsCtx c, float3 p, float3 nGeo, float baseRough, out float Rough, out float3 NormalWS)
+{
+	Rough = clamp(baseRough * c.Rough, 0.02, 1.0);
+	float k = c.NormalK * c.NK * c.On;
+	float3 n;
+	if (c.HasWorldN) n = normalize(lerp(nGeo, c.WorldN, min(1.0, k)));
+	else n = SlsPerturb(nGeo, p, c.Uv, normalize(float3(c.N.xy * k, c.N.z)));
+	NormalWS = SlsNormalToUE(n);
+	float3 col = c.Albedo;
+	if (c.Debug > 0.5)
+	{
+		if (c.Debug < 1.5) col = c.Albedo;
+		else if (c.Debug < 2.5) col = n * 0.5 + 0.5;
+		else if (c.Debug < 3.5) col = Rough;
+		else if (c.Debug < 4.5) col = c.Height;
+		else if (c.Debug < 5.5) col = c.Cell < 0.0 ? float3(0.2, 0.2, 0.2) : 0.35 + 0.65 * float3(SlsHash(float2(c.Cell, 1.0)), SlsHash(float2(c.Cell, 2.0)), SlsHash(float2(c.Cell, 3.0)));
+		else { float2 g = abs(frac(c.Uv) - 0.5); col = lerp(0.15, float3(1.0, 0.8, 0.2), step(0.47, max(g.x, g.y))); }
+	}
+	return col;
+}
+
+// --- surfaces -----------------------------------------------------------------------------------------------
+
+/**
+ * Road and path (surfaces.ts ROAD). The road code of roadCode.ts arrives split into half-float-safe parts:
+ * UV0 = (lateral 0 right … 1 left, surface + lines·8 + gutter·32), UV1 = (shoulder q + inner·16, width q).
+ */
+void SlsRoad(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1)
+{
+	float low = floor(uv0.y + 0.5);
+	float kind = SlsMod(low, 8.0);
+	float lines = SlsMod(floor(low / 8.0), 4.0);
+	float gutter = SlsMod(floor(low / 32.0), 2.0);
+	float sq = floor(uv1.x + 0.5);
+	float shoulder = SlsMod(sq, 16.0) * 0.25;
+	float innerL = (floor(sq / 16.0) + 1.0) * 0.25;
+	float width = max(2.0, floor(uv1.y + 0.5) * 0.25);
+	if (c.RoadForce >= 0.0) kind = c.RoadForce;
+	float s = saturate(uv0.x);
+	float xr = s * width;
+	float xl = width - xr;
+	float edge = min(xr, xl);
+	float fw = max(fwidth(xr), 1e-4);
+	float2 wp = p.xz;
+	float2 gx = ddx(wp), gy = ddy(wp);
+	float macro = SlsFbm(wp * 0.035);
+	float level = 0.0;
+	float fieldTilt = 0.0;
+	float fieldRut = 0.0, fieldGrass = 0.0;
+	SlsTexel t;
+	if (kind < 2.5)
+	{
+		level = clamp(kind + (c.Wear - 1.0) * 1.5 + (macro - 0.5) * 1.6 * c.Macro, 0.0, 2.0);
+		float ca = min(floor(level), 1.0);
+		float m = SLS_STREET_METRES[int(ca)];
+		SlsTexel A = SlsStreet(SLS_TEX_ARGS, c, ca, wp / m, gx / m, gy / m);
+		float mb = SLS_STREET_METRES[int(ca) + 1];
+		SlsTexel B = SlsStreet(SLS_TEX_ARGS, c, ca + 1.0, wp / mb, gx / mb, gy / mb);
+		t = SlsMix(A, B, smoothstep(0.3, 0.7, level - ca + (B.h - A.h) * 0.5));
+		float patchN = SlsNoise(wp * 0.16 + 31.0) + SlsNoise(wp * 0.7) * 0.12;
+		float rep = smoothstep(0.78, 0.8, patchN) * smoothstep(0.8, 1.4, level) * c.Macro;
+		if (rep > 0.0)
+		{
+			float m0 = SLS_STREET_METRES[0];
+			SlsTexel F = SlsStreet(SLS_TEX_ARGS, c, 0.0, wp / m0 + 0.37, gx / m0, gy / m0);
+			F.a *= 0.75;
+			t = SlsMix(t, F, rep);
+		}
+	}
+	else if (abs(kind - 4.0) < 0.5)
+	{
+		// Feldweg: two wheel ruts, a grass strip between them and grass along the edges.
+		float xc = xr - width * 0.5;
+		float wob = (SlsNoise(wp * 0.06) - 0.5) * 0.4 + (SlsNoise(wp * 0.45 + 9.0) - 0.5) * 0.08;
+		float grassK = lines / 3.0 * c.FieldGrass;
+		float fine = SlsNoise(wp * 1.7 + 4.0);
+		#define SLS_FIELD_RUT(o) smoothstep(SLS_RUT_HALF + 0.14, SLS_RUT_HALF - 0.08, abs(abs(xc + wob + (o)) - SLS_RUT))
+		float rut = SLS_FIELD_RUT(0.0);
+		float slope = (SLS_FIELD_RUT(0.04) - SLS_FIELD_RUT(-0.04)) / 0.08;
+		float mid = smoothstep(SLS_RUT - SLS_RUT_HALF - 0.02, 0.12, abs(xc + wob));
+		float patchy = SlsFbm(wp * 0.9 + 2.0);
+		float verge = smoothstep(width * 0.5 - 0.75 - 0.5 * patchy, width * 0.5 - 0.1, abs(xc));
+		float mr = SLS_STREET_METRES[SLS_S_GRAVEL];
+		SlsTexel G = SlsStreet(SLS_TEX_ARGS, c, SLS_S_GRAVEL, wp / mr, gx / mr, gy / mr);
+		float mm = SLS_NATURE_METRES[SLS_N_MUD];
+		SlsTexel M = SlsNature(SLS_TEX_ARGS, c, SLS_N_MUD, wp / mm, gx / mm, gy / mm);
+		float mf = SLS_NATURE_METRES[SLS_N_FIELD];
+		SlsTexel E = SlsNature(SLS_TEX_ARGS, c, SLS_N_FIELD, wp / mf, gx / mf, gy / mf);
+		float mg = SLS_NATURE_METRES[SLS_N_MEADOW];
+		SlsTexel W = SlsNature(SLS_TEX_ARGS, c, SLS_N_MEADOW, wp / mg, gx / mg, gy / mg);
+		E.a = lerp(E.a, E.a * SLS_FIELD_EARTH / max(SlsNatureMean(SLS_N_FIELD), 0.01), c.GroundTint);
+		M.a = lerp(M.a, M.a * SLS_FIELD_MUD / max(SlsNatureMean(SLS_N_MUD), 0.01), c.GroundTint);
+		W.a = lerp(W.a, W.a * SLS_FIELD_GRASS / max(SlsNatureMean(SLS_N_MEADOW), 0.01), c.GroundTint);
+		SlsTexel base = SlsMix(E, G, gutter * 0.65);
+		SlsTexel inRut = SlsMix(SlsMix(E, M, 0.6), G, step(0.5, gutter));
+		t = SlsMix(base, inRut, rut);
+		float grass = saturate(max(mid * smoothstep(0.15, 0.6, grassK + (patchy - 0.5) * 0.8 + (fine - 0.5) * 0.3), verge * (0.5 + 0.5 * grassK)));
+		grass *= 1.0 - rut * 0.85;
+		t = SlsMix(t, W, grass);
+		t.a *= 1.0 - 0.1 * rut * (1.0 - gutter * 0.5);
+		t.r *= 1.0 - 0.12 * rut * (1.0 - gutter);
+		level = 3.0;
+		fieldRut = rut;
+		fieldGrass = grass;
+		fieldTilt = slope * 0.09 * c.FieldRuts;
+	}
+	else
+	{
+		float m = SLS_STREET_METRES[int(kind)];
+		t = SlsStreet(SLS_TEX_ARGS, c, kind, wp / m, gx / m, gy / m);
+	}
+	SlsUse(c, t);
+	if (fieldTilt != 0.0)
+	{
+		// Rut walls: tilt the normal by the slope across the way (inverse transpose of the ground Jacobian).
+		float dj = gx.x * gy.y - gx.y * gy.x;
+		if (abs(dj) > 1e-10)
+		{
+			float2 v = float2(ddx(xr), ddy(xr));
+			float2 g = float2(gy.y * v.x - gx.y * v.y, -gy.x * v.x + gx.x * v.y) / dj;
+			c.N.xy += fieldTilt * g;
+		}
+	}
+	c.Uv = wp;
+	c.Cell = kind;
+	float paved = step(kind, 2.5);
+	float inner = max(1.5, width - 2.0 * shoulder);
+	float nl = max(1.0, floor(inner / 2.9));
+	float lane = inner / nl;
+	float lp = SlsMod(max(xr - shoulder, 0.0), lane) - lane * 0.5;
+	float onLane = step(shoulder, xr) * step(shoulder, xl);
+	float tracks = smoothstep(0.42, 0.12, abs(abs(lp) - 0.85)) * onLane * (0.6 + 0.4 * SlsNoise(wp * 0.3));
+	float oil = smoothstep(0.35, 0.0, abs(lp)) * onLane * smoothstep(0.45, 0.8, SlsNoise(wp * 0.9 + 3.0));
+	c.Albedo *= 1.0 - (0.14 * tracks + 0.12 * oil) * paved * c.Macro;
+	c.Rough = lerp(c.Rough, max(c.Rough, 0.62), paved) * (1.0 - 0.07 * tracks * paved);
+	float grime = smoothstep(0.9, 0.1, edge) * (0.5 + 0.5 * SlsNoise(wp * 1.3));
+	c.Albedo = lerp(c.Albedo, c.Albedo * float3(0.95, 0.9, 0.82) + float3(0.012, 0.01, 0.006), grime * c.Macro);
+	if (gutter > 0.5 && edge < 0.34 && abs(kind - 4.0) > 0.5)
+	{
+		float m = SLS_STREET_METRES[3] * 0.55;
+		SlsTexel G = SlsStreet(SLS_TEX_ARGS, c, SLS_S_SETT, wp / m, gx / m, gy / m);
+		float g = smoothstep(0.34, 0.34 - fw * 1.5, edge);
+		c.Albedo = lerp(c.Albedo, G.a * 0.8, g);
+		c.N = lerp(c.N, SlsDecodeN(G.n), g);
+		c.Rough = lerp(c.Rough, G.r, g);
+		c.Height = lerp(c.Height, G.h, g);
+	}
+	if (lines > 0.5 && paved > 0.5)
+	{
+		float lw = shoulder >= 2.0 ? 0.3 : 0.15;
+		float r0 = shoulder;
+		float l0 = lines > 1.5 ? innerL : r0;
+		float pr = smoothstep(r0 - lw - fw, r0 - lw + fw, xr) * (1.0 - smoothstep(r0 - fw, r0 + fw, xr));
+		float pl = smoothstep(l0 - lw - fw, l0 - lw + fw, xl) * (1.0 - smoothstep(l0 - fw, l0 + fw, xl));
+		float paint = max(pr, pl) * smoothstep(0.18, 0.4, SlsFbm(wp * 2.4) + 0.3 - level * 0.12);
+		c.Albedo = lerp(c.Albedo, float3(0.78, 0.78, 0.74) * (0.9 + 0.1 * c.Height), paint);
+		c.Rough = lerp(c.Rough, 0.5, paint);
+		c.NK *= 1.0 - 0.55 * paint;
+	}
+	c.Albedo *= 1.0 + (SlsNoise(wp * 0.11 + 5.0) - 0.5) * 0.16 * c.Macro;
+	if (c.On < 0.5)
+	{
+		c.Albedo = abs(kind - 4.0) < 0.5 ? lerp(lerp(SLS_FIELD_EARTH, SLS_FIELD_MUD, fieldRut * 0.6), SLS_FIELD_GRASS, fieldGrass) : SlsStreetMean(kind);
+		c.Rough = 0.85;
+	}
+}
+
+/** Painted lines (MARKING): paint on the asphalt grain, flaking off. Returns the opacity mask (worn paint gone). */
+float SlsMarking(SLS_TEX_PARAMS, inout SlsCtx c, float3 p)
+{
+	float2 wp = p.xz;
+	float m = SLS_STREET_METRES[0];
+	SlsTexel t = SlsStreetFetch(SLS_TEX_ARGS, c, 0.0, wp / m, ddx(wp) / m, ddy(wp) / m);
+	float worn = SlsFbm(wp * 2.2);
+	float keep = (c.On > 0.5 && worn < 0.2 * c.Wear) ? 0.0 : 1.0;
+	c.N = SlsDecodeN(t.n);
+	c.NK = 0.45;
+	c.Height = t.h;
+	c.Albedo = float3(0.9, 0.9, 0.86) * lerp(0.8, 1.0, smoothstep(0.2, 0.6, t.h)) * lerp(0.85, 1.0, smoothstep(0.2, 0.5, worn));
+	c.Rough = 0.5 + 0.25 * (1.0 - t.h);
+	c.Uv = wp;
+	c.Cell = 8.0;
+	if (c.On < 0.5) { c.Albedo = 0.85; c.Rough = 0.6; }
+	return keep;
+}
+
+/** Pavement tops are slabs, kerb faces and walls granite (SIDEWALK). */
+void SlsSidewalk(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float3 n)
+{
+	float2 uvw = SlsWorldUv(p, n);
+	float2 gx = ddx(uvw), gy = ddy(uvw);
+	float top = step(0.7, n.y);
+	float cell = top > 0.5 ? SLS_S_PAVEMENT : SLS_S_GRANITE;
+	float m = SLS_STREET_METRES[int(cell)];
+	SlsTexel t = SlsStreet(SLS_TEX_ARGS, c, cell, uvw / m, gx / m, gy / m);
+	SlsUse(c, t);
+	c.Uv = uvw;
+	c.Cell = cell;
+	float2 wp = p.xz;
+	if (top < 0.5)
+	{
+		float l = dot(c.Albedo, float3(0.3, 0.59, 0.11));
+		c.Albedo = lerp(c.Albedo, l * float3(0.95, 0.94, 0.9), 0.5) * lerp(0.8, 1.0, SlsNoise(float2(dot(wp, float2(0.7, 0.7)) * 2.0, p.y * 0.3)));
+		if (n.y < -0.7) c.Albedo *= 0.6;
+	}
+	c.Albedo *= 1.0 + (SlsFbm(wp * 0.25) - 0.5) * 0.25 * c.Macro;
+	if (c.On < 0.5) { c.Albedo = SlsStreetMean(cell); c.Rough = 0.9; }
+}
+
+/**
+ * Terrain (GROUND): 8 splat channels height-blended, crop rows, aerial survey tint. Inputs as packed by
+ * ASlsTileActor: UV0/UV1 = two 5-bit weights per float (a·32 + b), UV2 = rows (strength byte, direction code).
+ * Returns the albedo the vertex colour is NOT divided out of (Unreal does not multiply it in).
+ */
+void SlsGround(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1, float2 uv2, float3 vcol)
+{
+	float2 wp = p.xz;
+	float2 gx = ddx(wp), gy = ddy(wp);
+	float4 pk = floor(float4(uv0, uv1) + 0.5);
+	float w[8];
+	w[0] = floor(pk.x / 32.0) / 31.0; w[1] = SlsMod(pk.x, 32.0) / 31.0;
+	w[2] = floor(pk.y / 32.0) / 31.0; w[3] = SlsMod(pk.y, 32.0) / 31.0;
+	w[4] = floor(pk.z / 32.0) / 31.0; w[5] = SlsMod(pk.z, 32.0) / 31.0;
+	w[6] = floor(pk.w / 32.0) / 31.0; w[7] = SlsMod(pk.w, 32.0) / 31.0;
+	float ws = 0.0;
+	int i;
+	for (i = 0; i < 8; i++) ws += w[i];
+	if (ws < 1e-3) { w[0] = 1.0; ws = 1.0; }
+	float3 pal = 0.0, ref = 0.0, dbg = 0.0;
+	for (i = 0; i < 8; i++) { w[i] /= ws; pal += SLS_GROUND_PAL[i] * w[i]; ref += SLS_GROUND_REF[i] * w[i]; dbg += SLS_GROUND_DBG[i] * w[i]; }
+	float3 vc = pal * pow(clamp(max(vcol, 1e-4) / max(ref, 1e-4), 0.45, 2.2), c.GroundAerial);
+	float rs = uv2.x / 255.0 * c.GroundRows;
+	float stripe = 0.5, tram = 0.0;
+	if (rs > 0.01)
+	{
+		float code = floor(uv2.y + 0.5);
+		float2 cellR = floor((wp + 40.0 * float2(SlsNoise(wp * 0.004), SlsNoise(wp * 0.004 + 7.0))) / 150.0);
+		float ang = code < 0.5 ? SlsHash(cellR) * 3.14159 : (code - 1.0) / 254.0 * 3.14159;
+		float2 across = float2(sin(ang), cos(ang));
+		float x = dot(wp, across);
+		float ph = x / 0.75;
+		float fade = 1.0 - smoothstep(0.2, 0.55, fwidth(ph));
+		stripe = lerp(0.5, 0.5 + 0.5 * cos(ph * 6.2832), fade);
+		float tx = SlsMod(x + 10.5, 21.0) - 10.5;
+		tram = smoothstep(0.35, 0.15, abs(abs(tx) - 0.9)) * (1.0 - smoothstep(0.05, 0.3, fwidth(tx)));
+		float green = 2.0 * stripe * (1.0 - tram), bare = 2.0 * (1.0 - stripe) + 2.0 * tram;
+		w[0] *= lerp(1.0, green, rs); w[1] *= lerp(1.0, green, rs); w[2] *= lerp(1.0, green, rs);
+		w[4] *= lerp(1.0, bare, rs);
+	}
+	float3 acc = 0.0, accM = 0.0; float2 accN = 0.0; float accR = 0.0, accH = 0.0, accW = 0.0;
+	for (i = 0; i < 8; i++)
+	{
+		if (w[i] < 0.02) continue;
+		SlsTexel t;
+		float3 mean;
+		float cc = SLS_GROUND_CELL[i];
+		if (i == 5 || i == 6)
+		{
+			float m = SLS_STREET_METRES[int(cc)];
+			t = SlsStreet(SLS_TEX_ARGS, c, cc, wp / m, gx / m, gy / m);
+			mean = SlsStreetMean(cc);
+		}
+		else
+		{
+			float m = SLS_NATURE_METRES[int(cc)];
+			t = SlsNature(SLS_TEX_ARGS, c, cc, wp / m, gx / m, gy / m);
+			mean = SlsNatureMean(cc);
+		}
+		float k = w[i] * pow(0.35 + t.h, 4.0);
+		acc += t.a * k; accM += mean * k; accN += t.n * k; accR += t.r * k; accH += t.h * k; accW += k;
+		if (k > accW * 0.5) c.Cell = cc + (i == 5 || i == 6 ? 8.0 : 0.0);
+	}
+	accW = max(accW, 1e-4);
+	c.Albedo = acc / accW;
+	c.Albedo = lerp(c.Albedo, c.Albedo * vc / max(accM / accW, 1e-3), c.GroundTint);
+	c.N = SlsDecodeN(accN / accW);
+	c.Rough = lerp(lerp(0.97, 1.0, accR / accW), accR / accW, w[5] * 0.6);
+	c.Height = accH / accW;
+	c.Albedo *= lerp(1.0, 0.82 + 0.3 * stripe, rs * 0.6);
+	c.Uv = wp;
+	float big = SlsFbm(wp * 0.012);
+	float mid = SlsFbm(wp * 0.06 + 13.0);
+	c.Albedo *= 0.88 + 0.24 * mid * c.Macro + (big - 0.5) * 0.1 * c.Macro;
+	if (c.On < 0.5) { c.Albedo = vc; c.Rough = 0.95; }
+	if (c.GroundView > 0.5 && c.GroundView < 1.5) c.Albedo = dbg;
+	else if (c.GroundView > 1.5) c.Albedo = vcol;
+}
+
+/** Painted metal / detail meshes: chipped paint triplanar as luminance detail on the vertex colour. */
+float SlsPaintedMetal(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float3 n)
+{
+	c.NK = 0.7;
+	float cell = SLS_B_PAINTED_METAL;
+	float3 tw = pow(abs(n), 4.0); tw /= tw.x + tw.y + tw.z;
+	float3 tp = p / 0.8;
+	SlsTexel tx = SlsBuildingFetch(SLS_TEX_ARGS, c, cell, tp.zy, ddx(tp.zy), ddy(tp.zy));
+	SlsTexel ty = SlsBuildingFetch(SLS_TEX_ARGS, c, cell, tp.xz, ddx(tp.xz), ddy(tp.xz));
+	SlsTexel tz = SlsBuildingFetch(SLS_TEX_ARGS, c, cell, tp.xy, ddx(tp.xy), ddy(tp.xy));
+	c.Albedo = tx.a * tw.x + ty.a * tw.y + tz.a * tw.z;
+	c.Rough = tx.r * tw.x + ty.r * tw.y + tz.r * tw.z;
+	c.Height = tx.h * tw.x + ty.h * tw.y + tz.h * tw.z;
+	float3 nx = SlsDecodeN(tx.n), ny = SlsDecodeN(ty.n), nz = SlsDecodeN(tz.n);
+	float k = c.NormalK * c.NK;
+	c.WorldN = normalize(float3(0.0, nx.y, nx.x) * k * tw.x + float3(ny.x, 0.0, ny.y) * k * tw.y + float3(nz.x, nz.y, 0.0) * k * tw.z + n);
+	c.HasWorldN = true;
+	c.Cell = cell;
+	c.Uv = p.xz;
+	float3 mean = SlsBuildingMean(cell);
+	float l = dot(c.Albedo, float3(0.3, 0.59, 0.11)) / max(dot(mean, float3(0.3, 0.59, 0.11)), 0.01);
+	if (c.On < 0.5) { l = 1.0; c.Rough = 0.6; c.HasWorldN = false; }
+	return clamp(lerp(1.0, l, 0.7), 0.4, 1.6);
+}

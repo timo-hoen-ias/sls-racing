@@ -39,7 +39,8 @@ Unreal Engine 5.8 (auf timos PC wie bei going-vertical: AUR-Paket `unreal-engine
 
 ```bash
 ./unreal/sls.sh world     # exportierte Welt holen (gh auth login)
-./unreal/sls.sh build     # C++ bauen
+./unreal/sls.sh setup     # Texturen aus dem Web-Spiel + C++ bauen + Materialien anlegen (einmal und nach Shader-/Texturänderungen)
+./unreal/sls.sh build     # nur C++ bauen
 ./unreal/sls.sh play      # Spiel im Fenster
 ./unreal/sls.sh parity    # Befahrbarkeit der ganzen Welt ohne Fenster, Exit-Code
 ./unreal/sls.sh bench     # Fahrphysik gegen das Web-Auto (fun + real), Exit-Code
@@ -55,6 +56,20 @@ Leertaste/X Handbremse, B/LB Rückblick, E/Q schalten, R/Y auf die Straße zurü
 Freie Kamera: Konsole `fly` (WASD + Maus, E/Q hoch/runter), nochmal `fly` zurück ins Auto.
 
 Das Auto nutzt Chaos Vehicles (Plugin `ChaosVehiclesPlugin`), die Eingabe Enhanced Input, die Kamera einen Spring Arm.
+
+## Materialien
+
+Die Oberflächen sind ein Port der Web-Shader (`src/render/pbr/surfaces.ts`) nach HLSL: `SlsRacing/Shaders/SlsPbr.ush`
+(Straße mit Abnutzung, Flicken, Reifenspuren, Rinnen, Randlinien; Feldweg mit Spurrillen und Grasnarbe;
+Markierungen; Gehweg und Bordstein; Gelände mit 8 Bodenkanälen, Ackerreihen und Luftbild-Tönung; Details als
+lackiertes Metall). `sls_setup.py` baut daraus Materialien mit je einem Custom-Node, Wasser nutzt Unreals Single
+Layer Water. Die Texturen sind dieselben Atlanten wie im Web-Spiel (`export-textures.ts` dekodiert die KTX2-Dateien).
+
+- Gemeinsame Konstanten (Atlas-Raster, Meter je Wiederholung, Helligkeitsausgleich, Bodenfarben) erzeugt
+  `node unreal/tools/gen-shaders.ts` nach `Shaders/SlsAtlases.ush`; CI prüft, dass die Datei aktuell ist.
+- `DXC=<pfad>/dxc unreal/tools/check-shaders.sh` kompiliert die Shader ohne Engine (DXIL und SPIR-V).
+- Die Straßen-Codes und Bodengewichte kommen so gepackt in den UV-Kanälen an, dass sie auch Half-Float-UVs
+  überstehen (`SlsTileActor.cpp`).
 
 ## Fahrphysik gegen das Web-Auto prüfen
 
@@ -93,6 +108,9 @@ $UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject
 | `assist.esp\|drift\|tcs [0..1]` · `assist.abs 0\|1` | Fahrhilfen |
 | `cam.mode 0..3` · `cam.dist\|height\|lag\|swing\|fov\|boostfov [x]` | Kamera |
 | `hud 0\|1` · `hud.debug 0\|1` | HUD, Positionszeile |
+| `tex.enabled on\|off` · `tex.normal <0..3>` · `tex.tiling on\|off` · `tex.macro` · `tex.wear` · `tex.groundtint` | Oberflächen wie im Web-Spiel |
+| `tex.debug off\|albedo\|normal\|rough\|height\|cells\|uv` · `tex.road auto\|<belag>` · `tex.info` · `tex.materials 0\|1` | Textur-Ansichten, Belag erzwingen, Status, Platzhalter |
+| `ground.aerial` · `ground.rows` · `ground.view normal\|cover\|aerial` · `feldweg.ruts` · `feldweg.grass` | Gelände und Feldwege |
 | `sls.data <ordner>` | Anderer Export-Ordner |
 
 ## Aufbau
@@ -103,11 +121,17 @@ unreal/
   tools/verify-export.ts     Export in Rapier nachbauen und gegen die Referenz prüfen
   tools/slsu.ts              Dateiformat
   tools/car-reference.ts     Messfahrten des Web-Autos → reference/car.json
+  tools/export-textures.ts   PBR-Atlanten (KTX2) → PNG für den Import
+  tools/gen-shaders.ts       gemeinsame Shader-Konstanten → Shaders/SlsAtlases.ush
+  sls.sh                     Einstieg: world, setup, build, play, parity, bench, editor
   SlsRacing/                 Unreal-Projekt (C++)
     Source/SlsRacing/World/  SlsTileFile (Lesen), SlsTileActor (Mesh + Kollision), SlsWorldSubsystem (Streaming), SlsSurface (Scan/Parität)
     Source/SlsRacing/Game/   GameMode, HUD, freie Kamera
     Source/SlsRacing/Vehicle/ Auto (Chaos Vehicles + Arcade-Schicht), Räder, Abstimmung aus tuning.ts
     Source/SlsRacing/Debug/  Konsolenbefehle
+    Source/SlsRacingShaders/ bindet Shaders/ als /SlsRacing ein (lädt vor den Shadern)
+    Shaders/                 HLSL-Port der Web-Oberflächen
+    Content/Python/          sls_setup.py: Texturen importieren, Materialien bauen
     Config/                  Kollisionskanäle SlsRoad / SlsWheel / SlsChassis
     WorldData/               exportierte Welt (nicht im Git)
 ```

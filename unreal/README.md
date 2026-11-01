@@ -43,7 +43,22 @@ $UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject
 ```
 
 Es gibt noch keine Map-Assets: das Spiel startet in der leeren Engine-Map, `SlsGameMode` setzt Sonne, Himmel und
-Nebel, und die Kacheln streamen um die Kamera. Freie Kamera: WASD + Maus, E/Q hoch/runter.
+Nebel, und das Auto steht am Startpunkt des Web-Spiels; die Kacheln streamen um es herum.
+
+Steuerung wie im Web-Spiel: W/↑/RT Gas, S/↓/LT Bremse, A/D/linker Stick lenken, Shift/A/RB Nitro,
+Leertaste/X Handbremse, B/LB Rückblick, E/Q schalten, R/Y auf die Straße zurück, C Kamera.
+Freie Kamera: Konsole `fly` (WASD + Maus, E/Q hoch/runter), nochmal `fly` zurück ins Auto.
+
+Das Auto nutzt Chaos Vehicles (Plugin `ChaosVehiclesPlugin`), die Eingabe Enhanced Input, die Kamera einen Spring Arm.
+
+## Fahrphysik gegen das Web-Auto prüfen
+
+```bash
+node unreal/tools/car-reference.ts      # Web-Referenz neu messen → unreal/reference/car.json (nur nach Änderungen an src/vehicle)
+$UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject" -game -nullrhi -unattended -nosound \
+  -ExecCmds="car.bench fun exit" -log
+# Ergebnis: Exit-Code 0 (alle Werte innerhalb ±10 %) und unreal/SlsRacing/Saved/car-bench.json
+```
 
 ## Befahrbarkeitstest ohne Fenster
 
@@ -65,7 +80,14 @@ $UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject
 | `stream.radius` · `stream.physradius` · `stream.budget` · `stream.inflight` · `stream.info` | Kachel-Streaming wie im Web-Spiel |
 | `phys.colliders show \| hide [art]` | Kollisionsdreiecke zeigen (z. B. `phys.colliders show road`) |
 | `world.layer <ebene> on \| off` | Kachelebene ein-/ausblenden |
-| `fly.speed <m/s>` | Tempo der freien Kamera |
+| `fly` · `fly.speed <m/s>` | Freie Kamera an/aus, Tempo |
+| `car.bench [fun \| real] [exit]` | Referenzfahrten (0–100–200, Spitze, Bremsweg, Kreisfahrt) gegen `unreal/reference/car.json` |
+| `car.reset` · `car.info` · `car.gear <n>` | Auf die Straße setzen, Zustand, Gang |
+| `feel [fun \| real]` · `feel.<wert> [x]` | Fahrgefühl; Werte `torque downforce drag airlevel landing brake stick straight coast refill`, `feel.burst 0\|1` |
+| `drift 0\|1` · `nitro [0..1]` · `nitro.refill` · `nitro.infinite [0\|1]` | Drift-Hilfe, Nitro |
+| `assist.esp\|drift\|tcs [0..1]` · `assist.abs 0\|1` | Fahrhilfen |
+| `cam.mode 0..3` · `cam.dist\|height\|lag\|swing\|fov\|boostfov [x]` | Kamera |
+| `hud 0\|1` · `hud.debug 0\|1` | HUD, Positionszeile |
 | `sls.data <ordner>` | Anderer Export-Ordner |
 
 ## Aufbau
@@ -75,9 +97,11 @@ unreal/
   tools/export-tiles.ts      Web-Kacheln → .slsu (+ Referenzhöhen)
   tools/verify-export.ts     Export in Rapier nachbauen und gegen die Referenz prüfen
   tools/slsu.ts              Dateiformat
+  tools/car-reference.ts     Messfahrten des Web-Autos → reference/car.json
   SlsRacing/                 Unreal-Projekt (C++)
     Source/SlsRacing/World/  SlsTileFile (Lesen), SlsTileActor (Mesh + Kollision), SlsWorldSubsystem (Streaming), SlsSurface (Scan/Parität)
-    Source/SlsRacing/Game/   GameMode, freie Kamera
+    Source/SlsRacing/Game/   GameMode, HUD, freie Kamera
+    Source/SlsRacing/Vehicle/ Auto (Chaos Vehicles + Arcade-Schicht), Räder, Abstimmung aus tuning.ts
     Source/SlsRacing/Debug/  Konsolenbefehle
     Config/                  Kollisionskanäle SlsRoad / SlsWheel / SlsChassis
     WorldData/               exportierte Welt (nicht im Git)

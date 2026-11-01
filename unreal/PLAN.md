@@ -23,20 +23,31 @@ Straßen, Brücken und Gelände landen dort und kommen über den Export in beide
 bekannten Stellen der Pipeline (`world:surface`: 96 kritisch, Kanten) werden in der Pipeline behoben und gelten
 dann für beide Spiele.
 
-## Phase 1: Auto und Fahrgefühl
+## Phase 1: Auto und Fahrgefühl — begonnen
 
-Port von `src/vehicle` (carPhysics, tyres, drivetrain, roadSurface, rescue, cars, tuning) und `src/game/feel.ts`
-als eigenes Raycast-Fahrzeug in C++ (kein Chaos Vehicle: das eigene Reifenmodell und die Arcade-Hilfen sind das
-Fahrgefühl, das timo will). Physik mit fester Rate (120 Hz wie Qualität „hoch“), Räder über `SlsWheel`-Strahlen,
-Karosserie ignoriert `SlsRoad`. Kamera (`chaseCamera.ts`, Cockpit, freier Blick am rechten Stick), Eingabe
-(`input/bindings.ts`, Tastatur + Gamepad), Gangmodus, Nitro, Reset auf die nächste Straße.
+Auf timos Wunsch mit Unreal-Technik statt Eigenbau (2026-11-01):
 
-**Parität:** Die Physik-Tests aus `tests/carPhysics.test.ts`, `feel.test.ts`, `drivetrain.test.ts` als
-Unreal-Automation-Tests mit denselben Zahlen (Beschleunigung 0–100, Bremsweg 100–0 in 16 m, Querbeschleunigung
-~1,4 g). Danach der Drive-Test (`pipeline/drivetest.ts`, 200 echte Routen + Tunnel) als Unreal-Autopilot mit
-denselben Routen: gleiche Erfolgsquote, keine neuen Hänger.
+- [x] **Chaos Vehicles** (`UChaosWheeledVehicleMovementComponent`) für Federung, Reifen, Motor, Automatik und
+      Allrad, abgestimmt auf `src/vehicle/tuning.ts` (×0,8 wie das Web-Auto, `Vehicle/SlsCarTuning.h`).
+      Radstrahlen treffen nur `SlsRoad`-taugliche Kollision, die Karosserie ignoriert `SlsRoad` wie im Web.
+- [x] Arcade-Schicht aus `src/game/feel.ts` als Kräfte obendrauf: Nitro mit Stoß, Arcade- und Ausrollbremse,
+      Straßenhaftung, ESP, Drift-Hilfe, Luftsteuerung, Selbstaufrichten, Landung. `feel fun|real`.
+- [x] **Enhanced Input** mit den Belegungen aus `src/input/bindings.ts` (Tastatur + Gamepad), zur Laufzeit angelegt.
+- [x] Kamera mit `USpringArmComponent` (Verfolger, weit, Haube, Cockpit, Rückblick, Tempo-/Nitro-FOV).
+- [x] Reset auf die nächste Straße über `graph.json` (`World/SlsRoadGraph`), HUD (Tacho, Gang, Drehzahl, Nitro).
+- [x] Physik asynchron mit fester Rate 120 Hz (`bTickPhysicsAsync`).
+- [x] Referenzwerte des Web-Autos: `unreal/tools/car-reference.ts` → `unreal/reference/car.json`
+      (fun: 0–100 in 2,52 s, 0–200 in 7,74 s, Spitze 336 km/h, Bremsweg 100–0 16,3 m, 1,46 g bei 80 km/h).
+- [ ] Erster Lauf auf timos PC: `car.bench fun exit` und `car.bench real exit` innerhalb ±10 %, dann Chaos-Werte
+      nachstellen (Federrate, Reibung, Motorkurve).
+- [ ] Automatik-/Handschaltung aus dem Menü, freier Blick am rechten Stick, Fahrzeugmodelle (GLB-Import über
+      Interchange oder das Plugin **glTFRuntime**), Rettung bei Überschlag wie `rescue.ts`.
+- [ ] Drive-Test (`pipeline/drivetest.ts`, 200 echte Routen + Tunnel) als Unreal-Autopilot: gleiche Erfolgsquote.
 
-Debug: alle `car.*`, `phys.*`, `assist.*`, `feel.*`, `stick.*`, `step.*`, `drift.*`, `nitro.*`, `cam.*`, `input.*`.
+**Parität:** `car.bench` innerhalb ±10 % der Web-Referenz in beiden Gefühlen, danach der Drive-Test.
+
+Debug: `car.bench`, `car.reset`, `car.info`, `car.gear`, `feel`, `feel.*`, `drift`, `nitro`, `nitro.refill`,
+`nitro.infinite`, `assist.esp|drift|tcs|abs`, `cam.mode|dist|height|lag|swing|fov|boostfov`, `fly`, `hud`, `hud.debug`.
 
 ## Phase 2: Aussehen
 
@@ -88,10 +99,15 @@ Lobby, gemeinsame Rennen, Namensschilder. Ziel: Browser und Unreal im selben Ren
 
 ## Phase 8: Ausliefern
 
-Paketierung Linux/Windows, Leistung (HLOD/World Partition statt Laufzeit-Meshes, falls nötig), Grafikstufen wie
-`quality.ts`.
+Paketierung Linux/Windows, Leistung (HLOD/World Partition und Nanite statt Laufzeit-Meshes, falls nötig), Grafikstufen
+wie `quality.ts` über Scalability-Gruppen.
 
 ## Arbeitsweise
+
+- Unreal-Technik und fertige Plugins vor Eigenbau (timo, 2026-11-01): Chaos Vehicles, Enhanced Input, UMG,
+  Niagara (Partikel, Reifenrauch), MetaSounds (Motor-DSP), Foliage/HISM und PCG (Bäume, Props), Sky Atmosphere
+  und Volumetric Clouds (Wetter), glTFRuntime/Interchange (Modelle). Eigenbau nur, wo das Web-Verhalten anders
+  nicht zu treffen ist (Kachelexport, Paritätsprüfung).
 
 - Kompilieren und Testen braucht die Engine: auf timos Linux-PC per Remote Control. Die Cloud-Sessions bauen
   Export, Prüfungen und C++-Code; alles, was ohne Engine prüfbar ist, läuft in CI.

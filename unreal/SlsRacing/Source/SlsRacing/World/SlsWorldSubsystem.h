@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Containers/Queue.h"
+#include "SlsRoadGraph.h"
 #include "SlsWorldSubsystem.generated.h"
 
 class ASlsTileActor;
@@ -75,6 +76,9 @@ public:
 
 	UMaterialInterface* MaterialFor(const FString& Layer, bool bVertexColor);
 
+	/** Road network (graph.json). */
+	const FSlsRoadGraph& Roads() const { return Graph; }
+
 private:
 	bool LoadIndex(FString& Err);
 	void StartLoad(FIntPoint T);
@@ -82,6 +86,7 @@ private:
 
 	bool bReady = false;
 	FSlsWorldInfo World;
+	FSlsRoadGraph Graph;
 	TSet<FIntPoint> TileSet;
 
 	UPROPERTY()

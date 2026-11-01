@@ -1,0 +1,19 @@
+{
+  "note": "Web car (src/vehicle/carPhysics.ts) on a flat plane, 120 Hz, VEHICLE.scale applied; unreal/tools/car-reference.ts",
+  "fun": {
+    "t0_100": 2.52,
+    "t0_200": 7.74,
+    "topKmh": 335.6,
+    "brake100m": 16.3,
+    "brake100s": 1.22,
+    "latG80": 1.46
+  },
+  "real": {
+    "t0_100": 3.02,
+    "t0_200": 9.72,
+    "topKmh": 296.2,
+    "brake100m": 29.1,
+    "brake100s": 2.12,
+    "latG80": 1.44
+  }
+}

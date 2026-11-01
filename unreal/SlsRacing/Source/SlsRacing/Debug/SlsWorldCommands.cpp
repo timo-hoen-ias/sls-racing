@@ -5,6 +5,7 @@
 #include "World/SlsSurface.h"
 #include "World/SlsTileActor.h"
 #include "World/SlsWorldSubsystem.h"
+#include "Vehicle/SlsCarPawn.h"
 #include "Containers/Ticker.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
@@ -58,6 +59,13 @@ namespace
 		APawn* P = PlayerPawn(W);
 		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 		if (!P || !S) return;
+		if (ASlsCarPawn* Car = Cast<ASlsCarPawn>(P))
+		{
+			// The car keeps its heading and lands on the road surface (PlaceAt loads the 3 × 3 tiles).
+			const double Heading = FMath::DegreesToRadians(Car->GetActorRotation().Yaw + 90.0);
+			Car->PlaceAt(FVector(X, P->GetActorLocation().Z / 100.0, Z), Heading);
+			return;
+		}
 		const FIntPoint T = S->TileOfLocal(X, Z);
 		S->LoadTileSync(T, true);
 		const double Ground = S->GroundZ(X * 100.0, Z * 100.0, P->GetActorLocation().Z);
@@ -301,6 +309,7 @@ static FAutoConsoleCommandWithWorldAndArgs CmdCamTop(
 		APawn* P = PlayerPawn(W);
 		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 		if (!P || !S) return;
+		if (P->IsA<ASlsCarPawn>()) { Say(TEXT("cam.top braucht die freie Kamera: erst 'fly' eingeben"), FColor::Yellow); return; }
 		const double H = Args.Num() ? FCString::Atod(*Args[0]) : 120.0;
 		const FVector Loc = P->GetActorLocation();
 		const double Ground = S->GroundZ(Loc.X, Loc.Y, Loc.Z - H * 100.0);

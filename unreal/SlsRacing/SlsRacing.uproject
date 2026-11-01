@@ -8,10 +8,23 @@
 			"Name": "SlsRacing",
 			"Type": "Runtime",
 			"LoadingPhase": "Default",
-			"AdditionalDependencies": ["Engine"]
+			"AdditionalDependencies": [
+				"Engine"
+			]
 		}
 	],
 	"Plugins": [
-		{ "Name": "ProceduralMeshComponent", "Enabled": true }
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
+		},
+		{
+			"Name": "ChaosVehiclesPlugin",
+			"Enabled": true
+		},
+		{
+			"Name": "EnhancedInput",
+			"Enabled": true
+		}
 	]
 }

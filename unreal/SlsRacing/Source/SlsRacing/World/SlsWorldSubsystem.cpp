@@ -37,6 +37,7 @@ void USlsWorldSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	bReady = LoadIndex(Err);
 	if (!bReady) UE_LOG(LogSls, Error, TEXT("Welt nicht geladen: %s (erst `node unreal/tools/export-tiles.ts` laufen lassen)"), *Err);
 	else UE_LOG(LogSls, Log, TEXT("Welt: %d Kacheln aus %s"), World.Tiles.Num(), *DataDir());
+	if (bReady && !Graph.Load(FPaths::Combine(DataDir(), TEXT("graph.json")), Err)) UE_LOG(LogSls, Warning, TEXT("Straßennetz fehlt: %s"), *Err);
 }
 
 void USlsWorldSubsystem::Deinitialize()

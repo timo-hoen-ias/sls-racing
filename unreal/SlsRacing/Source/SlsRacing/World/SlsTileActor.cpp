@@ -133,10 +133,10 @@ void ASlsTileActor::BuildCollision(const FSlsTileFile& File, bool bAsync)
 		C->SetCollisionResponseToAllChannels(ECR_Block);
 		if (Group.bWheelsOnly)
 		{
-			// Only the wheels ride on carriageways, pavements and paths, so kerbs never catch the chassis.
+			// Only the wheels ride on carriageways, pavements and paths, so kerbs never catch the chassis: chassis probes
+			// ignore them here, the car body (object type Vehicle) ignores SlsRoad on its side, and the Chaos wheel traces hit them.
 			C->SetCollisionResponseToChannel(ECC_SlsChassis, ECR_Ignore);
 			C->SetCollisionResponseToChannel(ECC_Pawn, ECR_Ignore);
-			C->SetCollisionResponseToChannel(ECC_Vehicle, ECR_Ignore);
 			C->SetCollisionResponseToChannel(ECC_PhysicsBody, ECR_Ignore);
 		}
 		C->BodyInstance.SetPhysMaterialOverride(FrictionMaterial(Group.Friction));

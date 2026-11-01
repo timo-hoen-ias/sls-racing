@@ -1,6 +1,8 @@
 #include "SlsGameMode.h"
 #include "SlsRacing.h"
 #include "World/SlsWorldSubsystem.h"
+#include "Game/SlsHUD.h"
+#include "Vehicle/SlsCarPawn.h"
 #include "Components/DirectionalLightComponent.h"
 #include "Components/ExponentialHeightFogComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
@@ -37,7 +39,9 @@ void ASlsFlyPawn::Tick(float DeltaSeconds)
 
 ASlsGameMode::ASlsGameMode()
 {
-	DefaultPawnClass = ASlsFlyPawn::StaticClass();
+	// The car is the player; the free camera stays available through the 'fly' command.
+	DefaultPawnClass = ASlsCarPawn::StaticClass();
+	HUDClass = ASlsHUD::StaticClass();
 }
 
 void ASlsGameMode::StartPlay()

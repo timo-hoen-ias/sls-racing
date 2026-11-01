@@ -5,7 +5,7 @@
 #include "GameFramework/DefaultPawn.h"
 #include "SlsGameMode.generated.h"
 
-/** Free camera to inspect the world until the car is ported (WASD + mouse, E/Q up/down; fly.speed). */
+/** Free camera to inspect the world (console 'fly', WASD + mouse, E/Q up/down; fly.speed). */
 UCLASS()
 class SLSRACING_API ASlsFlyPawn : public ADefaultPawn
 {
@@ -16,7 +16,7 @@ public:
 };
 
 /**
- * Starts the world from code (no map assets yet): sun, sky, fog and the debug pawn at the web build's spawn point.
+ * Starts the world from code (no map assets yet): sun, sky, fog and the car at the web build's spawn point.
  * The tiles stream in through USlsWorldSubsystem.
  */
 UCLASS()

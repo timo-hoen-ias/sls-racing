@@ -59,6 +59,18 @@ namespace SlsSurface
 		TArray<FString> Examples;
 		/** Local x, y, z of the mismatching cells (for drawing). */
 		TArray<FVector> Points;
+		/** Every mismatching cell for the report (road-parity.json "cells"). */
+		struct FCellReport
+		{
+			bool bChassis = false;
+			FIntPoint Tile;
+			double X = 0, Z = 0, Yd = 0;
+			TOptional<double> Unreal, Web;
+			FName Hit;
+			/** Deviation in m, max when only one side hit something. */
+			double Dev = 0;
+		};
+		TArray<FCellReport> Report;
 	};
 
 	/**

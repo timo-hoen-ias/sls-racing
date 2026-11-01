@@ -297,6 +297,13 @@ namespace SlsSurface
 				if (bOneNone) Out.Missing++;
 				else Out.Worst = FMath::Max(Out.Worst, D);
 				Out.Points.Add(FVector(CX, Yd, CZ));
+				FParity::FCellReport& Rep = Out.Report.AddDefaulted_GetRef();
+				Rep.bChassis = K == 1;
+				Rep.Tile = FIntPoint(Tile->IX, Tile->IY);
+				Rep.X = CX; Rep.Z = CZ; Rep.Yd = Yd;
+				Rep.Unreal = Got[K]; Rep.Web = Want[K];
+				Rep.Hit = K ? S.Chassis : S.Wheel;
+				Rep.Dev = D;
 				if (Out.Examples.Num() < 20)
 					Out.Examples.Add(FString::Printf(TEXT("%s bei x %.2f z %.2f (Kachel %d_%d): Unreal %s (%s), Web %s"), K ? TEXT("Chassis") : TEXT("Rad"), CX, CZ, Tile->IX, Tile->IY,
 						Got[K].IsSet() ? *FString::Printf(TEXT("%.3f"), Got[K].GetValue()) : TEXT("nichts"), *(K ? S.Chassis : S.Wheel).ToString(),

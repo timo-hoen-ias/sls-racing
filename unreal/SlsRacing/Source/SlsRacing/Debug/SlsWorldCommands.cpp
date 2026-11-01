@@ -85,6 +85,8 @@ public:
 	double Tol = 0.005;
 	int32 Max = 0;
 	bool bExit = false, bDraw = true;
+	/** Report file in Saved (out=…, for shards running side by side). */
+	FString OutName = TEXT("road-parity.json");
 	double Started = 0;
 	SlsSurface::FParity Result;
 	/** road.check: the absolute check (no web reference) with these thresholds; issues per kind, all kept. */
@@ -203,8 +205,19 @@ public:
 		// Report for CI and for comparing runs.
 		FString Json = FString::Printf(TEXT("{\"tiles\":%d,\"cells\":%d,\"bad\":%d,\"missing\":%d,\"worstMm\":%.1f,\"tolMm\":%.1f,\"examples\":["), Result.Tiles, Result.Cells, Result.Bad, Result.Missing, Result.Worst * 1000.0, Tol * 1000.0);
 		for (int32 I = 0; I < Result.Examples.Num(); I++) Json += (I ? TEXT(",\"") : TEXT("\"")) + Result.Examples[I].ReplaceCharWithEscapedChar() + TEXT("\"");
+		// Every mismatching cell, worst first: [kind, tile, x, z, yd, unreal, web, collider hit by Unreal, deviation mm]
+		// (null = that side's ray hit nothing, deviation -1 then).
+		Json += TEXT("],\"cells\":[");
+		Result.Report.Sort([](const SlsSurface::FParity::FCellReport& A, const SlsSurface::FParity::FCellReport& B) { return A.Dev > B.Dev; });
+		auto Opt = [](const TOptional<double>& V) { return V.IsSet() ? FString::Printf(TEXT("%.3f"), V.GetValue()) : FString(TEXT("null")); };
+		for (int32 I = 0; I < Result.Report.Num(); I++)
+		{
+			const SlsSurface::FParity::FCellReport& R = Result.Report[I];
+			Json += FString::Printf(TEXT("%s[\"%s\",\"%d_%d\",%.2f,%.2f,%.3f,%s,%s,\"%s\",%.1f]"), I ? TEXT(",") : TEXT(""), R.bChassis ? TEXT("chassis") : TEXT("wheel"),
+				R.Tile.X, R.Tile.Y, R.X, R.Z, R.Yd, *Opt(R.Unreal), *Opt(R.Web), *R.Hit.ToString(), R.Unreal.IsSet() && R.Web.IsSet() ? R.Dev * 1000.0 : -1.0);
+		}
 		Json += TEXT("]}");
-		FFileHelper::SaveStringToFile(Json, *FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("road-parity.json")));
+		FFileHelper::SaveStringToFile(Json, *FPaths::Combine(FPaths::ProjectSavedDir(), OutName));
 		if (USlsWorldSubsystem* S = USlsWorldSubsystem::Get(World.Get())) S->bPaused = false;
 		if (bExit) FPlatformMisc::RequestExitWithStatus(false, bFail ? 1 : 0);
 		FTSTicker::GetCoreTicker().RemoveTicker(Handle);
@@ -215,7 +228,7 @@ TUniquePtr<FSlsParityJob> FSlsParityJob::Active;
 
 static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 	TEXT("road.parity"),
-	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [max=<erlaubte Abweichungen>] [exit] [nodraw]"),
+	TEXT("Vergleicht die Befahrbarkeit in Unreal mit dem Web-Spiel, Zelle für Zelle (Rad- und Chassis-Strahl). road.parity [radius m | all | tiles=<n>] [tol=<mm>] [max=<erlaubte Abweichungen>] [shard=<i>/<n>] [out=<datei in Saved>] [exit] [nodraw]"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* W) {
 		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 		if (!S || !S->IsReady()) { Say(TEXT("road.parity: keine Welt geladen"), FColor::Red); return; }
@@ -224,7 +237,8 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 		J->World = W;
 		double Radius = 300;
 		bool bAll = false;
-		int32 Limit = MAX_int32;
+		int32 Limit = MAX_int32, Shard = 0, Shards = 1;
+		FString ShardS, ShardN;
 		for (const FString& A : Args)
 		{
 			if (A == TEXT("all")) bAll = true;
@@ -233,15 +247,19 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadParity(
 			else if (A.StartsWith(TEXT("tol="))) J->Tol = FCString::Atod(*A.Mid(4)) / 1000.0;
 			else if (A.StartsWith(TEXT("max="))) J->Max = FCString::Atoi(*A.Mid(4));
 			else if (A.StartsWith(TEXT("tiles="))) { bAll = true; Limit = FCString::Atoi(*A.Mid(6)); }
+			else if (A.StartsWith(TEXT("shard=")) && A.Mid(6).Split(TEXT("/"), &ShardS, &ShardN)) { Shard = FCString::Atoi(*ShardS); Shards = FMath::Max(1, FCString::Atoi(*ShardN)); }
+			else if (A.StartsWith(TEXT("out="))) J->OutName = A.Mid(4);
 			else if (A.IsNumeric()) Radius = FCString::Atod(*A);
 		}
 		// Same order as the exporter (north to south, west to east).
 		TArray<FIntPoint> Tiles = S->Info().Tiles;
 		Tiles.Sort([](const FIntPoint& A, const FIntPoint& B) { return A.Y != B.Y ? A.Y > B.Y : A.X < B.X; });
 		const FVector L = PlayerLocal(W);
+		int32 Index = 0;
 		for (const FIntPoint& T : Tiles)
 		{
 			if (J->Queue.Num() >= Limit) break;
+			if (Index++ % Shards != Shard) continue; // shard=i/n: every n-th tile, so n editors can share the world
 			const FVector2D C = S->TileOriginLocal(T) + FVector2D(S->Info().TileSize / 2);
 			if (bAll || FVector2D::Distance(C, FVector2D(L.X, L.Z)) < Radius) J->Queue.Add(T);
 		}

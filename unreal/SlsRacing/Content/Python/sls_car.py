@@ -52,23 +52,31 @@ def master():
         clear_material(m)
     else:
         m = tools.create_asset('M_SlsCar', DEST, unreal.Material, unreal.MaterialFactoryNew())
-    # Default lit: the clear-coat inputs (CustomData0/1) are hidden from Python, so the web's clear coat is left out.
-    m.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_DEFAULT_LIT)
+    # Clear coat like the web's MeshPhysicalMaterial. Its inputs (CustomData0/1) are hidden from Python, so the
+    # parameters go through a Make Material Attributes node into the material's attributes input.
+    m.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_CLEAR_COAT)
+    m.set_editor_property('use_material_attributes', True)
     m.set_editor_property('two_sided', True)  # the GLB is double-sided (thin parts like mirrors and the wing)
+    attrs = MEL.create_material_expression(m, unreal.MaterialExpressionMakeMaterialAttributes, -200, 0)
+    pins = [str(n) for n in MEL.get_material_expression_input_names(attrs)]
     y = [0]
 
-    def param(cls, name, value, prop):
-        n = MEL.create_material_expression(m, cls, -400, y[0])
+    def param(cls, name, value, pin):
+        n = MEL.create_material_expression(m, cls, -600, y[0])
         y[0] += 120
         n.set_editor_property('parameter_name', name)
         n.set_editor_property('default_value', value)
-        MEL.connect_material_property(n, '', prop)
+        target = next((p for p in pins if p.replace(' ', '').lower() == pin.lower()), None)
+        if not target or not MEL.connect_material_expressions(n, '', attrs, target):
+            unreal.log_warning('SLS setup: M_SlsCar: Eingang %s fehlt (%s)' % (pin, pins))
 
-    P = unreal.MaterialProperty
-    param(unreal.MaterialExpressionVectorParameter, 'Color', unreal.LinearColor(0.5, 0.5, 0.5, 1), P.MP_BASE_COLOR)
-    param(unreal.MaterialExpressionScalarParameter, 'Metal', 0.0, P.MP_METALLIC)
-    param(unreal.MaterialExpressionScalarParameter, 'Rough', 0.5, P.MP_ROUGHNESS)
-    param(unreal.MaterialExpressionVectorParameter, 'Emissive', unreal.LinearColor(0, 0, 0, 1), P.MP_EMISSIVE_COLOR)
+    param(unreal.MaterialExpressionVectorParameter, 'Color', unreal.LinearColor(0.5, 0.5, 0.5, 1), 'BaseColor')
+    param(unreal.MaterialExpressionScalarParameter, 'Metal', 0.0, 'Metallic')
+    param(unreal.MaterialExpressionScalarParameter, 'Rough', 0.5, 'Roughness')
+    param(unreal.MaterialExpressionVectorParameter, 'Emissive', unreal.LinearColor(0, 0, 0, 1), 'EmissiveColor')
+    param(unreal.MaterialExpressionScalarParameter, 'ClearCoat', 0.0, 'ClearCoat')
+    param(unreal.MaterialExpressionScalarParameter, 'ClearCoatRough', 0.04, 'ClearCoatRoughness')
+    MEL.connect_material_property(attrs, '', unreal.MaterialProperty.MP_MATERIAL_ATTRIBUTES)
     MEL.recompile_material(m)
     EAL.save_loaded_asset(m)
     return m
@@ -86,6 +94,7 @@ def instance(parent, spec):
     MEL.set_material_instance_vector_parameter_value(mi, 'Color', unreal.LinearColor(color[0], color[1], color[2], 1))
     MEL.set_material_instance_scalar_parameter_value(mi, 'Metal', web.get('metal', spec['metal']))
     MEL.set_material_instance_scalar_parameter_value(mi, 'Rough', web.get('rough', spec['rough']))
+    MEL.set_material_instance_scalar_parameter_value(mi, 'ClearCoat', web.get('coat', 0.0))
     MEL.set_material_instance_vector_parameter_value(mi, 'Emissive', unreal.LinearColor(emissive[0], emissive[1], emissive[2], 1))
     MEL.update_material_instance(mi)
     EAL.save_loaded_asset(mi)
@@ -117,6 +126,8 @@ def mesh(name, lods, mats):
     dest = DEST + '/' + name
     if EAL.does_asset_exist(dest):
         m = EAL.load_asset(dest)
+        # start the slot list afresh, otherwise every re-run appends the imported slots again
+        m.set_editor_property('static_materials', [])
         sms.set_lod_from_static_mesh(m, 0, parts[0], 0, True)
     else:
         EAL.rename_asset(parts[0].get_path_name(), dest)

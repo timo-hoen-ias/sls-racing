@@ -21,6 +21,9 @@ export function shardOf(ix: number, count: number): number {
 
 /** --shard=i/n from the command line (i from 0), or undefined for a whole build. */
 export function parseShard(argv: string[]): Shard | undefined {
+  const box = parseBox(argv);
+  // --box: only the tiles in that box, over the tiles of an earlier whole build (world-wide files stay as they are).
+  if (box) return { index: -1, count: 0, owns: box };
   const a = argv.find((v) => v.startsWith('--shard='));
   if (!a) return undefined;
   const m = /^--shard=(\d+)\/(\d+)$/.exec(a);
@@ -28,4 +31,14 @@ export function parseShard(argv: string[]): Shard | undefined {
   const index = Number(m[1]), count = Number(m[2]);
   if (count < 1 || index >= count) throw new Error(`${a}: index must be below count`);
   return { index, count, owns: (ix) => shardOf(ix, count) === index };
+}
+
+/** --box=ix0,iy0,ix1,iy1 (tile indices, inclusive): a tile filter for quick local rebuilds and checks of one area. */
+export function parseBox(argv: string[]): ((ix: number, iy: number) => boolean) | undefined {
+  const a = argv.find((v) => v.startsWith('--box='));
+  if (!a) return undefined;
+  const v = a.slice(6).split(',').map(Number);
+  if (v.length !== 4 || v.some((n) => !Number.isInteger(n))) throw new Error(`${a}: expected --box=ix0,iy0,ix1,iy1`);
+  const [x0, y0, x1, y1] = [Math.min(v[0], v[2]), Math.min(v[1], v[3]), Math.max(v[0], v[2]), Math.max(v[1], v[3])];
+  return (ix, iy) => ix >= x0 && ix <= x1 && iy >= y0 && iy <= y1;
 }

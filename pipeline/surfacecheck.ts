@@ -16,6 +16,7 @@ import {
 import { addTileColliders } from '../src/world/tileColliders.ts';
 import { terrainHeights } from '../src/world/tileBuild.ts';
 import { readOsm, type Way } from './lib/osm.ts';
+import { parseBox } from './lib/shard.ts';
 import { loadWorld, paths } from './lib/region.ts';
 import { densify, isDrivable } from './lib/roads.ts';
 import {
@@ -34,6 +35,8 @@ const MAX_EDGE_CRITICAL = +arg('max-edge-critical', 'Infinity');
 const MAIN = /^(motorway|trunk|primary|secondary|tertiary)(_link)?$/;
 const CELL = +arg('cell', '0.5');
 /** Debugging: only the tile around local x,z, with the cells around it printed. */
+/** Only the tiles in --box=ix0,iy0,ix1,iy1 (quick checks after a --box build). */
+const BOX = parseBox(process.argv);
 const AT = arg('at', '') ? arg('at', '').split(',').map(Number) : undefined;
 
 const index: WorldIndex = JSON.parse(readFileSync(`${paths.out}index.json`, 'utf8'));
@@ -62,7 +65,8 @@ async function main() {
   let nCells = 0, nRays = 0;
 
   const keys = index.tiles.map(([x, y]) => [x, y]).sort((a, b) => b[1] - a[1] || a[0] - b[0])
-    .filter(([x, y]) => !AT || tileKey(x, y) === tileKey(...tileOfLocal(W, AT[0], AT[1])));
+    .filter(([x, y]) => !AT || tileKey(x, y) === tileKey(...tileOfLocal(W, AT[0], AT[1])))
+    .filter(([x, y]) => !BOX || BOX(x, y));
   for (const [ix, iy] of keys) {
     const self = tile(tileKey(ix, iy));
     if (!self) continue;

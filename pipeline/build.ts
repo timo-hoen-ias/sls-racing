@@ -3,6 +3,7 @@
 //   node pipeline/build.ts saarlouis  only the named regions
 //   node pipeline/build.ts fixture    synthetic test area (no download needed)
 //   node pipeline/build.ts --shard=1/3  only every third stripe of tiles, for parallel builds (lib/shard.ts)
+//   node pipeline/build.ts --box=ix0,iy0,ix1,iy1  only these tiles, over an earlier whole build (quick local fixes)
 // Output: public/tiles/index.json and public/tiles/t/<ix>_<iy>.bin (gzipped binary container, see encodeTile in format.ts)
 import { districtList } from './lib/districts.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -88,7 +89,7 @@ function main() {
   const owns = (k: string) => !shard || shard.owns(...(k.split('_').map(Number) as [number, number]));
   // Shard 0 writes the world-wide files; a whole build writes everything.
   const lead = !shard || shard.index === 0;
-  if (shard) console.log(`Shard ${shard.index + 1} of ${shard.count}`);
+  if (shard) console.log(shard.count ? `Shard ${shard.index + 1} of ${shard.count}` : 'Only the tiles in --box');
 
   // Merge raw data of all regions; shared border elements appear once.
   const seen = new Set<string>();

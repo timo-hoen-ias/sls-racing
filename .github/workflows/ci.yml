@@ -16,4 +16,6 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run world:fixture
+      # Unreal port: export the fixture world and prove its collision answers every road cell like the web game's.
+      - run: node unreal/tools/export-tiles.ts --out=/tmp/ue-fixture && node unreal/tools/verify-export.ts --data=/tmp/ue-fixture --max=0
       - run: npm run build

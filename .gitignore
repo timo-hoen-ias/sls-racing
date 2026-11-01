@@ -7,3 +7,13 @@ public/tiles/
 .wrangler/
 *.raw.glb
 __pycache__/
+# Unreal port: exported world and engine build output
+unreal/SlsRacing/WorldData/
+unreal/SlsRacing/Binaries/
+unreal/SlsRacing/Intermediate/
+unreal/SlsRacing/Saved/
+unreal/SlsRacing/DerivedDataCache/
+unreal/SlsRacing/.vs/
+unreal/SlsRacing/*.code-workspace
+unreal/SlsRacing/Makefile
+unreal/SlsRacing/CMakeLists.txt

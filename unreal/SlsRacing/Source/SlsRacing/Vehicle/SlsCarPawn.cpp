@@ -193,7 +193,8 @@ void ASlsCarPawn::SetupInput()
 {
 	if (Mapping) return;
 	auto Make = [this](const TCHAR* Name, EInputActionValueType Type) {
-		UInputAction* A = NewObject<UInputAction>(this, Name);
+		// IA_ prefix: the pawn's subobjects share one namespace ("Camera" is also the camera component)
+		UInputAction* A = NewObject<UInputAction>(this, *FString::Printf(TEXT("IA_%s"), Name));
 		A->ValueType = Type;
 		return A;
 	};
@@ -336,7 +337,8 @@ void ASlsCarPawn::Tick(float Dt)
 void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 {
 	using namespace SlsCar;
-	if (Dt <= 0 || !Box->IsSimulatingPhysics()) return;
+	// wheel states exist only once the Chaos vehicle simulation runs (a frame or two after physics is switched on)
+	if (Dt <= 0 || !Box->IsSimulatingPhysics() || Vehicle->GetNumWheels() < 4) return;
 	const FVector Up = Box->GetUpVector(), Fwd = Box->GetForwardVector(), Right = Box->GetRightVector();
 	const FVector V = Box->GetPhysicsLinearVelocity() / 100.0; // m/s
 	const FVector W = Box->GetPhysicsAngularVelocityInRadians();

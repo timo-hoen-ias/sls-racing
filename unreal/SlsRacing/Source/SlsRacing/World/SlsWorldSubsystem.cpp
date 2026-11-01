@@ -203,7 +203,9 @@ void USlsWorldSubsystem::RefreshMaterials()
 ASlsTileActor* USlsWorldSubsystem::Spawn(const FSlsTileFile& File, bool bCollision, bool bAsyncCooking)
 {
 	FActorSpawnParameters P;
-	P.Name = MakeUniqueObjectName(GetWorld(), ASlsTileActor::StaticClass(), *FString::Printf(TEXT("Tile_%d_%d"), File.IX, File.IY));
+	// actors live in the level, not the world: let SpawnActor pick a free name (a reloaded tile may still exist as garbage)
+	P.Name = *FString::Printf(TEXT("Tile_%d_%d"), File.IX, File.IY);
+	P.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Requested;
 	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	const FVector Loc(File.OriginUE.X, File.OriginUE.Y, 0.0);
 	ASlsTileActor* A = GetWorld()->SpawnActor<ASlsTileActor>(ASlsTileActor::StaticClass(), Loc, FRotator::ZeroRotator, P);

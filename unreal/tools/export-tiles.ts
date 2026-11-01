@@ -17,6 +17,7 @@ import { CAR_GROUPS } from '../../src/vehicle/carPhysics.ts';
 import { mergeLevels, SURFACE_LIMITS } from '../../src/world/surfaceScan.ts';
 import { placeVegetation, vegLook } from '../../src/world/vegPlacement.ts';
 import { species, SPECIES_IDS } from './vegSpecies.ts';
+import { loadPropModels, PART_MATERIALS, PART_STRIDE, PropLibrary, meshOf, tileProps } from './tileProps.ts';
 import { bytesOf, packSlsu, shardOf, REF_CELL, REF_N, REF_NONE, type ColliderGroup, type LayerInfo, type Section } from './slsu.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? def;
@@ -236,13 +237,20 @@ function vegetationSections(t: TileContent, ox: number, oz: number, out: Section
   return sp.length;
 }
 
-function exportTile(t: TileContent, w: WorldInfo, recorded: Recorded[], ref?: ReturnType<typeof probeRef>) {
+function exportTile(t: TileContent, w: WorldInfo, recorded: Recorded[], lib: PropLibrary, ref?: ReturnType<typeof probeRef>) {
   const [ox, oz] = tileOriginLocal(w, t.ix, t.iy);
   const sections: Section[] = [];
   const built = buildTile(t, w);
   const layers: LayerInfo[] = [meshSections('terrain', built.terrain, ox, oz, sections)];
   if (built.water) layers.push(meshSections('water', built.water, ox, oz, sections));
   for (const [name, m] of Object.entries(built.meshes)) layers.push(meshSections(name, m, ox, oz, sections));
+  // Street furniture and parked cars as instances of the model library (models.slsu), guard rails as a layer.
+  const tp = tileProps(t, lib, ox, oz);
+  if (tp.rails) layers.push(meshSections('rails', tp.rails, ox, oz, sections));
+  if (tp.part.length) {
+    sections.push({ name: 'p.part', type: 'u8', bytes: bytesOf(tp.part) });
+    sections.push({ name: 'p.inst', type: 'f32', bytes: bytesOf(tp.inst) });
+  }
 
   // One group per kind, wheels-only flag and friction; trimeshes merged per group, hulls listed.
   const groups: ColliderGroup[] = [];
@@ -287,11 +295,28 @@ function exportTile(t: TileContent, w: WorldInfo, recorded: Recorded[], ref?: Re
   }
   const veg = vegetationSections(t, ox, oz, sections);
   const file = packSlsu({
-    ix: t.ix, iy: t.iy, v: 1, veg, originLocal: [ox, oz], originUE: [ox * 100, oz * 100], layers, colliders: groups,
+    ix: t.ix, iy: t.iy, v: 1, veg, props: tp.part.length, originLocal: [ox, oz], originUE: [ox * 100, oz * 100], layers, colliders: groups,
     ...(ref ? { ref: { cell: REF_CELL, n: REF_N, count: ref.keys.length } } : {}),
   }, sections);
   writeFileSync(`${OUT}t/${tileKey(t.ix, t.iy)}.slsu`, gzipSync(file, { level: 6 }));
   return { bytes: file.byteLength, layers: layers.length, groups: groups.length, ref: ref?.keys.length ?? 0 };
+}
+
+/**
+ * The model library: one layer per part and LOD ("<part>.<lod>", model-local, Unreal frame and cm like the tiles)
+ * and the part list in the header (name, material tag, LOD count). Same for every shard.
+ */
+function writeModels(lib: PropLibrary) {
+  const sections: Section[] = [], layers: LayerInfo[] = [];
+  const parts = lib.parts.map((p, k) => {
+    const lods = p.lods.filter((g, i) => i === 0 || g !== p.lods[0]);
+    lods.forEach((g, l) => layers.push(meshSections(`${k}.${l}`, meshOf(g), 0, 0, sections)));
+    return { name: p.name, mat: p.mat, lods: lods.length };
+  });
+  const file = packSlsu({ ix: 0, iy: 0, v: 1, originLocal: [0, 0], originUE: [0, 0], layers, colliders: [], parts, partStride: PART_STRIDE, materials: [...PART_MATERIALS] }, sections);
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(`${OUT}models.slsu`, gzipSync(file, { level: 6 }));
+  console.log(`Modellbibliothek: ${parts.length} Teile, ${(file.byteLength / 1e6).toFixed(1)} MB`);
 }
 
 // --- main -------------------------------------------------------------------------------------------------
@@ -301,6 +326,8 @@ async function main() {
   const t0 = Date.now();
   mkdirSync(`${OUT}t`, { recursive: true });
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  const lib = new PropLibrary(await loadPropModels());
+  writeModels(lib);
   const bodies = new Map<string, RAPIER.RigidBody>();
   const records = new Map<string, Recorded[]>();
 
@@ -354,7 +381,7 @@ async function main() {
       for (const t of near) { const pos = t.f32('roads.pos'); if (pos) rasterizeRef(pos, t.u32('roads.idx'), ox, oz, levels); }
       ref = probeRef(world, levels, ox, oz);
     }
-    const r = exportTile(self, W, records.get(k)!, ref);
+    const r = exportTile(self, W, records.get(k)!, lib, ref);
     bytes += r.bytes; refCells += r.ref; n++;
     if (n % 100 === 0) console.log(`  ${n}/${work.length} Kacheln, ${(bytes / 1e6).toFixed(0)} MB, ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   }

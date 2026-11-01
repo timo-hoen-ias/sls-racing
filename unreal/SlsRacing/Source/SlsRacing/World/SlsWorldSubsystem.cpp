@@ -1,6 +1,7 @@
 #include "SlsWorldSubsystem.h"
 #include "SlsTileActor.h"
 #include "SlsTileFile.h"
+#include "SlsPropLibrary.h"
 #include "SlsRacing.h"
 #include "Async/Async.h"
 #include "Engine/World.h"
@@ -28,6 +29,9 @@ static FAutoConsoleVariableRef CVarStreamBudget(TEXT("stream.budget"), GStreamBu
 static FAutoConsoleVariableRef CVarStreamInflight(TEXT("stream.inflight"), GStreamInflight, TEXT("Gleichzeitig gelesene Kacheln"));
 /** Trees and bushes (veg.*, Debug/SlsVegCommands.cpp). veg.cull: HISM cull distance in m (web: trees within stream.radius). */
 int32 GVegOn = 1;
+/** Street furniture and parked cars (props.*, Debug/SlsPropCommands.cpp); the web game draws them within 400 m (quality "hoch"). */
+int32 GPropsOn = 1;
+float GPropsCull = 400.f;
 float GVegCull = 720.f;
 static TAutoConsoleVariable<FString> CVarDataDir(TEXT("sls.data"), TEXT(""), TEXT("Ordner der exportierten Welt (leer = <Projekt>/WorldData)"));
 
@@ -141,6 +145,51 @@ void USlsWorldSubsystem::RefreshVegetation()
 	}
 }
 
+TArrayView<UStaticMesh* const> USlsWorldSubsystem::PropMeshes()
+{
+	if (!bPropsLoaded)
+	{
+		bPropsLoaded = true;
+		PropMeshObjs.Reset();
+		PropMeshRaw.Reset();
+		PropPartNames.Reset();
+		TArray<FSlsPropPart> Parts;
+		FString Err;
+		const FString Path = FPaths::Combine(DataDir(), TEXT("models.slsu"));
+		auto Tag = [this](FName T) -> UMaterialInterface* {
+			// vcol: vertex colours (the props material), paint: vertex colour x per-instance tint, sign: atlas, light: lit lamps/reflectors
+			const TCHAR* Asset = T == TEXT("paint") ? TEXT("M_SlsPaint") : T == TEXT("sign") ? TEXT("M_SlsSign") : TEXT("M_SlsProp");
+			UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, *FString::Printf(TEXT("/Game/Materials/%s.%s"), Asset, Asset), nullptr, LOAD_NoWarn | LOAD_Quiet);
+			return M ? M : MaterialFor(TEXT("props"), true);
+		};
+		if (!SlsBuildPropLibrary(this, Path, Tag, Parts, Err)) UE_LOG(LogSls, Warning, TEXT("Props: %s"), *Err);
+		for (const FSlsPropPart& P : Parts)
+		{
+			PropMeshObjs.Add(P.Mesh);
+			PropMeshRaw.Add(P.Mesh);
+			PropPartNames.Add(P.Name);
+		}
+	}
+	return TArrayView<UStaticMesh* const>(PropMeshRaw);
+}
+
+void USlsWorldSubsystem::BuildPropsFor(ASlsTileActor* A, const FSlsTileFile& File)
+{
+	if (!A) return;
+	if (!GPropsOn) { A->RemoveProps(); return; }
+	A->BuildProps(File, PropMeshes(), GPropsCull * 100.f);
+}
+
+void USlsWorldSubsystem::RefreshProps()
+{
+	for (const auto& [T, A] : Tiles)
+	{
+		if (!A) continue;
+		if (const TSharedPtr<FSlsTileFile>* File = Files.Find(T)) BuildPropsFor(A, **File);
+		else A->RemoveProps();
+	}
+}
+
 FIntPoint USlsWorldSubsystem::TileOfLocal(double X, double Z) const
 {
 	const FVector2D U = LocalToUtm(X, Z);
@@ -212,6 +261,7 @@ ASlsTileActor* USlsWorldSubsystem::Spawn(const FSlsTileFile& File, bool bCollisi
 	A->BuildVisual(File, [this](const FString& L, bool bC) { return MaterialFor(L, bC); });
 	if (bCollision) A->BuildCollision(File, bAsyncCooking);
 	BuildVegetationFor(A, File);
+	BuildPropsFor(A, File);
 	Tiles.Add(FIntPoint(File.IX, File.IY), A);
 	return A;
 }

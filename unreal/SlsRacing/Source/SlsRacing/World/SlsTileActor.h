@@ -37,6 +37,13 @@ public:
 	 */
 	void BuildVegetation(const FSlsTileFile& File, TArrayView<UStaticMesh* const> Meshes, float CullCm);
 	void RemoveVegetation();
+	/**
+	 * Street furniture and parked cars from p.part / p.inst (unreal/tools/tileProps.ts): one HISM per model part
+	 * of the library (USlsWorldSubsystem::PropMeshes), custom data 0..2 = tint (car paint). Null parts are skipped.
+	 */
+	void BuildProps(const FSlsTileFile& File, TArrayView<UStaticMesh* const> Meshes, float CullCm);
+	void RemoveProps();
+	int32 PropCount() const;
 	int32 VegetationCount() const;
 	bool HasCollision() const { return CollisionComponents.Num() > 0; }
 
@@ -70,4 +77,7 @@ public:
 
 	UPROPERTY()
 	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> VegetationComponents;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UHierarchicalInstancedStaticMeshComponent>> PropComponents;
 };

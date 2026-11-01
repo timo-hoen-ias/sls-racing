@@ -7,7 +7,7 @@ import type { PropLods } from './propGlb.ts';
 // z = 0, parts project towards +z; awning, awning box and fascia board are 1 m along x (scale by the shop width),
 // the sign faces are not scaled.
 
-export const SHOPS_URL = `${import.meta.env.BASE_URL}models/shops.glb`;
+export const SHOPS_URL = `${(import.meta.env?.BASE_URL ?? "/")}models/shops.glb`;
 
 export const SHOP_TYPES = ['baeckerei', 'metzgerei', 'cafe', 'restaurant', 'apotheke', 'friseur', 'mode', 'buch', 'blumen', 'eis', 'kiosk', 'bank', 'laden'] as const;
 export type ShopType = (typeof SHOP_TYPES)[number];

@@ -43,6 +43,9 @@ public:
 	float RefCell = 0.5f;
 	int32 RefN = 512;
 
+	/** The whole header (extra fields such as models.slsu's part list). */
+	TSharedPtr<FJsonObject> Header;
+
 	/** Reads and unpacks a file; false with a message on any problem. Safe on worker threads. */
 	bool Load(const FString& Path, FString& OutError);
 

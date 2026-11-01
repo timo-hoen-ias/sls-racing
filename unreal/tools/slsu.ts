@@ -12,6 +12,7 @@
 //   .splatA u8×4, .splatB u8×4, .rows u8×2 (ground shader weights, see tileBuild.ts coverAttributes)
 //   c.<n>.pos f32 xyz + c.<n>.idx u32: a collision trimesh (header `colliders[n]`)
 //   h.pos f32 xyz + h.cnt u32: convex hulls (point clouds) one after another, h.meta f32 [collider group n] per hull
+//   p.part u16 + p.inst f32 × 10: prop instances (part of models.slsu, X Y Z cm, yaw deg, scale X Y Z, tint rgb)
 //   r.key u32 (row * REF_N + col of a REF_CELL grid aligned to the tile corner) · r.yd f32 drawn road height ·
 //   r.yw i16 / r.yc i16: where the wheel / chassis ray stopped in the web game, millimetres relative to yd
 //   (REF_NONE = nothing hit). The reference the Unreal surface test compares itself against cell by cell.
@@ -51,6 +52,12 @@ export interface SlsuHeader {
   ref?: { cell: number; n: number; count: number };
   /** Tree and bush instances in v.sp / v.inst (export-tiles.ts vegetationSections). */
   veg?: number;
+  /** Prop instances in p.part (u16 part of models.slsu) / p.inst (f32 × partStride), tileProps.ts. */
+  props?: number;
+  /** models.slsu only: the part list. */
+  parts?: { name: string; mat: string; lods: number }[];
+  partStride?: number;
+  materials?: string[];
 }
 
 export interface Section { name: string; type: SectionType; bytes: Uint8Array }
@@ -58,7 +65,7 @@ export interface Section { name: string; type: SectionType; bytes: Uint8Array }
 export const bytesOf = (a: ArrayBufferView) => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
 
 export function packSlsu(h: SlsuHeader, sections: Section[]): Uint8Array {
-  const out = packSections(h.ix, h.iy, sections, { v: h.v, originLocal: h.originLocal, originUE: h.originUE, layers: h.layers, colliders: h.colliders, ...(h.ref ? { ref: h.ref } : {}), ...(h.veg ? { veg: h.veg } : {}) });
+  const out = packSections(h.ix, h.iy, sections, { v: h.v, originLocal: h.originLocal, originUE: h.originUE, layers: h.layers, colliders: h.colliders, ...(h.ref ? { ref: h.ref } : {}), ...(h.veg ? { veg: h.veg } : {}), ...(h.props ? { props: h.props } : {}), ...(h.parts ? { parts: h.parts, partStride: h.partStride, materials: h.materials } : {}) });
   out.set(new TextEncoder().encode(SLSU_MAGIC), 0);
   new DataView(out.buffer).setUint32(4, SLSU_VERSION, true);
   return out;

@@ -86,6 +86,12 @@ public:
 	/** Rebuilds the trees of every loaded tile (veg.reload, veg.on, veg.cull). */
 	void RefreshVegetation();
 
+	/** Street furniture and parked cars: meshes of models.slsu built on first use (null where a part failed). */
+	TArrayView<UStaticMesh* const> PropMeshes();
+	const TArray<FString>& PropNames() const { return PropPartNames; }
+	/** Rebuilds the props of every loaded tile (props.on, props.reload, props.cull). */
+	void RefreshProps();
+
 	/** Road network (graph.json). */
 	const FSlsRoadGraph& Roads() const { return Graph; }
 
@@ -117,4 +123,11 @@ private:
 	TArray<UStaticMesh*> VegMeshRaw;
 	bool bVegMeshesLoaded = false;
 	void BuildVegetationFor(ASlsTileActor* A, const FSlsTileFile& File);
+
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMesh>> PropMeshObjs;
+	TArray<UStaticMesh*> PropMeshRaw;
+	TArray<FString> PropPartNames;
+	bool bPropsLoaded = false;
+	void BuildPropsFor(ASlsTileActor* A, const FSlsTileFile& File);
 };

@@ -17,6 +17,14 @@ EAL = unreal.EditorAssetLibrary
 log = unreal.log
 
 
+def clear_material(m):
+    """Removes every expression. MEL.delete_all_material_expressions deletes while it iterates the same array, so it
+    skips every other node: each re-run left half the old graph behind (a stale Single Layer Water output without
+    inputs broke M_SlsWater)."""
+    for e in list(MEL.get_material_expressions(m)):
+        MEL.delete_material_expression(m, e)
+
+
 def srgb(hex_color):
     """'#c0141c' → linear LinearColor (three.js converts material colours from sRGB the same way)."""
     c = [int(hex_color[i:i + 2], 16) / 255.0 for i in (1, 3, 5)]
@@ -41,7 +49,7 @@ def master():
     path = DEST + '/M_SlsCar'
     if EAL.does_asset_exist(path):
         m = EAL.load_asset(path)
-        MEL.delete_all_material_expressions(m)
+        clear_material(m)
     else:
         m = tools.create_asset('M_SlsCar', DEST, unreal.Material, unreal.MaterialFactoryNew())
     # Default lit: the clear-coat inputs (CustomData0/1) are hidden from Python, so the web's clear coat is left out.

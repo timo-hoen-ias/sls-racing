@@ -88,11 +88,19 @@ def parameter_collection():
     return mpc
 
 
+def clear_material(m):
+    """Removes every expression. MEL.delete_all_material_expressions deletes while it iterates the same array, so it
+    skips every other node: each re-run left half the old graph behind (a stale Single Layer Water output without
+    inputs broke M_SlsWater)."""
+    for e in list(MEL.get_material_expressions(m)):
+        MEL.delete_material_expression(m, e)
+
+
 def material_in_place(name):
     path = '/Game/Materials/' + name
     if EAL.does_asset_exist(path):
         m = EAL.load_asset(path)
-        MEL.delete_all_material_expressions(m)
+        clear_material(m)
         return m
     return tools.create_asset(name, '/Game/Materials', unreal.Material, unreal.MaterialFactoryNew())
 

@@ -60,7 +60,10 @@ def import_textures():
             tex.set_editor_property('compression_settings', unreal.TextureCompressionSettings.TC_BC7)
             tex.set_editor_property('srgb', False)
         tex.set_editor_property('max_texture_size', 4096)
-        tex.set_editor_property('lod_group', unreal.TextureGroup.TEXTUREGROUP_WORLD)
+        # PBR atlases: own LOD group with anisotropic + linear mip filtering (Config/DefaultDeviceProfiles.ini);
+        # World's point mip filter shows as bands on Vulkan (pavement slabs, asphalt grain)
+        pbr = any(name.startswith('T_Sls_%s_' % a) for a in ATLASES)
+        tex.set_editor_property('lod_group', unreal.TextureGroup.TEXTUREGROUP_PROJECT01 if pbr else unreal.TextureGroup.TEXTUREGROUP_WORLD)
         EAL.save_loaded_asset(tex)
         out[name] = tex
     return out
@@ -78,7 +81,10 @@ def parameter_collection():
     for name, value in (('Pbr0', (1, 1, 1, 1)), ('Pbr1', (0.85, 1, 0, -1)), ('Pbr2', (1, 1, 1, 1)), ('Pbr3', (0, 0, 0, 0)),
                         ('Wx', (0, 0, 0, 0)), ('Precip', (0, 0, 4000, 1)),
                         # Veg = (wind, leaf translucency, species shown, -), SlsVegCommands.cpp
-                        ('Veg', (1, 1, 0, 0))):
+                        ('Veg', (1, 1, 0, 0)),
+                        # road look (SlsRoadLookCommands.cpp): Look0 = (on, asphalt albedo, kind weight, detail),
+                        # Look1 = (pavement brightness, marking paint, lane wear, asphalt normal)
+                        ('Look0', (1, 0.08, 0.15, 1)), ('Look1', (0.7, 1, 0.4, 1.4))):
         p = unreal.CollectionVectorParameter()
         p.set_editor_property('parameter_name', name)
         p.set_editor_property('default_value', unreal.LinearColor(*value))
@@ -215,17 +221,28 @@ def wx(wet, snow, up=0.55):
 END = 'return SlsEnd(c, p, n, 1.0, Rough, NormalWS);'
 
 
+def look_inputs(mpc):
+    """L0, L1: the road look parameters for the road, marking, sidewalk and ground materials (SlsLook in SlsPbr.ush)."""
+    return [('L%d' % i, lambda g, i=i: g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Look%d' % i))
+            for i in range(2)]
+
+
+LOOK = 'SlsLook(c, L0, L1);\n'
+
+
 def world_materials(tex, mpc):
     surface_material('M_SlsGround', tex, mpc,
-                     'SlsGround(SLS_TEX_NODE, c, p, UV0, UV1, UV2, SlsSrgbToLinear(VC.rgb));\n' + wx(0.6, 1.0) + END, uvs=3, vcol=True)
+                     LOOK + 'SlsGround(SLS_TEX_NODE, c, p, UV0, UV1, UV2, SlsSrgbToLinear(VC.rgb));\n' + wx(0.6, 1.0) + END, uvs=3, vcol=True,
+                     extra=look_inputs(mpc))
     surface_material('M_SlsRoad', tex, mpc,
-                     'SlsRoad(SLS_TEX_NODE, c, p, UV0, UV1);\n'
+                     LOOK + 'SlsRoad(SLS_TEX_NODE, c, p, UV0, UV1);\n'
                      'SlsWeather(c, p, n, Wx, T, 1.0, 0.9, 0.55, true, saturate(UV0.x), PM.Sample(PMSampler, p.xz / SLS_PUDDLE_SIZE).r);\n' + END,
-                     uvs=2, bias=(2.0, 0.02), puddles=True)
+                     uvs=2, bias=(2.0, 0.02), puddles=True, extra=look_inputs(mpc))
     surface_material('M_SlsMarking', tex, mpc,
-                     'Keep = SlsMarking(SLS_TEX_NODE, c, p);\n' + wx(0.8, 0.9) + END, bias=(4.0, 0.04), masked=True)
+                     LOOK + 'Keep = SlsMarking(SLS_TEX_NODE, c, p);\n' + wx(0.8, 0.9) + END, bias=(4.0, 0.04), masked=True,
+                     extra=look_inputs(mpc))
     surface_material('M_SlsSidewalk', tex, mpc,
-                     'SlsSidewalk(SLS_TEX_NODE, c, p, n);\n' + wx(0.9, 1.0) + END, bias=(1.0, 0.01))
+                     LOOK + 'SlsSidewalk(SLS_TEX_NODE, c, p, n);\n' + wx(0.9, 1.0) + END, bias=(1.0, 0.01), extra=look_inputs(mpc))
     surface_material('M_SlsDetail', tex, mpc,
                      'float l = SlsPaintedMetal(SLS_TEX_NODE, c, p, n);\n'
                      'if (c.Debug < 0.5) c.Albedo = SlsSrgbToLinear(VC.rgb) * l;\n' + wx(0.5, 0.8, 0.6) +

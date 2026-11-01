@@ -10,6 +10,8 @@
 // commands): Pbr0 = (on, normal, tiling, macro), Pbr1 = (groundtint, wear, debug, roadforce),
 // Pbr2 = (feldweg ruts, feldweg grass, ground aerial, ground rows), Pbr3 = (ground view, -, -, -);
 // Wx = (road wetness, snow cover, puddles, rain) from USlsEnvironment (weather.ts).
+// Road look (road.look.* commands, SlsRoadLookCommands.cpp; read by roads, markings, pavements and paved ground):
+// Look0 = (on, asphalt albedo, kind weight, detail), Look1 = (pavement brightness, marking paint, lane wear, asphalt normal).
 #pragma once
 
 #include "/SlsRacing/SlsAtlases.ush"
@@ -29,6 +31,8 @@ struct SlsCtx
 	// results (pbrAlbedo, pbrN, pbrRough, pbrHeight, pbrNormalK, pbrUv, pbrCell, triplanar world normal)
 	float3 Albedo; float3 N; float Rough; float Height; float NK; float2 Uv; float Cell; bool HasWorldN; float3 WorldN;
 	float Flat; // weather: puddles and snow flatten the detail normal
+	// road look (SlsLook); Look = 0 keeps the web game's road shader 1:1
+	float Look, Tone, KindK, Detail, PaveK, MarkK, LanesK, RoadNK;
 };
 
 float3 SlsToWeb(float3 ue) { return float3(ue.x, ue.z, ue.y) * 0.01; }
@@ -36,6 +40,7 @@ float3 SlsDirToWeb(float3 ue) { return float3(ue.x, ue.z, ue.y); }
 float3 SlsNormalToUE(float3 w) { return float3(w.x, w.z, w.y); }
 float3 SlsSrgbToLinear(float3 c) { return lerp(pow((c + 0.055) / 1.055, 2.4), c / 12.92, step(c, 0.04045)); }
 float SlsMod(float x, float y) { return x - y * floor(x / y); }
+float SlsLum(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 
 float SlsHash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
 float SlsNoise(float2 p)
@@ -76,6 +81,17 @@ SlsTexel SlsStreetFetch(SLS_TEX_PARAMS, in SlsCtx c, float cell, float2 uv, floa
 {
 	SlsTexel t = SlsFetchAtlas(SA, SN, SR, SS, float2(SLS_STREET_COLS, SLS_STREET_ROWS), cell, uv, gx, gy);
 	t.a *= SLS_STREET_GAIN[int(cell + 0.5)];
+	if (c.Look > 0.5 && cell < 2.5)
+	{
+		// road look, asphalt cells: divide out the photo's smudges (> ~30 cm) by its own low mip (~8 cm texels),
+		// keeping grain and cracks; these smudges repeat every 2.6 m and read as blotches
+		const float G = SLS_GUTTER;
+		float2 grid = float2(SLS_STREET_COLS, SLS_STREET_ROWS);
+		float2 auv = (float2(SlsMod(cell, grid.x), floor(cell / grid.x)) + G + frac(uv) * (1.0 - 2.0 * G)) / grid;
+		float low = SlsLum(SA.SampleLevel(SS, auv, 5.5).rgb) * SLS_STREET_GAIN[int(cell + 0.5)];
+		float ratio = clamp(SlsLum(SLS_STREET_MEAN[int(cell + 0.5)]) / max(low, 1e-3), 0.5, 2.0);
+		t.a *= lerp(1.0, ratio, 0.85);
+	}
 	return t;
 }
 SlsTexel SlsNatureFetch(SLS_TEX_PARAMS, in SlsCtx c, float cell, float2 uv, float2 gx, float2 gy)
@@ -153,7 +169,22 @@ SlsCtx SlsBegin(float4 P0, float4 P1, float4 P2, float4 P3)
 	c.Albedo = 1.0; c.N = float3(0.0, 0.0, 1.0); c.Rough = 1.0; c.Height = 0.5; c.NK = 1.0; c.Uv = 0.0; c.Cell = -1.0;
 	c.HasWorldN = false; c.WorldN = float3(0.0, 1.0, 0.0);
 	c.Flat = 0.0;
+	c.Look = 0.0; c.Tone = 0.08; c.KindK = 0.15; c.Detail = 1.0; c.PaveK = 0.7; c.MarkK = 1.0; c.LanesK = 0.4; c.RoadNK = 1.4;
 	return c;
+}
+
+/** The road look parameters (MPC Look0/Look1) for the road, marking, sidewalk and ground materials. */
+void SlsLook(inout SlsCtx c, float4 L0, float4 L1)
+{
+	c.Look = L0.x; c.Tone = L0.y; c.KindK = L0.z; c.Detail = L0.w;
+	c.PaveK = L1.x; c.MarkK = L1.y; c.LanesK = L1.z; c.RoadNK = L1.w;
+}
+
+/** Texels of a texture repeating every m metres per pixel, as the 8x anisotropic filter sees it (mip footprint). */
+float SlsFootprint(float2 gx, float2 gy, float m, float texels)
+{
+	float a = length(gx), b = length(gy);
+	return max(max(a, b) / 8.0, min(a, b)) / m * texels;
 }
 
 /**
@@ -213,11 +244,23 @@ void SlsRoad(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1)
 	if (kind < 2.5)
 	{
 		level = clamp(kind + (c.Wear - 1.0) * 1.5 + (macro - 0.5) * 1.6 * c.Macro, 0.0, 2.0);
+		// road look: centred on the even-grained worn asphalt (the fresh cell has smudges that repeat every 2.6 m);
+		// the map's wear class only nudges the level, a slow world field (~80 m, the same on every polygon of a
+		// junction and on both carriageways) mixes in fresh and cracked stretches
+		if (c.Look > 0.5)
+			level = clamp(1.0 + kind * c.KindK + (c.Wear - 1.0) * 1.5 + (SlsFbm(wp * 0.012 + 71.0) - 0.5) * 2.0 * c.Macro, 0.0, 2.0);
 		float ca = min(floor(level), 1.0);
 		float m = SLS_STREET_METRES[int(ca)];
 		SlsTexel A = SlsStreet(SLS_TEX_ARGS, c, ca, wp / m, gx / m, gy / m);
 		float mb = SLS_STREET_METRES[int(ca) + 1];
 		SlsTexel B = SlsStreet(SLS_TEX_ARGS, c, ca + 1.0, wp / mb, gx / mb, gy / mb);
+		if (c.Look > 0.5)
+		{
+			// tone matching: fresh, worn and cracked asphalt share one mean albedo, so the cells differ in grain
+			// and cracks, not in brightness (the blotches and the patchwork came from 0.05 vs 0.09 means)
+			A.a *= c.Tone / max(SlsLum(SlsStreetMean(ca)), 1e-3);
+			B.a *= c.Tone / max(SlsLum(SlsStreetMean(ca + 1.0)), 1e-3);
+		}
 		t = SlsMix(A, B, smoothstep(0.3, 0.7, level - ca + (B.h - A.h) * 0.5));
 		float patchN = SlsNoise(wp * 0.16 + 31.0) + SlsNoise(wp * 0.7) * 0.12;
 		float rep = smoothstep(0.78, 0.8, patchN) * smoothstep(0.8, 1.4, level) * c.Macro;
@@ -225,8 +268,32 @@ void SlsRoad(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1)
 		{
 			float m0 = SLS_STREET_METRES[0];
 			SlsTexel F = SlsStreet(SLS_TEX_ARGS, c, 0.0, wp / m0 + 0.37, gx / m0, gy / m0);
+			// road look: tone-matched and only a little darker (0.75 reads as a wet stain on the even asphalt)
+			if (c.Look > 0.5) F.a *= c.Tone / max(SlsLum(SlsStreetMean(0.0)), 1e-3) * (0.88 / 0.75);
 			F.a *= 0.75;
 			t = SlsMix(t, F, rep);
+		}
+		if (c.Look > 0.5)
+		{
+			// far away the 2.6 m atlas repeat shows as rows of bright grain: fade towards the tone-matched mean
+			float farA = smoothstep(3.0, 20.0, SlsFootprint(gx, gy, SLS_STREET_METRES[0], 1024.0));
+			float3 mean = SlsStreetMean(1.0) * (c.Tone / max(SlsLum(SlsStreetMean(1.0)), 1e-3));
+			t.a = lerp(t.a, mean, 0.65 * farA);
+		}
+		if (c.Look > 0.5 && c.Detail > 0.0)
+		{
+			// close-up detail: the even asphalt grain (worn cell) at ~1 m repeat as luminance and normal overlay;
+			// skipped once a pixel covers several of its texels (it would only average out to the mean)
+			float md = SLS_STREET_METRES[1] * 0.37;
+			float dk = c.Detail * (1.0 - smoothstep(1.5, 6.0, SlsFootprint(gx, gy, md, 1024.0)));
+			if (dk > 0.01)
+			{
+				SlsTexel D = SlsStreetFetch(SLS_TEX_ARGS, c, 1.0, wp / md + 0.53, gx / md, gy / md);
+				float dl = clamp(SlsLum(D.a) / max(SlsLum(SlsStreetMean(1.0)), 1e-3), 0.4, 1.8);
+				t.a *= lerp(1.0, dl, 0.4 * dk);
+				t.n = t.n + (D.n - 0.5) * 0.6 * dk;
+				t.r = lerp(t.r, t.r * lerp(0.85, 1.1, D.h), dk);
+			}
 		}
 	}
 	else if (abs(kind - 4.0) < 0.5)
@@ -270,6 +337,8 @@ void SlsRoad(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1)
 	{
 		float m = SLS_STREET_METRES[int(kind)];
 		t = SlsStreet(SLS_TEX_ARGS, c, kind, wp / m, gx / m, gy / m);
+		// light plaza paving glares like the pavements: same brightness knob
+		if (c.Look > 0.5 && kind > 6.5) t.a *= c.PaveK;
 	}
 	SlsUse(c, t);
 	if (fieldTilt != 0.0)
@@ -293,9 +362,23 @@ void SlsRoad(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1)
 	float onLane = step(shoulder, xr) * step(shoulder, xl);
 	float tracks = smoothstep(0.42, 0.12, abs(abs(lp) - 0.85)) * onLane * (0.6 + 0.4 * SlsNoise(wp * 0.3));
 	float oil = smoothstep(0.35, 0.0, abs(lp)) * onLane * smoothstep(0.45, 0.8, SlsNoise(wp * 0.9 + 3.0));
+	if (c.Look > 0.5)
+	{
+		// lane wear follows each polygon's lateral coordinate, which jumps at junction fillets and slots: softer
+		tracks *= c.LanesK;
+		oil *= c.LanesK;
+		if (kind < 2.5)
+		{
+			// specular anti-aliasing: the boosted normal fades back once the grain is below a pixel (bright sparkly
+			// streaks at grazing angles otherwise), and the asphalt gets rougher there instead
+			float far = smoothstep(1.0, 6.0, SlsFootprint(gx, gy, SLS_STREET_METRES[0], 1024.0));
+			c.NK *= lerp(c.RoadNK, 0.7, far);
+			c.Rough = lerp(c.Rough, max(c.Rough, 0.8), far);
+		}
+	}
 	c.Albedo *= 1.0 - (0.14 * tracks + 0.12 * oil) * paved * c.Macro;
 	c.Rough = lerp(c.Rough, max(c.Rough, 0.62), paved) * (1.0 - 0.07 * tracks * paved);
-	float grime = smoothstep(0.9, 0.1, edge) * (0.5 + 0.5 * SlsNoise(wp * 1.3));
+	float grime = smoothstep(0.9, 0.1, edge) * (0.5 + 0.5 * SlsNoise(wp * 1.3)) * (c.Look > 0.5 ? c.LanesK : 1.0);
 	c.Albedo = lerp(c.Albedo, c.Albedo * float3(0.95, 0.9, 0.82) + float3(0.012, 0.01, 0.006), grime * c.Macro);
 	if (gutter > 0.5 && edge < 0.34 && abs(kind - 4.0) > 0.5)
 	{
@@ -312,10 +395,22 @@ void SlsRoad(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1)
 		float lw = shoulder >= 2.0 ? 0.3 : 0.15;
 		float r0 = shoulder;
 		float l0 = lines > 1.5 ? innerL : r0;
+		float cover = 1.0, wearOff = level * 0.12;
+		if (c.Look > 0.5)
+		{
+			// at least ~1.5 pixels wide with the coverage scaled down (no broken, flickering lines far away), the
+			// flaking fades out once its noise gets smaller than a pixel, and the wear class no longer eats it
+			float lwe = max(lw, fw * 1.5);
+			cover = lw / lwe;
+			lw = lwe;
+			float fq = max(length(gx), length(gy)) * 2.4;
+			wearOff = -smoothstep(0.15, 0.6, fq);
+		}
 		float pr = smoothstep(r0 - lw - fw, r0 - lw + fw, xr) * (1.0 - smoothstep(r0 - fw, r0 + fw, xr));
 		float pl = smoothstep(l0 - lw - fw, l0 - lw + fw, xl) * (1.0 - smoothstep(l0 - fw, l0 + fw, xl));
-		float paint = max(pr, pl) * smoothstep(0.18, 0.4, SlsFbm(wp * 2.4) + 0.3 - level * 0.12);
-		c.Albedo = lerp(c.Albedo, float3(0.78, 0.78, 0.74) * (0.9 + 0.1 * c.Height), paint);
+		float paint = max(pr, pl) * smoothstep(0.18, 0.4, SlsFbm(wp * 2.4) + 0.3 - wearOff) * cover;
+		float3 paintCol = float3(0.78, 0.78, 0.74) * (c.Look > 0.5 ? c.MarkK : 1.0);
+		c.Albedo = lerp(c.Albedo, paintCol * (0.9 + 0.1 * c.Height), paint);
 		c.Rough = lerp(c.Rough, 0.5, paint);
 		c.NK *= 1.0 - 0.55 * paint;
 	}
@@ -334,12 +429,16 @@ float SlsMarking(SLS_TEX_PARAMS, inout SlsCtx c, float3 p)
 	float m = SLS_STREET_METRES[0];
 	SlsTexel t = SlsStreetFetch(SLS_TEX_ARGS, c, 0.0, wp / m, ddx(wp) / m, ddy(wp) / m);
 	float worn = SlsFbm(wp * 2.2);
-	float keep = (c.On > 0.5 && worn < 0.2 * c.Wear) ? 0.0 : 1.0;
+	float wearK = 0.2 * c.Wear;
+	// road look: no flaking holes once the flake noise is smaller than a pixel (they only thin and fade the line)
+	if (c.Look > 0.5) wearK *= 1.0 - smoothstep(0.15, 0.5, max(length(ddx(wp)), length(ddy(wp))) * 2.2);
+	float keep = (c.On > 0.5 && worn < wearK) ? 0.0 : 1.0;
 	c.N = SlsDecodeN(t.n);
 	c.NK = 0.45;
 	c.Height = t.h;
 	c.Albedo = float3(0.9, 0.9, 0.86) * lerp(0.8, 1.0, smoothstep(0.2, 0.6, t.h)) * lerp(0.85, 1.0, smoothstep(0.2, 0.5, worn));
 	c.Rough = 0.5 + 0.25 * (1.0 - t.h);
+	if (c.Look > 0.5) c.Albedo = min(c.Albedo * c.MarkK, 0.95);
 	c.Uv = wp;
 	c.Cell = 8.0;
 	if (c.On < 0.5) { c.Albedo = 0.85; c.Rough = 0.6; }
@@ -366,6 +465,7 @@ void SlsSidewalk(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float3 n)
 		if (n.y < -0.7) c.Albedo *= 0.6;
 	}
 	c.Albedo *= 1.0 + (SlsFbm(wp * 0.25) - 0.5) * 0.25 * c.Macro;
+	if (c.Look > 0.5) c.Albedo *= c.PaveK;
 	if (c.On < 0.5) { c.Albedo = SlsStreetMean(cell); c.Rough = 0.9; }
 }
 
@@ -435,6 +535,8 @@ void SlsGround(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float2 uv0, float2 uv1,
 	accW = max(accW, 1e-4);
 	c.Albedo = acc / accW;
 	c.Albedo = lerp(c.Albedo, c.Albedo * vc / max(accM / accW, 1e-3), c.GroundTint);
+	// road look: paved ground (squares, car parks) as bright as the pavements
+	if (c.Look > 0.5) c.Albedo *= lerp(1.0, c.PaveK, w[5]);
 	c.N = SlsDecodeN(accN / accW);
 	c.Rough = lerp(lerp(0.97, 1.0, accR / accW), accR / accW, w[5] * 0.6);
 	c.Height = accH / accW;

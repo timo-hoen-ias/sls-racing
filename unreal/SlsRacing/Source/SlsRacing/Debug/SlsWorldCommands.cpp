@@ -378,7 +378,7 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadRay(
 
 static FAutoConsoleCommandWithWorldAndArgs CmdRoadCheck(
 	TEXT("road.check"),
-	TEXT("Absolute Befahrbarkeit ohne Web-Referenz: jede 0,5-m-Fahrbahnzelle gegen die gezeichnete Oberfläche (Loch, Buckel, Senke, Stufe, Hänger, Spalt, Kante). road.check [radius m | all | tiles=<n>] [bump=<mm>] [dip=<mm>] [step=<mm>] [snag=<mm>] [gap=<mm>] [edge=<mm>] [max=<erlaubte Zellen>] [exit] [nodraw] → Saved/road-check.json"),
+	TEXT("Absolute Befahrbarkeit ohne Web-Referenz: jede 0,5-m-Fahrbahnzelle gegen die gezeichnete Oberfläche (Loch, Buckel, Senke, Stufe, Hänger, Spalt, Kante). road.check [radius m | all | tiles=<n>] [bump=<mm>] [dip=<mm>] [step=<mm>] [snag=<mm>] [gap=<mm>] [edge=<mm>] [max=<erlaubte Zellen>] [shard=<i>/<n>] [exit] [nodraw] → Saved/road-check.json"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* W) {
 		USlsWorldSubsystem* S = USlsWorldSubsystem::Get(W);
 		if (!S || !S->IsReady()) { Say(TEXT("road.check: keine Welt geladen"), FColor::Red); return; }
@@ -388,7 +388,8 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadCheck(
 		J->bCheck = true;
 		double Radius = 300;
 		bool bAll = false;
-		int32 Limit = MAX_int32;
+		int32 Limit = MAX_int32, Shard = 0, Shards = 1;
+		FString ShardS, ShardN;
 		auto Mm = [](const FString& A) { return FCString::Atod(*A.Mid(A.Find(TEXT("=")) + 1)) / 1000.0; };
 		for (const FString& A : Args)
 		{
@@ -403,14 +404,17 @@ static FAutoConsoleCommandWithWorldAndArgs CmdRoadCheck(
 			else if (A.StartsWith(TEXT("edge="))) J->Th.Edge = Mm(A);
 			else if (A.StartsWith(TEXT("max="))) J->Max = FCString::Atoi(*A.Mid(4));
 			else if (A.StartsWith(TEXT("tiles="))) { bAll = true; Limit = FCString::Atoi(*A.Mid(6)); }
+			else if (A.StartsWith(TEXT("shard=")) && A.Mid(6).Split(TEXT("/"), &ShardS, &ShardN)) { Shard = FCString::Atoi(*ShardS); Shards = FMath::Max(1, FCString::Atoi(*ShardN)); }
 			else if (A.IsNumeric()) Radius = FCString::Atod(*A);
 		}
 		TArray<FIntPoint> Tiles = S->Info().Tiles;
 		Tiles.Sort([](const FIntPoint& A, const FIntPoint& B) { return A.Y != B.Y ? A.Y > B.Y : A.X < B.X; });
 		const FVector L = PlayerLocal(W);
+		int32 Index = 0;
 		for (const FIntPoint& T : Tiles)
 		{
 			if (J->Queue.Num() >= Limit) break;
+			if (Index++ % Shards != Shard) continue; // shard=i/n: every n-th tile (a sample of the whole world)
 			const FVector2D C = S->TileOriginLocal(T) + FVector2D(S->Info().TileSize / 2);
 			if (bAll || FVector2D::Distance(C, FVector2D(L.X, L.Z)) < Radius) J->Queue.Add(T);
 		}

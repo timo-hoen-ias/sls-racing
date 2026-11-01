@@ -85,6 +85,13 @@ namespace
 					C->StartBench(A.Contains(TEXT("exit")));
 					Say(FString::Printf(TEXT("car.bench läuft (%s): 0–100–200, Höchstgeschwindigkeit, Bremsweg aus 100, Kreisfahrt 80 km/h"), C->IsFunFeel() ? TEXT("fun") : TEXT("real")));
 				});
+			Add(TEXT("car.diag"), TEXT("Antrieb und Räder alle 0,25 s ins Log (Gang, Drehzahl, Rad-U/min, Schlupf, Last, Antriebs-/Bremsmoment): car.diag [0|1]"),
+				[](const TArray<FString>& A, UWorld* W) {
+					ASlsCarPawn* C = NeedCar(W);
+					if (!C) return;
+					C->bDiag = A.Num() ? FCString::Atoi(*A[0]) != 0 : !C->bDiag;
+					Say(FString::Printf(TEXT("car.diag = %d (Ausgabe im Log, LogSls)"), C->bDiag));
+				});
 			Add(TEXT("car.reset"), TEXT("Auto auf die nächste Straße setzen (wie R / Y)"), [](const TArray<FString>&, UWorld* W) {
 				if (ASlsCarPawn* C = NeedCar(W)) C->ResetToRoad();
 			});

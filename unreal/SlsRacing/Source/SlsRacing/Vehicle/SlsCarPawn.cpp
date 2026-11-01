@@ -333,6 +333,7 @@ void ASlsCarPawn::Tick(float Dt)
 	Vehicle->SetSteeringInput(In.Steer * WeatherGrip.Steer);
 	Vehicle->SetHandbrakeInput(In.bHandbrake);
 	ArcadeLayer(In, Dt);
+	if (bDiag) DiagLog(Dt, In);
 	UpdateWheels();
 	UpdateCamera(In, Dt);
 }
@@ -539,6 +540,30 @@ void ASlsCarPawn::UpdateCamera(const FSlsDriveInput& In, float Dt)
 	Arm->SetRelativeRotation(FRotator(CamMode < 2 ? -8.f : 0.f, In.bLookBack ? 180.f : 0.f, 0));
 	const float Fov = 82.f + Feel.CamSpeedFov * FMath::Clamp(float(Kmh) / Feel.CamMaxKmh, 0.f, 1.f) + (bBoosting ? Feel.CamBoostFov : 0.f);
 	Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, CamMode == 3 ? 88.f : Fov, Dt, 4.f));
+}
+
+// --- car.diag -----------------------------------------------------------------------------------------------
+
+void ASlsCarPawn::DiagLog(float Dt, const FSlsDriveInput& In)
+{
+	DiagT += Dt;
+	if (DiagT < 0.25 || Vehicle->GetNumWheels() < 4) return;
+	DiagT = 0;
+	FString Line = FString::Printf(TEXT("car.diag %.1f km/h gas %.2f brems %.2f | Gang %d (Ziel %d) Motor %.0f U/min | Masse %.0f kg |"),
+		SpeedMs() * 3.6, In.Throttle, In.Brake, Gear(), Vehicle->GetTargetGear(), Rpm(), Box->GetMass());
+	static const TCHAR* Names[4] = {TEXT("VL"), TEXT("VR"), TEXT("HL"), TEXT("HR")};
+	for (int32 I = 0; I < 4; I++)
+	{
+		const FWheelStatus& S = Vehicle->GetWheelState(I);
+		const UChaosVehicleWheel* W = Vehicle->Wheels.IsValidIndex(I) ? Vehicle->Wheels[I].Get() : nullptr;
+		// wheel rpm from rad/s; ground rpm = what the wheel would turn at without slip
+		const double WheelRpm = W ? W->GetWheelAngularVelocity() * 60.0 / UE_TWO_PI : 0;
+		const double GroundRpm = SpeedMs() / SlsCar::WheelRadius * 60.0 / UE_TWO_PI;
+		Line += FString::Printf(TEXT(" %s %s %.0f/%.0f U/min Schlupf %.2f%s Last %.0f N Antrieb %.0f Bremse %.0f |"),
+			Names[I], S.bInContact ? TEXT("") : TEXT("(Luft)"), WheelRpm, GroundRpm, S.SlipMagnitude, S.bIsSlipping ? TEXT("!") : TEXT(""),
+			S.SpringForce / 100.0, S.DriveTorque, S.BrakeTorque);
+	}
+	UE_LOG(LogSls, Display, TEXT("%s"), *Line);
 }
 
 // --- car.bench ----------------------------------------------------------------------------------------------

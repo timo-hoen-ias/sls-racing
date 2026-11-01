@@ -16,7 +16,7 @@ public:
 };
 
 /**
- * Starts the world from code (no map assets yet): sun, sky, fog and the car at the web build's spawn point.
+ * Starts the world from code (no map assets yet): the sky through USlsEnvironment and the car at the web build's spawn point.
  * The tiles stream in through USlsWorldSubsystem.
  */
 UCLASS()

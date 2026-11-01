@@ -55,7 +55,12 @@ Debug: `car.bench`, `car.reset`, `car.info`, `car.gear`, `feel`, `feel.*`, `drif
       Details; dieselben Atlanten (`export-textures.ts`), Konstanten generiert (`gen-shaders.ts`, CI-Prüfung).
 - [x] Materialien per Python-Setup (`sls_setup.py`, Custom-Node je Fläche, Parameter-Sammlung `MPC_Sls` für
       `tex.*`/`ground.*`/`feldweg.*`), Wasser als Single Layer Water.
+- [x] Tageszeit mit Sky Atmosphere, Volumetric Clouds, Höhennebel, Sky Light, Mond, Auto-Belichtung
+      (`World/SlsEnvironment`, Sonnenstand wie `daylight.ts`), `time.*`, `sky.*`.
+- [x] Wetter als Port von `weather.ts`: nasse Straßen, Pfützen (gleiche Maske), Schneedecke, Regen/Schnee als
+      WPO-Partikel, Grip am Auto; `weather.*`.
 - [ ] Fassaden-Shader (`facades.ts`: Fenster, Stockwerke, Dächer) statt Vertexfarben.
+- [ ] Nachtlichter: Laternen, Scheinwerfer, Fenster (`lights.ts`), Tunnelbeleuchtung als echte Lichter.
 
 - Materialien: KTX2-PBR-Atlanten (`public/textures`, `src/render/pbr`) als Unreal-Texturen, Straßen-Look-Code
   (`uv.y`), Markierungen, Gehwege; Gelände-Splat-Shader (8 Kanäle + Furchen + Luftbild-Tönung, die Gewichte

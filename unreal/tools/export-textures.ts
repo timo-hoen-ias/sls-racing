@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 import { PNG } from 'pngjs';
 import { ATLASES, TEX_QUALITY, type TexQuality } from '../../src/render/pbr/textureSets.ts';
+import { PUDDLE_N, puddleMask } from '../../src/weather/puddles.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? def;
 const quality = arg('quality', 'hoch') as TexQuality;
@@ -61,6 +62,12 @@ for (const a of ATLASES) {
     writeFileSync(join(OUT, name), PNG.sync.write(png));
     console.log(`${name}: ${img.w}×${img.h}`);
   }
+}
+// The puddle mask the web road shader and the car physics share (weather/puddles.ts), as a grey PNG.
+{
+  const m = puddleMask(), png = new PNG({ width: PUDDLE_N, height: PUDDLE_N });
+  for (let i = 0; i < m.length; i++) { png.data[i * 4] = png.data[i * 4 + 1] = png.data[i * 4 + 2] = m[i]; png.data[i * 4 + 3] = 255; }
+  writeFileSync(join(OUT, 'T_Sls_puddles.png'), PNG.sync.write(png));
 }
 copyFileSync('public/textures/waternormals.jpg', join(OUT, 'T_Sls_waternormals.jpg'));
 copyFileSync(join(SRC, 'manifest.json'), join(OUT, 'manifest.json'));

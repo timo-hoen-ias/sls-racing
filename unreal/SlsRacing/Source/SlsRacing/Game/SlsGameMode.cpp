@@ -1,16 +1,10 @@
 #include "SlsGameMode.h"
 #include "SlsRacing.h"
 #include "World/SlsWorldSubsystem.h"
+#include "World/SlsEnvironment.h"
 #include "Game/SlsHUD.h"
 #include "Vehicle/SlsCarPawn.h"
-#include "Components/DirectionalLightComponent.h"
-#include "Components/ExponentialHeightFogComponent.h"
-#include "Components/SkyAtmosphereComponent.h"
-#include "Components/SkyLightComponent.h"
 #include "Components/SphereComponent.h"
-#include "Engine/DirectionalLight.h"
-#include "Engine/ExponentialHeightFog.h"
-#include "Engine/SkyLight.h"
 #include "Engine/World.h"
 #include "GameFramework/FloatingPawnMovement.h"
 #include "HAL/IConsoleManager.h"
@@ -46,28 +40,8 @@ ASlsGameMode::ASlsGameMode()
 
 void ASlsGameMode::StartPlay()
 {
-	UWorld* W = GetWorld();
-	FActorSpawnParameters P;
-	P.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	// Sun (afternoon over Saarlouis), physical sky, sky light from the atmosphere, height fog.
-	ADirectionalLight* Sun = W->SpawnActor<ADirectionalLight>(FVector::ZeroVector, FRotator(-38.f, 210.f, 0.f), P);
-	Sun->SetMobility(EComponentMobility::Movable);
-	if (UDirectionalLightComponent* L = Cast<UDirectionalLightComponent>(Sun->GetLightComponent()))
-	{
-		L->SetIntensity(10.f);
-		L->SetAtmosphereSunLight(true);
-		L->SetDynamicShadowDistanceMovableLight(40000.f);
-	}
-	AActor* Sky = W->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, P);
-	USkyAtmosphereComponent* Atmo = NewObject<USkyAtmosphereComponent>(Sky, TEXT("Atmosphere"));
-	Sky->SetRootComponent(Atmo);
-	Atmo->RegisterComponent();
-	ASkyLight* SkyLight = W->SpawnActor<ASkyLight>(FVector::ZeroVector, FRotator::ZeroRotator, P);
-	SkyLight->GetLightComponent()->SetMobility(EComponentMobility::Movable);
-	SkyLight->GetLightComponent()->bRealTimeCapture = true;
-	SkyLight->GetLightComponent()->RecaptureSky();
-	AExponentialHeightFog* Fog = W->SpawnActor<AExponentialHeightFog>(FVector(0, 0, 18000.f), FRotator::ZeroRotator, P);
-	Fog->GetComponent()->SetFogDensity(0.004f);
+	// Sun, moon, atmosphere, clouds, sky light, fog, exposure and precipitation: USlsEnvironment (time of day, weather).
+	if (USlsEnvironment* E = USlsEnvironment::Get(this)) E->SpawnSky();
 	Super::StartPlay();
 }
 

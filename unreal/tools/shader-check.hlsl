@@ -5,7 +5,8 @@ Texture2D SA; Texture2D SN; Texture2D SR; SamplerState SASampler;
 Texture2D NA; Texture2D NN; Texture2D NR; SamplerState NASampler;
 Texture2D BA; Texture2D BN; Texture2D BR; SamplerState BASampler;
 Texture2D WN; SamplerState WNSampler;
-cbuffer C { float4 P0, P1, P2, P3; float T; float3 Cam; };
+Texture2D PM; SamplerState PMSampler;
+cbuffer C { float4 P0, P1, P2, P3, Wx; float T; float3 Cam; };
 
 float3 Ground(float3 WP, float3 VN, float2 UV0, float2 UV1, float2 UV2, float4 VC, inout float Rough, inout float3 NormalWS)
 {
@@ -13,6 +14,7 @@ SlsCtx c = SlsBegin(P0, P1, P2, P3);
 float3 p = SlsToWeb(WP);
 float3 n = normalize(SlsDirToWeb(VN));
 SlsGround(SLS_TEX_NODE, c, p, UV0, UV1, UV2, SlsSrgbToLinear(VC.rgb));
+SlsWeather(c, p, n, Wx, T, 0.6, 1.00, 0.55, false, 0.0, 0.0);
 return SlsEnd(c, p, n, 1.0, Rough, NormalWS);
 }
 float3 Road(float3 WP, float3 VN, float2 UV0, float2 UV1, inout float Rough, inout float3 NormalWS)
@@ -21,6 +23,7 @@ SlsCtx c = SlsBegin(P0, P1, P2, P3);
 float3 p = SlsToWeb(WP);
 float3 n = normalize(SlsDirToWeb(VN));
 SlsRoad(SLS_TEX_NODE, c, p, UV0, UV1);
+SlsWeather(c, p, n, Wx, T, 1.0, 0.9, 0.55, true, saturate(UV0.x), PM.Sample(PMSampler, p.xz / SLS_PUDDLE_SIZE).r);
 return SlsEnd(c, p, n, 1.0, Rough, NormalWS);
 }
 float3 Mark(float3 WP, float3 VN, inout float Rough, inout float3 NormalWS, inout float Keep)
@@ -45,8 +48,9 @@ SlsCtx c = SlsBegin(P0, P1, P2, P3);
 float3 p = SlsToWeb(WP);
 float3 n = normalize(SlsDirToWeb(VN));
 float l = SlsPaintedMetal(SLS_TEX_NODE, c, p, n);
-float3 col = SlsEnd(c, p, n, 0.75, Rough, NormalWS);
-return c.Debug > 0.5 ? col : SlsSrgbToLinear(VC.rgb) * l;
+if (c.Debug < 0.5) c.Albedo = SlsSrgbToLinear(VC.rgb) * l;
+SlsWeather(c, p, n, Wx, T, 0.50, 0.80, 0.60, false, 0.0, 0.0);
+return SlsEnd(c, p, n, 0.75, Rough, NormalWS);
 }
 float3 Water(float3 WP)
 {

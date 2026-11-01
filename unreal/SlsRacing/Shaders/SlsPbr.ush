@@ -8,7 +8,8 @@
 //
 // Shared parameters (Material Parameter Collection MPC_Sls, set by the tex.* / ground.* / feldweg.* console
 // commands): Pbr0 = (on, normal, tiling, macro), Pbr1 = (groundtint, wear, debug, roadforce),
-// Pbr2 = (feldweg ruts, feldweg grass, ground aerial, ground rows), Pbr3 = (ground view, -, -, -).
+// Pbr2 = (feldweg ruts, feldweg grass, ground aerial, ground rows), Pbr3 = (ground view, -, -, -);
+// Wx = (road wetness, snow cover, puddles, rain) from USlsEnvironment (weather.ts).
 #pragma once
 
 #include "/SlsRacing/SlsAtlases.ush"
@@ -27,6 +28,7 @@ struct SlsCtx
 	float On, NormalK, Tiling, Macro, GroundTint, Wear, Debug, RoadForce, FieldRuts, FieldGrass, GroundAerial, GroundRows, GroundView;
 	// results (pbrAlbedo, pbrN, pbrRough, pbrHeight, pbrNormalK, pbrUv, pbrCell, triplanar world normal)
 	float3 Albedo; float3 N; float Rough; float Height; float NK; float2 Uv; float Cell; bool HasWorldN; float3 WorldN;
+	float Flat; // weather: puddles and snow flatten the detail normal
 };
 
 float3 SlsToWeb(float3 ue) { return float3(ue.x, ue.z, ue.y) * 0.01; }
@@ -150,6 +152,7 @@ SlsCtx SlsBegin(float4 P0, float4 P1, float4 P2, float4 P3)
 	c.GroundView = P3.x;
 	c.Albedo = 1.0; c.N = float3(0.0, 0.0, 1.0); c.Rough = 1.0; c.Height = 0.5; c.NK = 1.0; c.Uv = 0.0; c.Cell = -1.0;
 	c.HasWorldN = false; c.WorldN = float3(0.0, 1.0, 0.0);
+	c.Flat = 0.0;
 	return c;
 }
 
@@ -160,7 +163,7 @@ SlsCtx SlsBegin(float4 P0, float4 P1, float4 P2, float4 P3)
 float3 SlsEnd(inout SlsCtx c, float3 p, float3 nGeo, float baseRough, out float Rough, out float3 NormalWS)
 {
 	Rough = clamp(baseRough * c.Rough, 0.02, 1.0);
-	float k = c.NormalK * c.NK * c.On;
+	float k = c.NormalK * c.NK * c.On * (1.0 - c.Flat);
 	float3 n;
 	if (c.HasWorldN) n = normalize(lerp(nGeo, c.WorldN, min(1.0, k)));
 	else n = SlsPerturb(nGeo, p, c.Uv, normalize(float3(c.N.xy * k, c.N.z)));
@@ -468,4 +471,63 @@ float SlsPaintedMetal(SLS_TEX_PARAMS, inout SlsCtx c, float3 p, float3 n)
 	float l = dot(c.Albedo, float3(0.3, 0.59, 0.11)) / max(dot(mean, float3(0.3, 0.59, 0.11)), 0.01);
 	if (c.On < 0.5) { l = 1.0; c.Rough = 0.6; c.HasWorldN = false; }
 	return clamp(lerp(1.0, l, 0.7), 0.4, 1.6);
+}
+
+// --- weather (src/weather/weatherMaterials.ts) -----------------------------------------------------------------
+
+/** Expanding rings of raindrops hitting standing water. */
+float SlsRipples(float2 p, float t)
+{
+	float2 cell = floor(p / 0.6);
+	float acc = 0.0;
+	for (int i = 0; i <= 1; i++)
+		for (int j = 0; j <= 1; j++)
+		{
+			float2 cc = cell + float2(float(i), float(j));
+			float h = SlsHash(cc);
+			float2 ctr = (cc + float2(SlsHash(cc + 3.1), SlsHash(cc + 7.7))) * 0.6;
+			float ph = frac(t * (1.2 + 0.8 * h) + h * 7.0);
+			float d = length(p - ctr);
+			acc += (1.0 - ph) * smoothstep(0.03, 0.0, abs(d - ph * 0.3));
+		}
+	return acc;
+}
+
+/**
+ * Wet, puddles (road), snow cover on the surface result, as patchMaterial with { wet: WetK, snow: SnowK, upFrom,
+ * road }. RoadX is the lateral road coordinate (0 right … 1 left) for the snow-free wheel tracks; Puddle is the
+ * sampled puddle mask (T_Sls_puddles, roads only).
+ */
+void SlsWeather(inout SlsCtx c, float3 p, float3 n, float4 Wx, float T, float WetK, float SnowK, float UpFrom, bool Road, float RoadX, float Puddle)
+{
+	float2 wp = p.xz;
+	float up = smoothstep(UpFrom, UpFrom + 0.35, n.y);
+	float patches = SlsNoise(wp * 0.08) * 0.6 + SlsNoise(wp * 0.7) * 0.4;
+	float wet = WetK * Wx.x * lerp(0.45, 1.0, up) * smoothstep(0.0, 0.6, Wx.x * 1.3 - patches * 0.35);
+	c.Albedo *= 1.0 - 0.45 * wet;
+	c.Rough = lerp(c.Rough, 0.12, wet * 0.85);
+	float puddle = 0.0;
+	if (Road)
+	{
+		puddle = smoothstep(SLS_PUDDLE_FROM, SLS_PUDDLE_FROM + 0.12, Puddle) * Wx.z;
+		float rip = Wx.w > 0.02 ? SlsRipples(wp, T) * Wx.w : 0.0;
+		c.Albedo = lerp(c.Albedo, c.Albedo * 0.45 + float3(0.01, 0.012, 0.015), puddle);
+		c.Albedo += 0.12 * rip * max(puddle, wet * 0.3);
+		c.Rough = lerp(c.Rough, 0.02 + 0.08 * rip, puddle);
+	}
+	float flakes = SlsNoise(wp * 0.35) * 0.55 + SlsNoise(wp * 2.3) * 0.3 + SlsNoise(wp * 9.0) * 0.15;
+	float s = Wx.y * SnowK;
+	if (Road)
+	{
+		float tracks = 0.0;
+		for (int i = 0; i < 4; i++) tracks = max(tracks, smoothstep(0.07, 0.02, abs(RoadX - (float(i) + 0.5) * 0.25)));
+		float edge = smoothstep(0.38, 0.5, abs(RoadX - 0.5));
+		s *= lerp(1.0, 0.35, tracks * (1.0 - edge));
+		s = min(1.0, s + edge * Wx.y * 0.3);
+	}
+	float cover = up * smoothstep(0.0, 0.25, s * 1.5 - (1.0 - flakes) * 0.75);
+	c.Albedo = lerp(c.Albedo, float3(0.86, 0.88, 0.92) * (0.92 + 0.08 * flakes), cover);
+	c.Rough = lerp(c.Rough, 0.7, cover);
+	puddle *= 1.0 - cover;
+	c.Flat = max(puddle, cover);
 }

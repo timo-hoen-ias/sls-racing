@@ -27,6 +27,20 @@ namespace SlsCar
 		static const TArray<TPair<double, double>> T = {{900, 290}, {2500, 380}, {4500, 430}, {6250, 470}, {7500, 460}, {8500, 420}, {9000, 390}};
 		return T;
 	}
+	/** Engine torque (Nm) at an rpm, linear between the curve points like torqueAt() in drivetrain.ts. */
+	inline double TorqueAt(double Rpm)
+	{
+		const auto& T = Torque();
+		if (Rpm <= T[0].Key) return T[0].Value;
+		for (int32 I = 1; I < T.Num(); I++)
+			if (Rpm <= T[I].Key) return FMath::Lerp(T[I - 1].Value, T[I].Value, (Rpm - T[I - 1].Key) / (T[I].Key - T[I - 1].Key));
+		return T.Last().Value;
+	}
+	// Launch: the web drivetrain lets the engine run up to the stall speed against a standing car (converter /
+	// launch control, stallRpm); Chaos ties the engine to the wheels and only eases it towards that speed.
+	constexpr double StallRpm = 3800;
+	// Engine braking off throttle (web: base + perRpm × rpm at the crank, × gearing): ~70 Nm at 3 000/min.
+	constexpr double EngineBrakeBase = 30, EngineBrakePerRpm = 0.0135;
 	inline const TArray<float>& Gears() { static const TArray<float> G = {3.75f, 2.38f, 1.72f, 1.34f, 1.11f, 0.96f, 0.84f}; return G; }
 	constexpr double Reverse = 3.4, Final = 3.6 * Scale, Efficiency = 0.9, ShiftTime = 0.07;
 	constexpr double FrontDrive = 0.3;                  // share of drive to the front axle

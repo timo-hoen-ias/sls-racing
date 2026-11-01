@@ -21,6 +21,7 @@
 #include "InputModifiers.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Misc/FileHelper.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -134,7 +135,10 @@ void ASlsCarPawn::ApplyTuning()
 	E.MaxTorque = Peak * Feel.Torque;
 	E.MaxRPM = MaxRpm;
 	E.EngineIdleRPM = IdleRpm;
-	E.EngineBrakeEffect = 0.2f; // ~100 Nm at mid revs, like engineBrake in tuning.ts
+	// Chaos brakes every driven wheel with EngineRPM × EngineBrakeEffect (Nm at the wheel, no gearing;
+	// ChaosWheeledVehicleMovementComponent.cpp). Matched to the web's (base + perRpm × rpm) × gearing in 3rd gear at
+	// 5 000/min, shared by the four driven wheels: 0.2 was ten times that and braked like a second brake pedal.
+	E.EngineBrakeEffect = float((EngineBrakeBase + EngineBrakePerRpm * 5000) * Gears()[2] * Final * Efficiency / 4 / 5000);
 	E.EngineRevUpMOI = 5.f;
 	E.EngineRevDownRate = 600.f;
 	FRichCurve* TC = E.TorqueCurve.GetRichCurve();
@@ -327,7 +331,8 @@ void ASlsCarPawn::Tick(float Dt)
 	}
 	FSlsDriveInput In = Bench.Phase ? FSlsDriveInput() : ReadInput();
 	if (Bench.Phase) TickBench(Dt, In);
-	Vehicle->SetThrottleInput(In.Throttle);
+	// Chaos squares the throttle (PEngine.SetThrottle(Throttle²)); the web's torque is linear in the pedal.
+	Vehicle->SetThrottleInput(FMath::Sqrt(FMath::Clamp(In.Throttle, 0.f, 1.f)));
 	// Wet or snowy roads: weaker brakes and vaguer steering (weather.ts surface()); friction is set in ArcadeLayer.
 	Vehicle->SetBrakeInput(In.Brake * WeatherGrip.Brake);
 	Vehicle->SetSteeringInput(In.Steer * WeatherGrip.Steer);
@@ -389,14 +394,38 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 	Vehicle->SetMaxEngineTorque(Vehicle->EngineSetup.MaxTorque * (bBoosting ? NitroTorque : 1.0));
 	if (bBoosting && !bAirborne) Add(Fwd * NitroPush * Dt);
 
-	// Tyre friction with the weather's grip; the rear also carries the drift release (RearSide).
+	// Launch like the web drivetrain: with the throttle the engine runs at least at idle + throttle × (stall − idle).
+	// Chaos's engine follows the wheels (and eases towards them at 4/s), so the missing torque at low speed is added
+	// as a push along the car, scaled like the drive force (gearing, efficiency, wheel radius).
+	if (!bAirborne && Contacts == 4 && Gear() > 0 && In.Throttle > 0.05f)
 	{
-		const float Gk = WeatherGrip.Grip;
-		Vehicle->SetWheelFrictionMultiplier(0, float(Mu * Gk));
-		Vehicle->SetWheelFrictionMultiplier(1, float(Mu * Gk));
-		Vehicle->SetWheelFrictionMultiplier(2, float(Mu * RearMu * RearSide * Gk));
-		Vehicle->SetWheelFrictionMultiplier(3, float(Mu * RearMu * RearSide * Gk));
+		const double Conv = IdleRpm + In.Throttle * (StallRpm - IdleRpm);
+		const double Have = Rpm();
+		if (Conv > Have)
+		{
+			const double Extra = (TorqueAt(Conv) - TorqueAt(Have)) * Feel.Torque * (bBoosting ? NitroTorque : 1.0) * In.Throttle;
+			const double Ratio = Gears()[FMath::Clamp(Gear(), 1, Gears().Num()) - 1] * Final * Efficiency;
+			Add(Fwd * Extra * Ratio / WheelRadius * Dt);
+		}
 	}
+
+	// Tyre friction with the weather's grip; the rear also carries the drift release (RearSide).
+	// Chaos multiplies the grip with the friction of the physical material under the wheel (ApplyWheelFrictionForces:
+	// SetSurfaceFriction). The web tyre model ignores the collider friction (Rapier's tyre friction is off,
+	// carPhysics.ts), its grip is mu × load alone, so the surface friction is divided out again per wheel.
+	auto SetGrip = [this](int32 I, double K) {
+		const UPhysicalMaterial* PM = Vehicle->GetWheelState(I).PhysMaterial.Get();
+		const double Surface = PM ? FMath::Max(0.05, double(PM->Friction)) : 1.0;
+		Vehicle->SetWheelFrictionMultiplier(I, float(K / Surface));
+	};
+	auto SetAllGrip = [&]() {
+		const double Gk = WeatherGrip.Grip;
+		SetGrip(0, Mu * Gk);
+		SetGrip(1, Mu * Gk);
+		SetGrip(2, Mu * RearMu * RearSide * Gk);
+		SetGrip(3, Mu * RearMu * RearSide * Gk);
+	};
+	SetAllGrip();
 	if (!bAirborne)
 	{
 		// Road hold (feel.stick): speed away from the road is taken out; with a wheel in the air the car is pressed down.
@@ -432,8 +461,7 @@ void ASlsCarPawn::ArcadeLayer(const FSlsDriveInput& In, float Dt)
 		else DriftDir = 0;
 		const float RearTarget = DriftDir && !In.bHandbrake ? 0.6f : 1.f;
 		RearSide += (RearTarget - RearSide) * FMath::Min(1.f, Dt * 6);
-		Vehicle->SetWheelFrictionMultiplier(2, float(Mu * RearMu * RearSide * WeatherGrip.Grip));
-		Vehicle->SetWheelFrictionMultiplier(3, float(Mu * RearMu * RearSide * WeatherGrip.Grip));
+		SetAllGrip();
 		if (Fv > 5)
 		{
 			// Slip angle, + = sliding to the right.

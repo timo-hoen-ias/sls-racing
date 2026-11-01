@@ -40,8 +40,9 @@ USlsWheelFront::USlsWheelFront()
 	bAffectedByHandbrake = false;
 	MaxSteerAngle = FMath::RadiansToDegrees(SteerLow);
 	FrictionForceMultiplier = Mu;
-	// Brake force at the patch → torque at the wheel, half the axle's share per wheel.
-	MaxBrakeTorque = BrakeForce * BrakeBias / 2 * WheelRadius;
+	// Brake force at the patch → torque at the wheel, half the axle's share per wheel. SlsCar:: on purpose: inside
+	// the wheel class a bare WheelRadius is UChaosVehicleWheel::WheelRadius in cm, which made the brakes 100× too strong.
+	MaxBrakeTorque = BrakeForce * BrakeBias / 2 * SlsCar::WheelRadius;
 	MaxHandBrakeTorque = 0;
 }
 
@@ -54,6 +55,6 @@ USlsWheelRear::USlsWheelRear()
 	bAffectedByHandbrake = true;
 	MaxSteerAngle = 0;
 	FrictionForceMultiplier = Mu * RearMu;
-	MaxBrakeTorque = BrakeForce * (1 - BrakeBias) / 2 * WheelRadius;
-	MaxHandBrakeTorque = Handbrake / 2 * WheelRadius;
+	MaxBrakeTorque = BrakeForce * (1 - BrakeBias) / 2 * SlsCar::WheelRadius;
+	MaxHandBrakeTorque = Handbrake / 2 * SlsCar::WheelRadius;
 }

@@ -34,12 +34,17 @@ Die World-Build-Action veröffentlicht den fertigen Export zusätzlich als `ue-t
 
 ## Projekt bauen und starten (Linux)
 
-Unreal Engine 5.5 oder neuer (Projektdatei sagt 5.5; bei anderer Version `EngineAssociation` anpassen).
+Unreal Engine 5.8 (auf timos PC wie bei going-vertical: AUR-Paket `unreal-engine`, liegt unter `/opt/unreal-engine`;
+`EngineAssociation` ist leer, damit jede installierte Engine das Projekt öffnet). Alles läuft über ein Skript:
 
 ```bash
-UE=~/UnrealEngine            # oder wo die Engine liegt
-$UE/Engine/Build/BatchFiles/Linux/Build.sh SlsRacingEditor Linux Development -Project="$PWD/unreal/SlsRacing/SlsRacing.uproject"
-$UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject" -game -windowed -ResX=1600 -ResY=900
+./unreal/sls.sh world     # exportierte Welt holen (gh auth login)
+./unreal/sls.sh build     # C++ bauen
+./unreal/sls.sh play      # Spiel im Fenster
+./unreal/sls.sh parity    # Befahrbarkeit der ganzen Welt ohne Fenster, Exit-Code
+./unreal/sls.sh bench     # Fahrphysik gegen das Web-Auto (fun + real), Exit-Code
+./unreal/sls.sh editor    # Editor
+# andere Engine: UE_ROOT=~/UnrealEngine ./unreal/sls.sh build
 ```
 
 Es gibt noch keine Map-Assets: das Spiel startet in der leeren Engine-Map, `SlsGameMode` setzt Sonne, Himmel und

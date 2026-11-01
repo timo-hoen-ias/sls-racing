@@ -27,6 +27,59 @@ namespace
 
 	template <typename T>
 	TArray<T> ToArray(TArrayView<const T> V) { return TArray<T>(V.GetData(), V.Num()); }
+	/**
+	 * Painted markings (rendering only, M_SlsMarking / road.look.markwidth): per vertex the outward miter direction of
+	 * the paint's outline in the ground plane (UV0, moves each outline edge by 1 per unit) and the paint's half width
+	 * in cm (UV1.x, half the smallest triangle height). Edges are matched by position: the strips do not share
+	 * vertices, so an index-based outline would also count every quad's diagonal.
+	 */
+	void MarkingOutline(const TArray<FVector>& V, const TArray<int32>& T, TArray<FVector2D>& UV0, TArray<FVector2D>& UV1)
+	{
+		auto Key = [](const FVector& P) { return FIntVector(FMath::RoundToInt(P.X * 2.0), FMath::RoundToInt(P.Y * 2.0), FMath::RoundToInt(P.Z * 2.0)); };
+		TMap<FIntVector, int32> Ids;
+		TArray<int32> Id; Id.Reserve(V.Num());
+		for (const FVector& P : V) Id.Add(Ids.FindOrAdd(Key(P), Ids.Num()));
+		TMap<TPair<int32, int32>, int32> EdgeUse;
+		for (int32 I = 0; I + 2 < T.Num(); I += 3)
+			for (int32 E = 0; E < 3; E++)
+			{
+				const int32 A = Id[T[I + E]], B = Id[T[I + (E + 1) % 3]];
+				EdgeUse.FindOrAdd(TPair<int32, int32>(FMath::Min(A, B), FMath::Max(A, B)))++;
+			}
+		TArray<FVector2D> Sum; Sum.SetNumZeroed(Ids.Num());
+		TArray<int32> Count; Count.SetNumZeroed(Ids.Num());
+		TArray<double> Half; Half.Init(1e9, Ids.Num());
+		for (int32 I = 0; I + 2 < T.Num(); I += 3)
+		{
+			const FVector P[3] = {V[T[I]], V[T[I + 1]], V[T[I + 2]]};
+			const double Area2 = FVector::CrossProduct(P[1] - P[0], P[2] - P[0]).Size();
+			const double Longest = FMath::Max3((P[1] - P[0]).Size(), (P[2] - P[1]).Size(), (P[0] - P[2]).Size());
+			const double H = Longest > 1e-3 ? 0.5 * Area2 / Longest : 0.0;
+			for (int32 E = 0; E < 3; E++)
+			{
+				const int32 IA = Id[T[I + E]], IB = Id[T[I + (E + 1) % 3]];
+				Half[IA] = FMath::Min(Half[IA], H);
+				if (EdgeUse.FindRef(TPair<int32, int32>(FMath::Min(IA, IB), FMath::Max(IA, IB))) != 1) continue;
+				const FVector2D A(P[E]), B(P[(E + 1) % 3]), C(P[(E + 2) % 3]);
+				FVector2D N = FVector2D(-(B - A).Y, (B - A).X).GetSafeNormal();
+				if (FVector2D::DotProduct(N, C - A) > 0.0) N = -N;
+				Sum[IA] += N; Count[IA]++;
+				Sum[IB] += N; Count[IB]++;
+			}
+		}
+		UV0.Reserve(V.Num());
+		UV1.Reserve(V.Num());
+		for (int32 I = 0; I < V.Num(); I++)
+		{
+			const int32 K = Id[I];
+			const double S2 = Sum[K].SizeSquared();
+			// k normals: S k / |S|^2, i.e. (n1 + n2) / (1 + n1·n2) at a corner, n along a straight edge; capped for spikes
+			FVector2D M = S2 > 1e-6 ? Sum[K] * (double(Count[K]) / S2) : FVector2D::ZeroVector;
+			if (M.Size() > 3.0) M = M.GetSafeNormal() * 3.0;
+			UV0.Add(M);
+			UV1.Add(FVector2D(Half[K] < 1e8 ? Half[K] : 0.0, 0.0));
+		}
+	}
 }
 
 ASlsTileActor::ASlsTileActor()
@@ -98,6 +151,8 @@ void ASlsTileActor::BuildVisual(const FSlsTileFile& File, TFunctionRef<UMaterial
 				UV2.Add(FVector2D(R[I * 2], R[I * 2 + 1]));
 			}
 		}
+		else if (L.Name == TEXT("markings") && !SrcUV.Num())
+			MarkingOutline(V, T, UV0, UV1);
 		else
 			for (const FVector2f& X : SrcUV) UV0.Add(FVector2D(X));
 		TArray<FProcMeshTangent> Tangents;

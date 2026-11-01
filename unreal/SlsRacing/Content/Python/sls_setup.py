@@ -83,8 +83,9 @@ def parameter_collection():
                         # Veg = (wind, leaf translucency, species shown, -), SlsVegCommands.cpp
                         ('Veg', (1, 1, 0, 0)),
                         # road look (SlsRoadLookCommands.cpp): Look0 = (on, asphalt albedo, kind weight, detail),
-                        # Look1 = (pavement brightness, marking paint, lane wear, asphalt normal)
-                        ('Look0', (1, 0.08, 0.15, 1)), ('Look1', (0.7, 1, 0.4, 1.4))):
+                        # Look1 = (pavement brightness, marking paint, lane wear, asphalt normal),
+                        # Look2 = (marking min width px, ground smooth splat, paved ground / asphalt albedo, -)
+                        ('Look0', (1, 0.08, 0.15, 1)), ('Look1', (0.7, 1, 0.4, 1.4)), ('Look2', (1.5, 1, 1.25, 0))):
         p = unreal.CollectionVectorParameter()
         p.set_editor_property('parameter_name', name)
         p.set_editor_property('default_value', unreal.LinearColor(*value))
@@ -186,7 +187,7 @@ def head(body):
 
 
 def surface_material(name, tex, mpc, body, uvs=0, vcol=False, bias=None, masked=False, metallic=None, puddles=False, two_sided=False,
-                     instanced=False, extra=None):
+                     instanced=False, extra=None, wpo=None):
     m = material_in_place(name)
     m.set_editor_property('two_sided', two_sided)
     if instanced:
@@ -207,6 +208,8 @@ def surface_material(name, tex, mpc, body, uvs=0, vcol=False, bias=None, masked=
         g.out(g.node(unreal.MaterialExpressionConstant, r=metallic), unreal.MaterialProperty.MP_METALLIC)
     if bias:
         g.out(depth_bias(g, *bias), unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    if wpo:
+        g.out(wpo(g), unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
     MEL.recompile_material(m)
     EAL.save_loaded_asset(m)
     log('SLS setup: %s' % name)
@@ -224,23 +227,52 @@ END = 'return SlsEnd(c, p, n, 1.0, Rough, NormalWS);'
 def look_inputs(mpc):
     """L0, L1: the road look parameters for the road, marking, sidewalk and ground materials (SlsLook in SlsPbr.ush)."""
     return [('L%d' % i, lambda g, i=i: g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Look%d' % i))
-            for i in range(2)]
+            for i in range(3)]
 
 
-LOOK = 'SlsLook(c, L0, L1);\n'
+LOOK = 'SlsLook(c, L0, L1, L2);\n'
+F4 = unreal.CustomMaterialOutputType.CMOT_FLOAT4
+
+
+def splat_inputs():
+    """W0, W1: the 8 splat weights decoded per vertex (SlsUnpackSplat) and interpolated, for ground.look.smooth."""
+    def make(i):
+        def mk(g):
+            dec = g.custom('return SlsUnpackSplat(UV);', F4, [('UV', (g.node(unreal.MaterialExpressionTextureCoordinate, coordinate_index=i), ''))])
+            vi = g.node(unreal.MaterialExpressionVertexInterpolator)
+            MEL.connect_material_expressions(dec, '', vi, '')
+            return vi
+        return ('W%d' % i, mk)
+    return [make(0), make(1)]
+
+
+def marking_wpo(g, mpc):
+    """Depth bias as depth_bias(g, 4.0, 0.04) plus the widening of road.look.markwidth (SlsMarkingGrow)."""
+    ins = [('WP', (g.node(unreal.MaterialExpressionWorldPosition), '')),
+           ('Cam', (g.node(unreal.MaterialExpressionCameraPositionWS), '')),
+           ('UV0', (g.node(unreal.MaterialExpressionTextureCoordinate, coordinate_index=0), '')),
+           ('UV1', (g.node(unreal.MaterialExpressionTextureCoordinate, coordinate_index=1), ''))]
+    ins += [('L%d' % i, (g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Look%d' % i), '')) for i in range(3)]
+    for i in range(4):
+        ins.append(('P%d' % i, (g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Pbr%d' % i), '')))
+    code = ('SlsCtx c = SlsBegin(P0, P1, P2, P3);\n' + LOOK +
+            'float3 d = Cam - WP; float l = length(d);\n'
+            'return d / max(l, 1.0) * (4.0 + l * 0.0004) + float3(UV0 * SlsMarkingGrow(c, UV1.x, l), 0.0);')
+    return g.custom(code, F3, ins)
 
 
 def world_materials(tex, mpc):
     surface_material('M_SlsGround', tex, mpc,
-                     LOOK + 'SlsGround(SLS_TEX_NODE, c, p, UV0, UV1, UV2, SlsSrgbToLinear(VC.rgb));\n' + wx(0.6, 1.0) + END, uvs=3, vcol=True,
-                     extra=look_inputs(mpc))
+                     LOOK + 'SlsGround(SLS_TEX_NODE, c, p, UV0, UV1, UV2, SlsSrgbToLinear(VC.rgb), W0, W1);\n' + wx(0.6, 1.0) + END, uvs=3, vcol=True,
+                     extra=look_inputs(mpc) + splat_inputs())
     surface_material('M_SlsRoad', tex, mpc,
                      LOOK + 'SlsRoad(SLS_TEX_NODE, c, p, UV0, UV1);\n'
                      'SlsWeather(c, p, n, Wx, T, 1.0, 0.9, 0.55, true, saturate(UV0.x), PM.Sample(PMSampler, p.xz / SLS_PUDDLE_SIZE).r);\n' + END,
                      uvs=2, bias=(2.0, 0.02), puddles=True, extra=look_inputs(mpc))
     surface_material('M_SlsMarking', tex, mpc,
-                     LOOK + 'Keep = SlsMarking(SLS_TEX_NODE, c, p);\n' + wx(0.8, 0.9) + END, bias=(4.0, 0.04), masked=True,
-                     extra=look_inputs(mpc))
+                     LOOK + 'Keep = SlsMarking(SLS_TEX_NODE, c, p) * SlsMarkingCover(c, UV1.x, length(Cam - WP), Parameters.SvPosition.xy);\n' +
+                     wx(0.8, 0.9) + END, wpo=lambda g: marking_wpo(g, mpc), masked=True, uvs=2,
+                     extra=look_inputs(mpc) + [('Cam', lambda g: g.node(unreal.MaterialExpressionCameraPositionWS))])
     surface_material('M_SlsSidewalk', tex, mpc,
                      LOOK + 'SlsSidewalk(SLS_TEX_NODE, c, p, n);\n' + wx(0.9, 1.0) + END, bias=(1.0, 0.01), extra=look_inputs(mpc))
     surface_material('M_SlsDetail', tex, mpc,

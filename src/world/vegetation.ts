@@ -10,7 +10,7 @@ import type { TreeGeometry } from './treeGen.ts';
 import { triangles } from './treeGen.ts';
 import { type ImpostorAtlas, type TreeTextures, type TreeTierMaterials, bakeImpostors, buildSpecies, impostorGeometry, impostorMaterial, loadTreeTextures, treeMaterials, vegUniforms } from './treeRender.ts';
 import { SPECIES } from './treeSpecies.ts';
-import { BUSH_STRIDE, Bush, TREE_HEIGHT, Tree, type TreeKind } from './vegKinds.ts';
+import { placeVegetation, type VegRec, vegLook } from './vegPlacement.ts';
 import { buildGrassGeometry, grassTexture } from './vegModels.ts';
 
 // Vegetation (W6) as a tile layer: generated trees of ten native species (treeGen.ts) with bark and leaf cards,
@@ -122,30 +122,10 @@ const BUSH_DETAIL = 30;
 
 interface Split { g: VegGroup; ranges: [number, number][]; count: number; d: number; tile: string }
 
-/** Species mix per tile tree kind: in woods mostly beech and oak, spruce and pine; in town lime, maple, plane. */
-const MIX: Record<'town' | 'forest', Record<TreeKind, [string, number][]>> = {
-  town: {
-    [Tree.broadleaf]: [['linde', 0.3], ['ahorn', 0.24], ['platane', 0.14], ['eiche', 0.17], ['buche', 0.15]],
-    [Tree.conifer]: [['fichte', 0.55], ['kiefer', 0.45]],
-    [Tree.poplar]: [['pappel', 1]], [Tree.birch]: [['birke', 1]], [Tree.fruit]: [['obst', 1]],
-  },
-  forest: {
-    [Tree.broadleaf]: [['buche', 0.55], ['eiche', 0.33], ['ahorn', 0.12]],
-    [Tree.conifer]: [['fichte', 0.6], ['kiefer', 0.4]],
-    [Tree.poplar]: [['pappel', 1]], [Tree.birch]: [['birke', 1]], [Tree.fruit]: [['obst', 1]],
-  },
-};
-
-export function speciesOf(kind: TreeKind, forest: boolean, r: number): string {
-  const mix = MIX[forest ? 'forest' : 'town'][kind] ?? MIX.town[Tree.broadleaf];
-  let acc = 0;
-  for (const [id, share] of mix) if (r < (acc += share)) return id;
-  return mix[mix.length - 1][0];
-}
+export { speciesOf } from './vegPlacement.ts';
 
 const LAWN = SPLAT.indexOf('lawn'), MEADOW = SPLAT.indexOf('meadow'), PATCHY = SPLAT.indexOf('patchy');
 const SHAPE = Object.fromEntries(SPECIES.map((s) => [s.id, s]));
-const BUSH_SPECIES: Record<number, string> = { [Bush.round]: 'busch', [Bush.scrub]: 'gebuesch' };
 const HIDDEN = () => new THREE.Vector4(1e9, 1e9 + 1, 1e9, 1e9 + 1);
 
 export class Vegetation {
@@ -307,34 +287,7 @@ export class Vegetation {
   private buildTile(t: VegTile) {
     for (const g of t.groups) for (const im of g.meshes) { t.group.remove(im); im.dispose(); }
     t.groups = [];
-    const bySpecies = new Map<string, Rec[]>();
-    const push = (sp: string, r: Rec) => { if (!bySpecies.has(sp)) bySpecies.set(sp, []); bySpecies.get(sp)!.push(r); };
-    const tr = t.trees;
-    if (tr?.length) {
-      for (let i = 0; i < tr.length / 4; i++) {
-        const crown = (t.crowns?.[i] ?? 0) / 10;
-        if (!this.lidar && crown) continue;
-        const x = tr[i * 4], y = tr[i * 4 + 1] - 0.15, z = tr[i * 4 + 2], sc = tr[i * 4 + 3];
-        const kind = (t.kinds?.[i] ?? Tree.broadleaf) as TreeKind;
-        const forest = this.groundAt(t, x, z) === Ground.forest;
-        const sp = speciesOf(kind, forest, hash(x, z, 1));
-        const model = this.geo[sp];
-        // Height from the tile's scale; crown from the survey, or in proportion (narrower in a closed wood).
-        const h = (sc * TREE_HEIGHT[kind] * (crown ? 1 : 0.9 + 0.2 * hash(x, z, 2))) / model.height;
-        let w = crown ? crown / model.crown : h * (forest ? 0.72 : 1) * (0.9 + 0.2 * hash(x, z, 3));
-        w = Math.min(h * 1.8, Math.max(h * 0.55, w));
-        push(sp, [x, y, z, w, h, kind === Tree.conifer ? 0.03 : 0.07]);
-      }
-    }
-    const bu = t.bushes;
-    if (bu?.length) {
-      for (let i = 0; i < bu.length / BUSH_STRIDE; i++) {
-        const o = i * BUSH_STRIDE;
-        const sp = BUSH_SPECIES[bu[o + 4]] ?? 'busch';
-        const s = (bu[o + 3] * 1.5) / this.geo[sp].height;
-        push(sp, [bu[o], bu[o + 1] - 0.1, bu[o + 2], s * (0.9 + 0.3 * hash(bu[o], bu[o + 2], 4)), s, 0.08]);
-      }
-    }
+    const bySpecies = placeVegetation(t, this.geo, this.lidar);
     for (const [sp, recs] of bySpecies) {
       const bush = SHAPE[sp].form === 'bush';
       const g = this.geo[sp];
@@ -354,23 +307,17 @@ export class Vegetation {
     }
   }
 
-  /** Ground class of the terrain cell under (x, z) in a tile. */
-  private groundAt(t: VegTile, x: number, z: number) {
-    const c = Math.max(0, Math.min(TERRAIN_N - 1, Math.round((x - t.ox) / TERRAIN_STEP)));
-    const r = Math.max(0, Math.min(TERRAIN_N - 1, Math.round((z - t.oz) / TERRAIN_STEP)));
-    return t.ground[r * TERRAIN_N + c];
-  }
-
   /** Instance data in thinning order; every tier mesh starts with all of it so its bounding sphere covers the tile. */
   private fill(meshes: THREE.InstancedMesh[], recs: Rec[]) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
     const mats = new Float32Array(recs.length * 16), cols = new Float32Array(recs.length * 3), xz = new Float32Array(recs.length * 2);
-    recs.forEach(([x, y, z, w, h, tint], n) => {
-      const r = hash(x, z, 5);
-      q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, r * Math.PI * 2);
+    recs.forEach((rec, n) => {
+      const [x, y, z, w, h] = rec;
+      // Turned at random, each tree a little lighter or darker, warmer or cooler (vegLook, shared with Unreal).
+      const look = vegLook(rec);
+      q.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, look.yaw);
       m.compose(p.set(x, y, z), q, s.set(w, h, w)).toArray(mats, n * 16);
-      // Each tree a little lighter or darker, warmer or cooler.
-      c.setRGB(1 + (fract(r * 3.7) - 0.5) * tint * 2, 1 + (fract(r * 5.3) - 0.5) * tint * 2, 1 - tint).toArray(cols, n * 3);
+      c.setRGB(...look.col).toArray(cols, n * 3);
       xz[n * 2] = x;
       xz[n * 2 + 1] = z;
     });
@@ -658,10 +605,9 @@ export class Vegetation {
 }
 
 const fract = (v: number) => v - Math.floor(v);
-const hash = (x: number, z: number, salt: number) => fract(Math.sin(x * 12.9898 + z * 78.233 + salt * 37.719) * 43758.5453);
 
 /** One instance: x, y, z, crown width scale, height scale, colour variation. */
-type Rec = [number, number, number, number, number, number];
+type Rec = VegRec;
 
 /** Detail tier for a distance: the first band it is under, or -1 beyond the last. */
 export function tierOf(d: number, bands: number[]) {

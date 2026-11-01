@@ -1,16 +1,19 @@
 # Builds the project's content from text, so nothing binary has to live in git (like going-vertical's gv_setup.py):
 # the PBR atlases exported from the web game (unreal/tools/export-textures.ts → Data/textures), the Material
-# Parameter Collection MPC_Sls (tex.* / ground.* / feldweg.* console commands) and the world materials. Every
+# Parameter Collection MPC_Sls (tex.* / ground.* / feldweg.* console commands), the world materials and the tree
+# species (unreal/tools/export-vegetation.ts → Data/vegetation, glTF LOD0 + LOD1, bark/leaf materials). Every
 # surface material is one Custom node calling the HLSL port of the web shaders (Shaders/SlsPbr.ush, included as
 # /SlsRacing/SlsPbr.ush through the SlsRacingShaders module).
 #   ./unreal/sls.sh setup      (runs the export, the C++ build and this script)
 #   UnrealEditor SlsRacing.uproject -ExecutePythonScript="<abs path>/Content/Python/sls_setup.py"
 # Re-running replaces everything in place. SLS_QUIT=1 closes the editor when done, SLS_DONE=<file> writes a marker.
+import json
 import os
 import unreal
 
 PROJECT = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir())
 TEX_SRC = os.path.join(PROJECT, 'Data', 'textures')
+VEG_SRC = os.path.join(PROJECT, 'Data', 'vegetation')
 tools = unreal.AssetToolsHelpers.get_asset_tools()
 MEL = unreal.MaterialEditingLibrary
 EAL = unreal.EditorAssetLibrary
@@ -71,7 +74,9 @@ def parameter_collection():
     params = []
     # Wx = weather (wetness, snow cover, puddles, rain), Precip = (rain, snow, box cm, light), set by USlsEnvironment
     for name, value in (('Pbr0', (1, 1, 1, 1)), ('Pbr1', (0.85, 1, 0, -1)), ('Pbr2', (1, 1, 1, 1)), ('Pbr3', (0, 0, 0, 0)),
-                        ('Wx', (0, 0, 0, 0)), ('Precip', (0, 0, 4000, 1))):
+                        ('Wx', (0, 0, 0, 0)), ('Precip', (0, 0, 4000, 1)),
+                        # Veg = (wind, leaf translucency, species shown, -), SlsVegCommands.cpp
+                        ('Veg', (1, 1, 0, 0))):
         p = unreal.CollectionVectorParameter()
         p.set_editor_property('parameter_name', name)
         p.set_editor_property('default_value', unreal.LinearColor(*value))
@@ -319,6 +324,152 @@ def precip_materials(mpc):
     precip_material('M_SlsSnow', mpc, 'Precip.y', 120.0, 60.0, 2.0, 2.0, 0.9)
 
 
+# Trees and bushes (phase 3). The species meshes come from the web game's tree generator as glTF (metres, y up;
+# Interchange turns them into centimetres, z up). Vertex colour = bark/leaf colour, alpha = wind weight (0 at the
+# trunk foot, 1 at the crown top); ASlsTileActor::BuildVegetation puts one HISM per species on every tile with
+# per-instance custom data 0..2 = colour factors (the web game's instanceColor). Materials as treeRender.ts:
+# bark roughness 0.95 with normal map, leaves alpha test 0.42, two-sided foliage, roughness 0.82.
+VEG_TEX = ('T_Sls_leaves', 'T_Sls_bark', 'T_Sls_barkn')
+WIND_FN = '/Engine/Functions/Engine_MaterialFunctions01/WorldPositionOffset/SimpleGrassWind.SimpleGrassWind'
+
+
+def import_files(paths, dest):
+    tasks = []
+    for f in paths:
+        t = unreal.AssetImportTask()
+        t.filename = f
+        t.destination_path = dest
+        t.automated = True
+        t.replace_existing = True
+        t.save = False
+        tasks.append(t)
+    tools.import_asset_tasks(tasks)
+
+
+def veg_textures():
+    import_files([os.path.join(VEG_SRC, n + '.png') for n in VEG_TEX], '/Game/Vegetation/Textures')
+    out = {}
+    for n in VEG_TEX:
+        t = unreal.load_asset('/Game/Vegetation/Textures/' + n)
+        if n == 'T_Sls_barkn':
+            t.set_editor_property('compression_settings', unreal.TextureCompressionSettings.TC_NORMALMAP)
+            t.set_editor_property('srgb', False)
+        else:
+            t.set_editor_property('srgb', True)
+        t.set_editor_property('lod_group', unreal.TextureGroup.TEXTUREGROUP_WORLD)
+        EAL.save_loaded_asset(t)
+        out[n] = t
+    return out
+
+
+VEG_HLSL = """
+float3 base = Tex.rgb * VC.rgb * Inst;
+// wet bark and leaves darken, snow settles on faces that look up (Wx = wet, snow cover, puddles, rain)
+base *= 1.0 - 0.35 * Wx.x * Wet;
+float up = saturate(normalize(N).z * 1.4 - 0.2);
+base = lerp(base, float3(0.88, 0.9, 0.95), saturate(Wx.y * SnowK * up));
+return base;
+"""
+
+
+def veg_material(name, mpc, tex, leaf):
+    m = material_in_place(name)
+    m.set_editor_property('two_sided', leaf)
+    m.set_editor_property('used_with_instanced_static_meshes', True)
+    m.set_editor_property('blend_mode', unreal.BlendMode.BLEND_MASKED)
+    m.set_editor_property('opacity_mask_clip_value', 0.42 if leaf else 0.01)
+    if leaf:
+        m.set_editor_property('shading_model', unreal.MaterialShadingModel.MSM_TWO_SIDED_FOLIAGE)
+    g = Graph(m)
+    t = g.node(unreal.MaterialExpressionTextureSample, texture=tex['T_Sls_leaves' if leaf else 'T_Sls_bark'])
+    vc = g.node(unreal.MaterialExpressionVertexColor)
+    inst = g.node(unreal.MaterialExpressionPerInstanceCustomData3Vector, data_index=0)
+    wxp = g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Wx')
+    vegp = g.node(unreal.MaterialExpressionCollectionParameter, collection=mpc, parameter_name='Veg')
+    nrm = g.node(unreal.MaterialExpressionVertexNormalWS)
+    code = ('const float Wet = %.2f; const float SnowK = %.2f;\n' % ((0.5, 0.8) if leaf else (1.0, 0.4))) + VEG_HLSL
+    c = g.custom(code, F3, [('Tex', (t, 'RGB')), ('VC', (vc, '')), ('Inst', (inst, '')), ('Wx', (wxp, '')), ('N', (nrm, ''))])
+    g.out(c, unreal.MaterialProperty.MP_BASE_COLOR)
+    g.out(t, unreal.MaterialProperty.MP_OPACITY_MASK, 'A')
+    g.out(g.node(unreal.MaterialExpressionConstant, r=0.82 if leaf else 0.95), unreal.MaterialProperty.MP_ROUGHNESS)
+    if leaf:
+        # light through the leaves in back light, scaled by veg.translucency (Veg.y)
+        sss = g.node(unreal.MaterialExpressionMultiply)
+        MEL.connect_material_expressions(c, '', sss, 'A')
+        k = g.node(unreal.MaterialExpressionComponentMask, r=False, g=True, b=False, a=False)
+        MEL.connect_material_expressions(vegp, '', k, '')
+        half = g.node(unreal.MaterialExpressionMultiply, const_b=0.6)
+        MEL.connect_material_expressions(k, '', half, 'A')
+        MEL.connect_material_expressions(half, '', sss, 'B')
+        g.out(sss, unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
+    else:
+        g.out(g.node(unreal.MaterialExpressionTextureSample, texture=tex['T_Sls_barkn'], sampler_type=unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL),
+              unreal.MaterialProperty.MP_NORMAL, 'RGB')
+    # Unreal's SimpleGrassWind: weight = vertex alpha (export) x veg.wind (Veg.x); bark sways less (web: same wind
+    # attribute, the trunk foot stays put)
+    wind = g.node(unreal.MaterialExpressionMaterialFunctionCall)
+    wind.set_editor_property('material_function', unreal.load_asset(WIND_FN))
+    wa = g.node(unreal.MaterialExpressionComponentMask, r=False, g=False, b=False, a=True)
+    MEL.connect_material_expressions(vc, '', wa, '')
+    ws = g.node(unreal.MaterialExpressionComponentMask, r=True, g=False, b=False, a=False)
+    MEL.connect_material_expressions(vegp, '', ws, '')
+    ww = g.node(unreal.MaterialExpressionMultiply)
+    MEL.connect_material_expressions(wa, '', ww, 'A')
+    MEL.connect_material_expressions(ws, '', ww, 'B')
+    MEL.connect_material_expressions(ww, '', wind, 'WindWeight')
+    MEL.connect_material_expressions(g.node(unreal.MaterialExpressionConstant, r=0.35 if leaf else 0.12), '', wind, 'WindIntensity')
+    MEL.connect_material_expressions(g.node(unreal.MaterialExpressionConstant, r=0.6), '', wind, 'WindSpeed')
+    g.out(wind, unreal.MaterialProperty.MP_WORLD_POSITION_OFFSET)
+    MEL.recompile_material(m)
+    EAL.save_loaded_asset(m)
+    log('SLS setup: %s' % name)
+    return m
+
+
+def imported_mesh(folder):
+    for path in EAL.list_assets(folder, recursive=True, include_folder=False):
+        a = EAL.load_asset(path)
+        if isinstance(a, unreal.StaticMesh):
+            return a
+    raise RuntimeError('kein StaticMesh in %s' % folder)
+
+
+def vegetation(mpc):
+    info_path = os.path.join(VEG_SRC, 'vegetation.json')
+    if not os.path.exists(info_path):
+        raise RuntimeError('%s fehlt (node unreal/tools/export-vegetation.ts)' % info_path)
+    info = json.load(open(info_path))
+    tex = veg_textures()
+    bark = veg_material('M_SlsBark', mpc, tex, False)
+    leaf = veg_material('M_SlsLeaves', mpc, tex, True)
+    sms = unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)
+    tmp = '/Game/Vegetation/Import'
+    for sp in info['species']:
+        sid = sp['id']
+        dest = '/Game/Vegetation/SM_Sls_' + sid
+        if EAL.does_directory_exist(tmp):
+            EAL.delete_directory(tmp)
+        meshes = []
+        for i in range(len(sp['lods'])):
+            folder = '%s/%s_%d' % (tmp, sid, i)
+            import_files([os.path.join(VEG_SRC, 'SM_Sls_%s_LOD%d.gltf' % (sid, i))], folder)
+            meshes.append(imported_mesh(folder))
+        if EAL.does_asset_exist(dest):
+            EAL.delete_asset(dest)
+        EAL.rename_asset(meshes[0].get_path_name(), dest)
+        mesh = EAL.load_asset(dest)
+        for i, lod in enumerate(meshes[1:], start=1):
+            sms.set_lod_from_static_mesh(mesh, i, lod, 0, True)
+        # slots by name (Bark / Leaf from the glTF); bushes may only have leaves
+        for i, slot in enumerate(mesh.get_editor_property('static_materials')):
+            mesh.set_material(i, leaf if 'leaf' in str(slot.get_editor_property('material_slot_name')).lower() else bark)
+        mesh.set_editor_property('light_map_resolution', 32)
+        EAL.save_loaded_asset(mesh)
+        log('SLS setup: %s (%d LODs)' % (dest, mesh.get_num_lods()))
+    if EAL.does_directory_exist(tmp):
+        EAL.delete_directory(tmp)
+
+
 def setup_done():
     if os.environ.get('SLS_DONE'):
         open(os.environ['SLS_DONE'], 'w').write('done\n')
@@ -333,4 +484,5 @@ world_materials(tex, mpc)
 light_material()
 water_material(tex)
 precip_materials(mpc)
+vegetation(mpc)
 setup_done()

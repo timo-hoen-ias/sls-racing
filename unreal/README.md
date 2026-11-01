@@ -79,6 +79,16 @@ und Auto-Belichtung. Die Sonne folgt der Uhr des Web-Spiels (`daylight.ts`). Das
 `weather.ts` (Nässe, Schneedecke, Pfützen, zufällige Wechsel, Grip-Tabelle) und wirkt auf Straßen (gleiche
 Pfützenmaske wie im Web), Regen/Schnee (`ASlsPrecipitation`, Bewegung komplett im Material) und das Auto.
 
+## Bäume und Büsche
+
+Die Pflanzorte rechnet dieselbe TypeScript-Funktion wie im Web-Spiel (`src/world/vegPlacement.ts`: LiDAR-Bäume,
+Wald- und Parkdichte, Büsche), der Export schreibt sie je Kachel als `v.sp`/`v.inst` (Art, Ort, Drehung, Größe,
+Farbfaktor). Die zwölf Arten erzeugt der Baumgenerator des Web-Spiels (`treeGen.ts`) als glTF mit zwei LODs
+(`unreal/tools/export-vegetation.ts` → `Data/vegetation`), `sls_setup.py` importiert sie per Interchange nach
+`/Game/Vegetation/SM_Sls_<art>` und baut `M_SlsBark` / `M_SlsLeaves` (Two-Sided-Foliage, Alpha-Test wie im Web,
+Wind über Unreals `SimpleGrassWind`, Nässe und Schnee). Jede Kachel bekommt pro Art eine
+Hierarchical-Instanced-Static-Mesh-Komponente; die Kollision der Stämme kommt wie bisher aus dem Kollisionsexport.
+
 ## Fahrphysik gegen das Web-Auto prüfen
 
 ```bash
@@ -122,6 +132,7 @@ $UE/Engine/Binaries/Linux/UnrealEditor "$PWD/unreal/SlsRacing/SlsRacing.uproject
 | `time [hh:mm]` · `time.set` · `day` `night` `dusk` `dawn` · `time.cycle [on\|off\|h/min]` | Tageszeit wie im Web-Spiel (Sonnenstand Saarlouis, Mitte September) |
 | `sky.overcast` · `sky.sun` · `sky.ambient` · `sky.exposure` · `sky.fog` | Bewölkung, Licht, Belichtung, Dunst |
 | `weather clear\|rain\|snow [stärke] [now]` · `weather.now` · `weather.intensity` · `weather.wet` · `weather.snowcover` · `weather.auto` · `weather.timescale` · `weather.grip` | Wetter, nasse Straße, Pfützen, Schneedecke, Grip |
+| `veg.on [0\|1]` · `veg.cull <m>` · `veg.info` · `veg.species [art\|index]` · `veg.wind` · `veg.translucency` · `veg.shadows [0\|1]` · `veg.reload` | Bäume und Büsche: an/aus, Sichtweite, Zählung je Art, eine Art zeigen, Wind, Gegenlicht, Schatten |
 | `sls.data <ordner>` | Anderer Export-Ordner |
 
 ## Aufbau

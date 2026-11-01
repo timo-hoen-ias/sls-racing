@@ -26,7 +26,7 @@ build() { need_engine; "$UE/Engine/Build/BatchFiles/Linux/Build.sh" SlsRacingEdi
 headless() { need_engine; need_world; "$EDITOR" "$PROJ" -game -nullrhi -unattended -nosound -nosplash -log -ExecCmds="$1"; }
 
 setup() {
-  (cd "$HERE/.." && node unreal/tools/export-textures.ts)
+  (cd "$HERE/.." && node unreal/tools/export-textures.ts && node unreal/tools/export-vegetation.ts)
   build
   # like going-vertical: the editor can hang in its exit after the script; end it a minute after the done marker
   DONE="$SAVED/sls-setup-done"

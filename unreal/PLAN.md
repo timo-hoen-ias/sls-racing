@@ -83,6 +83,11 @@ Büsche, Gras, Props und geparkte Autos (`props.ts`, GLBs per Interchange), Häu
 Laternen, Leitplanken (`guardRail.ts`), Bordsteine, Leitpfosten, Schilder und Wegweiser (`signSpec.ts`),
 Wahrzeichen und Brücken-GLBs, Bahn, Strom, Sportplätze, Fernsicht (`far/`-Kacheln), Knockdown (Laternen, Props).
 
+- [x] Bäume und Büsche: Pflanzorte aus `vegPlacement.ts` (gemeinsam mit dem Web), Arten aus `treeGen.ts` als glTF
+      mit 2 LODs, HISM je Art und Kachel mit Farbfaktor als Custom Data, Wind/Nässe/Schnee im Material; `veg.*`.
+      Offen: Gras (`veg.grass`), Impostors durch Nanite-Foliage ersetzen, wenn die Leistung es braucht.
+- [ ] Props, geparkte Autos, Laternen, Leitplanken, Schilder, Tankstellen.
+
 **Parität:** gleiche Anzahl und Lage je Kachel (Export-Zählung gegen Unreal-Zählung), Kollision schon in Phase 0.
 
 ## Phase 4: Verkehr, KI, Navigation

@@ -9,6 +9,7 @@
 class ASlsTileActor;
 class FSlsTileFile;
 class UMaterialInterface;
+class UStaticMesh;
 
 /** World info from WorldData/index.json (the web build's index plus the export's fields). */
 struct FSlsWorldInfo
@@ -21,6 +22,8 @@ struct FSlsWorldInfo
 	FVector SpawnLocal = FVector::ZeroVector;
 	double SpawnHeading = 0;
 	FString RoadProfile;
+	/** Vegetation species ids in v.sp index order (index.json vegetation.species). */
+	TArray<FString> Species;
 };
 
 /**
@@ -78,6 +81,11 @@ public:
 	void RefreshMaterials();
 	UMaterialInterface* MaterialFor(const FString& Layer, bool bVertexColor);
 
+	/** Species meshes /Game/Vegetation/SM_Sls_<id> (null until sls_setup.py imported them), loaded on first use. */
+	TArrayView<UStaticMesh* const> VegetationMeshes();
+	/** Rebuilds the trees of every loaded tile (veg.reload, veg.on, veg.cull). */
+	void RefreshVegetation();
+
 	/** Road network (graph.json). */
 	const FSlsRoadGraph& Roads() const { return Graph; }
 
@@ -102,4 +110,11 @@ private:
 
 	UPROPERTY()
 	TMap<FString, TObjectPtr<UMaterialInterface>> Materials;
+
+	UPROPERTY()
+	TArray<TObjectPtr<UStaticMesh>> VegMeshes;
+	/** Same pointers as plain array for the views handed out (kept alive by VegMeshes). */
+	TArray<UStaticMesh*> VegMeshRaw;
+	bool bVegMeshesLoaded = false;
+	void BuildVegetationFor(ASlsTileActor* A, const FSlsTileFile& File);
 };

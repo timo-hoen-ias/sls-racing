@@ -4,6 +4,7 @@
 #include "SlsRacing.h"
 #include "Async/Async.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -25,6 +26,9 @@ static FAutoConsoleVariableRef CVarStreamRadius(TEXT("stream.radius"), GStreamRa
 static FAutoConsoleVariableRef CVarStreamPhysRadius(TEXT("stream.physradius"), GStreamPhysRadius, TEXT("Kollider nur bis zu diesem Abstand in m"));
 static FAutoConsoleVariableRef CVarStreamBudget(TEXT("stream.budget"), GStreamBudget, TEXT("Hauptthread-Zeit pro Frame für Kachelaufbau in ms (mindestens ein Schritt pro Frame)"));
 static FAutoConsoleVariableRef CVarStreamInflight(TEXT("stream.inflight"), GStreamInflight, TEXT("Gleichzeitig gelesene Kacheln"));
+/** Trees and bushes (veg.*, Debug/SlsVegCommands.cpp). veg.cull: HISM cull distance in m (web: trees within stream.radius). */
+int32 GVegOn = 1;
+float GVegCull = 720.f;
 static TAutoConsoleVariable<FString> CVarDataDir(TEXT("sls.data"), TEXT(""), TEXT("Ordner der exportierten Welt (leer = <Projekt>/WorldData)"));
 
 bool USlsWorldSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -90,7 +94,51 @@ bool USlsWorldSubsystem::LoadIndex(FString& Err)
 	World.SpawnLocal = FVector(S->GetNumberField(TEXT("x")), S->GetNumberField(TEXT("y")), S->GetNumberField(TEXT("z")));
 	World.SpawnHeading = S->GetNumberField(TEXT("heading"));
 	J->TryGetStringField(TEXT("roadProfile"), World.RoadProfile);
+	const TSharedPtr<FJsonObject>* Veg;
+	const TArray<TSharedPtr<FJsonValue>>* Ids;
+	if (J->TryGetObjectField(TEXT("vegetation"), Veg) && (*Veg)->TryGetArrayField(TEXT("species"), Ids))
+		for (const TSharedPtr<FJsonValue>& V : *Ids) World.Species.Add(V->AsString());
 	return true;
+}
+
+TArrayView<UStaticMesh* const> USlsWorldSubsystem::VegetationMeshes()
+{
+	if (!bVegMeshesLoaded)
+	{
+		bVegMeshesLoaded = true;
+		VegMeshes.Reset();
+		VegMeshRaw.Reset();
+		int32 Found = 0;
+		for (const FString& Id : World.Species)
+		{
+			const FString Path = FString::Printf(TEXT("/Game/Vegetation/SM_Sls_%s.SM_Sls_%s"), *Id, *Id);
+			UStaticMesh* M = LoadObject<UStaticMesh>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
+			Found += M != nullptr;
+			VegMeshes.Add(M);
+			VegMeshRaw.Add(M);
+		}
+		if (World.Species.Num() && Found < World.Species.Num())
+			UE_LOG(LogSls, Warning, TEXT("Vegetation: %d von %d Arten importiert (./unreal/sls.sh setup)"), Found, World.Species.Num());
+	}
+	return TArrayView<UStaticMesh* const>(VegMeshRaw);
+}
+
+void USlsWorldSubsystem::BuildVegetationFor(ASlsTileActor* A, const FSlsTileFile& File)
+{
+	if (!A) return;
+	if (!GVegOn) { A->RemoveVegetation(); return; }
+	A->BuildVegetation(File, VegetationMeshes(), GVegCull * 100.f);
+}
+
+void USlsWorldSubsystem::RefreshVegetation()
+{
+	bVegMeshesLoaded = false;
+	for (const auto& [T, A] : Tiles)
+	{
+		if (!A) continue;
+		if (const TSharedPtr<FSlsTileFile>* File = Files.Find(T)) BuildVegetationFor(A, **File);
+		else A->RemoveVegetation();
+	}
 }
 
 FIntPoint USlsWorldSubsystem::TileOfLocal(double X, double Z) const
@@ -161,6 +209,7 @@ ASlsTileActor* USlsWorldSubsystem::Spawn(const FSlsTileFile& File, bool bCollisi
 	ASlsTileActor* A = GetWorld()->SpawnActor<ASlsTileActor>(ASlsTileActor::StaticClass(), Loc, FRotator::ZeroRotator, P);
 	A->BuildVisual(File, [this](const FString& L, bool bC) { return MaterialFor(L, bC); });
 	if (bCollision) A->BuildCollision(File, bAsyncCooking);
+	BuildVegetationFor(A, File);
 	Tiles.Add(FIntPoint(File.IX, File.IY), A);
 	return A;
 }

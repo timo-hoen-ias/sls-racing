@@ -5,6 +5,8 @@
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "PhysicsEngine/BodySetup.h"
 #include "UObject/StrongObjectPtr.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 
 namespace
 {
@@ -193,4 +195,59 @@ void ASlsTileActor::RemoveCollision()
 	for (UProceduralMeshComponent* C : CollisionComponents)
 		if (C) C->DestroyComponent();
 	CollisionComponents.Reset();
+}
+
+void ASlsTileActor::BuildVegetation(const FSlsTileFile& File, TArrayView<UStaticMesh* const> Meshes, float CullCm)
+{
+	RemoveVegetation();
+	const TArrayView<const uint8> Sp = File.View<uint8>(TEXT("v.sp"));
+	const TArrayView<const float> In = File.View<float>(TEXT("v.inst"));
+	if (Sp.Num() == 0 || In.Num() < Sp.Num() * 9) return;
+	TMap<int32, TArray<int32>> BySpecies;
+	for (int32 I = 0; I < Sp.Num(); I++) BySpecies.FindOrAdd(Sp[I]).Add(I);
+	for (const auto& [K, List] : BySpecies)
+	{
+		UStaticMesh* Mesh = Meshes.IsValidIndex(K) ? Meshes[K] : nullptr;
+		if (!Mesh) continue;
+		UHierarchicalInstancedStaticMeshComponent* H = NewObject<UHierarchicalInstancedStaticMeshComponent>(this, *FString::Printf(TEXT("Veg_%d"), K));
+		H->SetStaticMesh(Mesh);
+		H->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		H->SetCanEverAffectNavigation(false);
+		H->SetCastShadow(true);
+		H->NumCustomDataFloats = 3;
+		H->InstanceStartCullDistance = int32(CullCm * 0.8f);
+		H->InstanceEndCullDistance = int32(CullCm);
+		H->SetupAttachment(Render);
+		H->RegisterComponent();
+		TArray<FTransform> Xf;
+		Xf.Reserve(List.Num());
+		for (int32 I : List)
+		{
+			const float* F = In.GetData() + I * 9;
+			Xf.Add(FTransform(FRotator(0.f, F[3], 0.f), FVector(F[0], F[1], F[2]), FVector(F[4], F[4], F[5])));
+		}
+		H->AddInstances(Xf, false, false);
+		for (int32 N = 0; N < List.Num(); N++)
+		{
+			const float* F = In.GetData() + List[N] * 9;
+			H->SetCustomData(N, TArray<float>({ F[6], F[7], F[8] }), false);
+		}
+		H->MarkRenderStateDirty();
+		VegetationComponents.Add(H);
+	}
+}
+
+void ASlsTileActor::RemoveVegetation()
+{
+	for (UHierarchicalInstancedStaticMeshComponent* H : VegetationComponents)
+		if (H) H->DestroyComponent();
+	VegetationComponents.Reset();
+}
+
+int32 ASlsTileActor::VegetationCount() const
+{
+	int32 N = 0;
+	for (const UHierarchicalInstancedStaticMeshComponent* H : VegetationComponents)
+		if (H) N += H->GetInstanceCount();
+	return N;
 }

@@ -15,6 +15,8 @@ import { buildTile, type MeshArrays } from '../../src/world/tileBuild.ts';
 import { addTileColliders, type ColliderKind } from '../../src/world/tileColliders.ts';
 import { CAR_GROUPS } from '../../src/vehicle/carPhysics.ts';
 import { mergeLevels, SURFACE_LIMITS } from '../../src/world/surfaceScan.ts';
+import { placeVegetation, vegLook } from '../../src/world/vegPlacement.ts';
+import { species, SPECIES_IDS } from './vegSpecies.ts';
 import { bytesOf, packSlsu, shardOf, REF_CELL, REF_N, REF_NONE, type ColliderGroup, type LayerInfo, type Section } from './slsu.ts';
 
 const arg = (name: string, def: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3) ?? def;
@@ -203,6 +205,37 @@ function meshSections(name: string, m: MeshArrays, ox: number, oz: number, out: 
   return { name, verts: m.pos.length / 3, tris: idx.length / 3, uv: !!m.uv, col: !!m.col, splat };
 }
 
+/**
+ * Trees and bushes as the web game plants them (vegPlacement.ts with the generated species' sizes): v.sp = species
+ * index (SPECIES order, see index.json vegetation), v.inst = 9 floats per instance: X, Y, Z (cm from the tile corner),
+ * yaw (Unreal degrees), crown scale, height scale, colour factors r, g, b.
+ */
+function vegetationSections(t: TileContent, ox: number, oz: number, out: Section[]) {
+  if (!t.has('ground')) return 0;
+  const geo = species();
+  const placed = placeVegetation({
+    ox, oz, ground: t.u8('ground')!,
+    trees: t.has('trees') ? t.f32('trees') : undefined,
+    kinds: t.has('treeKinds') ? t.u8('treeKinds') : undefined,
+    crowns: t.has('treeCrowns') ? t.u8('treeCrowns') : undefined,
+    bushes: t.has('bushes') ? t.f32('bushes') : undefined,
+  }, geo, true);
+  const sp: number[] = [], inst: number[] = [];
+  for (const [id, recs] of placed) {
+    const k = SPECIES_IDS.indexOf(id);
+    for (const r of recs) {
+      const look = vegLook(r);
+      sp.push(k);
+      // Web yaw turns about +y in a right-handed frame; Unreal's frame is mirrored (y/z swapped): negate.
+      inst.push((r[0] - ox) * 100, (r[2] - oz) * 100, r[1] * 100, -look.yaw * 180 / Math.PI, r[3], r[4], ...look.col);
+    }
+  }
+  if (!sp.length) return 0;
+  out.push({ name: 'v.sp', type: 'u8', bytes: bytesOf(Uint8Array.from(sp)) });
+  out.push({ name: 'v.inst', type: 'f32', bytes: bytesOf(Float32Array.from(inst)) });
+  return sp.length;
+}
+
 function exportTile(t: TileContent, w: WorldInfo, recorded: Recorded[], ref?: ReturnType<typeof probeRef>) {
   const [ox, oz] = tileOriginLocal(w, t.ix, t.iy);
   const sections: Section[] = [];
@@ -252,8 +285,9 @@ function exportTile(t: TileContent, w: WorldInfo, recorded: Recorded[], ref?: Re
     sections.push({ name: 'r.yw', type: 'u8', bytes: bytesOf(ref.yw) });
     sections.push({ name: 'r.yc', type: 'u8', bytes: bytesOf(ref.yc) });
   }
+  const veg = vegetationSections(t, ox, oz, sections);
   const file = packSlsu({
-    ix: t.ix, iy: t.iy, v: 1, originLocal: [ox, oz], originUE: [ox * 100, oz * 100], layers, colliders: groups,
+    ix: t.ix, iy: t.iy, v: 1, veg, originLocal: [ox, oz], originUE: [ox * 100, oz * 100], layers, colliders: groups,
     ...(ref ? { ref: { cell: REF_CELL, n: REF_N, count: ref.keys.length } } : {}),
   }, sections);
   writeFileSync(`${OUT}t/${tileKey(t.ix, t.iy)}.slsu`, gzipSync(file, { level: 6 }));
@@ -326,7 +360,7 @@ async function main() {
   }
 
   // World manifest and the shared JSON layers (road graph, signs, events …) as they are.
-  writeFileSync(`${OUT}index.json`, JSON.stringify({ ...index, format: 'slsu', slsu: { version: 1, refCell: REF_CELL, refN: REF_N, tiles: index.tiles.length } }));
+  writeFileSync(`${OUT}index.json`, JSON.stringify({ ...index, format: 'slsu', slsu: { version: 1, refCell: REF_CELL, refN: REF_N, tiles: index.tiles.length }, vegetation: { species: SPECIES_IDS } }));
   for (const f of readdirSync(TILES)) if (f.endsWith('.json') && f !== 'index.json') copyFileSync(`${TILES}${f}`, `${OUT}${f}`);
   console.log(`Unreal-Export: ${n} Kacheln, ${(bytes / 1e6).toFixed(0)} MB unkomprimiert, ${refCells} Referenzzellen in ${((Date.now() - t0) / 1000).toFixed(0)} s → ${OUT}`);
 }

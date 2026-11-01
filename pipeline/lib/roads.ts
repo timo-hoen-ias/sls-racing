@@ -183,6 +183,21 @@ function surface(way: Way, height: (e: number, n: number) => number) {
     : (e: number, n: number, dist: number) => ground(e, n, dist) + lift + raised(dist) + levelAt(way, dist);
 }
 
+/** Cross slope of a road (rise per metre to the left of its direction) at a distance along it: tilted across
+ *  inside junction plateaus on a slope (profiles.ts), else 0. Bridges and tunnels stay flat across. */
+export function crossSlope(way: Way): (dist: number) => number {
+  const x = way.profile?.x;
+  if (!x || isBridge(way.tags) || builtTunnel(way.tags)) return () => 0;
+  const d = way.profile!.dist;
+  let k = 0;
+  return (dist) => {
+    if (dist < d[k]) k = 0;
+    while (k < d.length - 2 && dist > d[k + 1]) k++;
+    const t = Math.min(1, Math.max(0, (dist - d[k]) / (d[k + 1] - d[k] || 1)));
+    return x[k] + (x[k + 1] - x[k]) * t;
+  };
+}
+
 /** Surface height at each original node of a way (for the road graph). */
 export function roadSurfaceHeights(way: Way, height: (e: number, n: number) => number): number[] {
   const y = surface(way, height);
@@ -198,6 +213,7 @@ export function roadProfile(way: Way, height: (e: number, n: number) => number, 
   const pts = densify(way.pts, step);
   if (pts.length < 2) return [];
   const ySurf = surface(way, height);
+  const cross = crossSlope(way);
   let dist = 0;
   return pts.map((p, i) => {
     if (i) dist += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
@@ -209,7 +225,7 @@ export function roadProfile(way: Way, height: (e: number, n: number) => number, 
     dx /= dl;
     dy /= dl;
     const [x, z] = utmToLocal(world, p[0], p[1]);
-    return { e: p[0], n: p[1], x, z, dx, dy, y: ySurf(p[0], p[1], dist), dist };
+    return { e: p[0], n: p[1], x, z, dx, dy, y: ySurf(p[0], p[1], dist), dist, cx: cross(dist) };
   });
 }
 
@@ -428,7 +444,9 @@ export function buildRoads(
       const full = (p: typeof a) => Ln + Rn.get(p)!;
       const segLook = run && (loss(a) > 0 || loss(b) > 0)
         ? encodeRoad(roadLook(way.tags, way.id, { ...section, width: (full(a) + full(b)) / 2 }, sidewalk)) : look;
-      strip(tile.roads, right, left, [a.y, a.y], [b.y, b.y], (p, s) => [((s ? left(p) : right(p)) + Rn.get(p)!) / full(p), segLook]);
+      // Height at signed offset o (left positive): the cross slope of a junction plateau tilts the road across.
+      const yo = (p: typeof a, o: number) => p.y + p.cx * o;
+      strip(tile.roads, right, left, [yo(a, right(a)), yo(a, left(a))], [yo(b, right(b)), yo(b, left(b))], (p, s) => [((s ? left(p) : right(p)) + Rn.get(p)!) / full(p), segLook]);
       // Lifted road on an embankment: own collision, and retaining walls down to the terrain.
       const above = !bridge && way.raise ? Math.max(a.y - height(a.e, a.n), b.y - height(b.e, b.n)) : 0;
       // Feldwege: a grassy bank on both sides down to the terrain, so a way across a slope or in a hairpin
@@ -467,8 +485,9 @@ export function buildRoads(
         };
         const on: [boolean, boolean] = [i > 1, i < ring.length - 1];
         // Never in a tunnel: the ground above stays where it is.
-        if (!tunnel) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), a.y, b.e + b.dy * co(b), b.n - b.dx * co(b), b.y, ch, !lifted || bank, cap, pv, on);
-        const c = (p: typeof a, d: number) => p.y - d;
+        // Tilted across (centred off the line by co, so the centre height moves along the tilt by -co).
+        if (!tunnel) carve?.add(a.e + a.dy * co(a), a.n - a.dx * co(a), yo(a, -co(a)), b.e + b.dy * co(b), b.n - b.dx * co(b), yo(b, -co(b)), ch, !lifted || bank, cap, pv, on, [a.cx, b.cx]);
+        const c = (p: typeof a, d: number, o = 0) => p.y + p.cx * o - d;
         // Another road just below beside this one (a junction arm, a road alongside at another height): the
         // collision must not reach out over it, or its wheels hit this road's skirt above their own surface.
         const lower = (p: typeof a, o: number) => carriageways.below(way, ...off(p, o), p.y - STRIP_DROP);
@@ -481,12 +500,12 @@ export function buildRoads(
           return 0.5;
         };
         const lw = (p: typeof a) => left(p) + reach(p, 1), rw = (p: typeof a) => right(p) - reach(p, -1);
-        strip(tile.collide, rw, lw, [c(a, STRIP_DROP), c(a, STRIP_DROP)], [c(b, STRIP_DROP), c(b, STRIP_DROP)]);
+        strip(tile.collide, rw, lw, [c(a, STRIP_DROP, rw(a)), c(a, STRIP_DROP, lw(a))], [c(b, STRIP_DROP, rw(b)), c(b, STRIP_DROP, lw(b))]);
         if (!lifted || bank) {
           // Bevel 1 m out and down under the terrain, but never above a lower road there.
-          const skirt = (p: typeof a, o: number) => Math.min(c(p, ROAD_LIFT + 0.1), (lower(p, o) ?? Infinity) - STRIP_DROP);
-          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP), skirt(a, lw(a) + 1)], [c(b, STRIP_DROP), skirt(b, lw(b) + 1)]);
-          strip(tile.collide, (p) => rw(p) - 1, rw, [skirt(a, rw(a) - 1), c(a, STRIP_DROP)], [skirt(b, rw(b) - 1), c(b, STRIP_DROP)]);
+          const skirt = (p: typeof a, o: number) => Math.min(c(p, ROAD_LIFT + 0.1, o), (lower(p, o) ?? Infinity) - STRIP_DROP);
+          strip(tile.collide, lw, (p) => lw(p) + 1, [c(a, STRIP_DROP, lw(a)), skirt(a, lw(a) + 1)], [c(b, STRIP_DROP, lw(b)), skirt(b, lw(b) + 1)]);
+          strip(tile.collide, (p) => rw(p) - 1, rw, [skirt(a, rw(a) - 1), c(a, STRIP_DROP, rw(a))], [skirt(b, rw(b) - 1), c(b, STRIP_DROP, rw(b))]);
         }
       }
       // Deck seen from below and from the side: 1 m thick slab, where there is room under it.
@@ -516,14 +535,14 @@ export function buildRoads(
         const at = (d: number) => {
           const t = (d - d0) / (d1 - d0 || 1);
           const l = (u: number, v: number) => u + (v - u) * t;
-          return { ...a, e: l(a.e, b.e), n: l(a.n, b.n), x: l(a.x, b.x), z: l(a.z, b.z), y: l(a.y, b.y), dist: l(a.dist, b.dist) };
+          return { ...a, e: l(a.e, b.e), n: l(a.n, b.n), x: l(a.x, b.x), z: l(a.z, b.z), y: l(a.y, b.y), dist: l(a.dist, b.dist), cx: l(a.cx, b.cx) };
         };
         for (let s0 = Math.floor(d0 / period) * period; s0 < d1; s0 += period) {
           const lo = Math.max(d0, s0), hi = Math.min(d1, s0 + on);
           if (hi - lo < 0.05) continue;
           const p = at(lo), q = at(hi);
           if (jIndex.near(p.x, p.z, clear) || jIndex.near(q.x, q.z, clear)) continue;
-          strip(tile.markings, o0, o1, [p.y + 0.02, p.y + 0.02], [q.y + 0.02, q.y + 0.02], undefined, [p, q]);
+          strip(tile.markings, o0, o1, [yo(p, o0) + 0.02, yo(p, o1) + 0.02], [yo(q, o0) + 0.02, yo(q, o1) + 0.02], undefined, [p, q]);
         }
       };
       // Lane lines (RMS on motorways: 0.15 m, 6 m line, 12 m gap). Offsets in the section are to the right;

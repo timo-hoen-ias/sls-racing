@@ -31,6 +31,8 @@ export interface Paved { l: number; r: number; tl: number; tr: number }
 interface Seg {
   e0: number; n0: number; y0: number; e1: number; n1: number; y1: number; hw: number; cw: number; drape: boolean;
   paved: Paved;
+  /** Cross slope at start / end (rise per metre to the left). */
+  x0: number; x1: number;
   /** The road continues past the start / end (another segment of it carries on there). */
   on0: boolean; on1: boolean;
 }
@@ -52,10 +54,10 @@ export class RoadCarve {
    */
   add(
     e0: number, n0: number, y0: number, e1: number, n1: number, y1: number, hw: number, drape = true, cap = hw, paved?: Paved,
-    on: [boolean, boolean] = [false, false],
+    on: [boolean, boolean] = [false, false], cross: [number, number] = [0, 0],
   ) {
     const cw = Math.max(hw, cap);
-    const s: Seg = { e0, n0, y0, e1, n1, y1, hw, cw, drape, paved: paved ?? { l: cw, r: cw, tl: 0, tr: 0 }, on0: on[0], on1: on[1] };
+    const s: Seg = { e0, n0, y0, e1, n1, y1, hw, cw, drape, paved: paved ?? { l: cw, r: cw, tl: 0, tr: 0 }, on0: on[0], on1: on[1], x0: cross[0], x1: cross[1] };
     const r = Math.max(cw, s.paved.l, s.paved.r) + Math.max(this.reach, FLAT);
     for (let cx = Math.floor((Math.min(e0, e1) - r) / CELL); cx <= Math.floor((Math.max(e0, e1) + r) / CELL); cx++)
       for (let cy = Math.floor((Math.min(n0, n1) - r) / CELL); cy <= Math.floor((Math.max(n0, n1) + r) / CELL); cy++) {
@@ -80,7 +82,9 @@ export class RoadCarve {
       if (d > Math.max(s.cw, pave) + this.reach) continue;
       // Past an end where the road carries on, the grade is extended: the next segment holds the road there, and
       // the end height would pull the verge of a climbing road down into a ledge beside it.
-      const road = s.y0 + (s.y1 - s.y0) * ((u < 0 && s.on0) || (u > 1 && s.on1) ? u : t);
+      // A road tilted across (junction plateau on a slope, profiles.ts) rises by its cross slope to the left, up to
+      // its paved edge.
+      const road = s.y0 + (s.y1 - s.y0) * ((u < 0 && s.on0) || (u > 1 && s.on1) ? u : t) + (s.x0 + (s.x1 - s.x0) * t) * Math.min(d, pave) * (left ? 1 : -1);
       // Under the carriageway the mesh stays ROAD_LIFT down, under a pavement just below the road's level (so it
       // never reaches over the kerb into the carriageway); beside a draped road it meets the paved edge.
       const y = !s.drape || d <= s.cw ? road - ROAD_LIFT : d <= pave ? road - EDGE : road + (left ? s.paved.tl : s.paved.tr) - EDGE;

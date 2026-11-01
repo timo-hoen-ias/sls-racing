@@ -43,6 +43,8 @@ const NODE_REACH = 6;
 const RAMP_GRADE = 0.04;
 /** Past the junction plateau the road blends back into its own profile over this length (m). */
 const JUNCTION_BLEND = 10;
+/** Cross slope fades to zero over this distance (m) towards a way end that is no junction. */
+const CROSS_FADE = 8;
 /** A junction plateau tilts with the grade of its main road, up to this much (rise per metre). */
 const PLATEAU_GRADE = 0.12;
 /** Grade of a road end is measured over this length, and matched to the road it continues into over this reach (m). */
@@ -51,6 +53,8 @@ const GRADE_SPAN = 4, GRADE_REACH = 16;
 const TILT_SPAN = 8;
 /** Direction of a junction arm is taken over this length (m); a plateau reaches at most this far along an arm. */
 const ARM_SPAN = 10, MAX_ARM_REACH = 30;
+/** Junction plateaus tilt each road across as well as along (profile.x, roads.ts); false = flat across (old). */
+export const CROSS_SLOPE = true;
 /** Arms leaving a junction within 60° of each other form a fork. */
 const FORK_COS = 0.5;
 
@@ -349,28 +353,50 @@ export function roadProfiles(ways: Way[], height: (e: number, n: number) => numb
         if (sw > 0) slope = ss / sw;
       }
       return [{
+        // No tilt across where a bridge or tunnel meets the junction: those stay flat across, so a tilted
+        // neighbour would stand off their deck edge by grade × half width.
         at: nodeAt[i], y: nodeH.get(id)!, slope,
+        g: partners.length || (arms.get(id) ?? []).some((a) => isBridge(a.w.tags) || builtTunnel(a.w.tags)) ? undefined : [ge, gn] as [number, number],
         rBack: Math.max(base, back ? overlapReach(id, w, back, hw) : 0),
         rFwd: Math.max(base, fwd ? overlapReach(id, w, fwd, hw) : 0),
       }];
     });
+    // Cross slope (rise per metre to the left) inside the plateaus: the plane's gradient across the road, so a
+    // side road meets a street climbing past it edge to edge instead of flat across with a ledge on one side.
+    let cross: Float32Array | undefined;
+    // A way end that is not a junction continues into another road (or a bridge) that is flat across there:
+    // the tilt fades out towards such an end so both meet edge to edge.
+    const len = d[d.length - 1];
+    const openStart = !isJunction(w.ids[0]), openEnd = !isJunction(w.ids[w.ids.length - 1]);
+    const endFade = (dk: number) => {
+      const t = Math.min(1, (openStart ? dk : Infinity) / CROSS_FADE, (openEnd ? len - dk : Infinity) / CROSS_FADE);
+      return t * t * (3 - 2 * t);
+    };
     if (flats.length)
       for (let k = 0; k < prof.length; k++) {
         // Plateaus close together share the stretch between them: weighted by closeness, so the profile
         // passes continuously from one to the next instead of stepping where the nearer one changes.
-        let wt = 0, sw = 0, sy = 0;
+        let wt = 0, sw = 0, sy = 0, sx = 0;
         for (const f of flats) {
           const off = Math.abs(d[k] - f.at), r = d[k] < f.at ? f.rBack : f.rFwd;
           const t = off <= r ? 1 : Math.max(0, 1 - (off - r) / JUNCTION_BLEND);
           if (!t) continue;
           const tw = off <= r ? 1e6 : t;
           wt = Math.max(wt, t); sw += tw; sy += tw * (f.y + f.slope * (d[k] - f.at));
+          if (f.g && CROSS_SLOPE) {
+            const [p0, p1] = pointsAlong(w, [Math.max(0, d[k] - 1), Math.min(d[d.length - 1], d[k] + 1)]);
+            const l = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) || 1;
+            // Left of the heading (u) is (-u_n, u_e).
+            sx += tw * (f.g[0] * -(p1[1] - p0[1]) / l + f.g[1] * (p1[0] - p0[0]) / l);
+          }
         }
         const y = sw ? sy / sw : 0;
         // Smoothstep so the grade changes gently into and out of the plateau.
-        if (wt > 0) prof[k] += (y - prof[k]) * wt * wt * (3 - 2 * wt);
+        const blend = wt * wt * (3 - 2 * wt);
+        if (wt > 0) prof[k] += (y - prof[k]) * blend;
+        if (sx && sw) (cross ??= new Float32Array(prof.length))[k] = Math.max(-PLATEAU_GRADE, Math.min(PLATEAU_GRADE, (sx / sw) * blend * endFade(d[k])));
       }
-    w.profile = { dist: Float32Array.from(d), y: Float32Array.from(prof) };
+    w.profile = { dist: Float32Array.from(d), y: Float32Array.from(prof), ...(cross ? { x: cross } : {}) };
   }
 
   // Where one road simply continues as another (two road ends at a node, nothing else), give both the same

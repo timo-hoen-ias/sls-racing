@@ -56,6 +56,8 @@ public:
 	static FVector SunDirectionWeb(double Hours);
 	/** Daylight factor 0 (night) .. 1 (day), for precipitation brightness and lights. */
 	float DayFactor() const;
+	/** light.sky: the sky light (state, recapture). */
+	ASkyLight* GetSkyLight() const { return SkyLight; }
 
 private:
 	void Apply();

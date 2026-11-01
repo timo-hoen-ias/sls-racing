@@ -105,9 +105,13 @@ void USlsEnvironment::SpawnSky()
 		Clouds->SetMaterial(CM);
 	Clouds->RegisterComponent();
 
-	SkyLight = W->SpawnActor<ASkyLight>(FVector::ZeroVector, FRotator::ZeroRotator, P);
+	// Captured scene, recaptured every 2 s in Apply(). Real-time capture lit nothing on Linux/Vulkan (RX 7800 XT,
+	// UE 5.8): shadow sides of houses and the car were black and sky.ambient changed nothing; light.sky realtime 1
+	// switches it back on to test other systems.
+	SkyLight = W->SpawnActorDeferred<ASkyLight>(ASkyLight::StaticClass(), FTransform::Identity, nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
 	SkyLight->GetLightComponent()->SetMobility(EComponentMobility::Movable);
-	SkyLight->GetLightComponent()->bRealTimeCapture = true;
+	SkyLight->GetLightComponent()->bRealTimeCapture = false;
+	SkyLight->FinishSpawning(FTransform::Identity);
 	SkyLight->GetLightComponent()->RecaptureSky();
 
 	Fog = W->SpawnActor<AExponentialHeightFog>(FVector(0, 0, 18000.f), FRotator::ZeroRotator, P);
@@ -169,7 +173,7 @@ void USlsEnvironment::Apply()
 	if (SkyLight)
 	{
 		SkyLight->GetLightComponent()->SetIntensity(AmbientScale * FMath::Lerp(1.f, 0.7f, Cover));
-		// Real-time capture follows the sky by itself; a periodic recapture keeps the cubemap fresh in older RHIs.
+		// The captured cubemap follows sun and clouds through this periodic recapture (no real-time capture, see SpawnSky).
 		RecaptureIn -= W->GetDeltaSeconds();
 		if (RecaptureIn <= 0) { SkyLight->GetLightComponent()->RecaptureSky(); RecaptureIn = 2.f; }
 	}

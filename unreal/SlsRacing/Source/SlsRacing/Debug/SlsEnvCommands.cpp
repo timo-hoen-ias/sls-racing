@@ -3,7 +3,9 @@
 
 #include "SlsRacing.h"
 #include "World/SlsEnvironment.h"
+#include "Components/SkyLightComponent.h"
 #include "Engine/Engine.h"
+#include "Engine/SkyLight.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 
@@ -95,6 +97,27 @@ namespace
 				else if (IsOn(A[0])) E->CycleSpeed = 1;
 				else E->CycleSpeed = FMath::Clamp(FCString::Atod(*A[0]), 0.0, 600.0);
 				Say(Status(E));
+			});
+			Add(TEXT("light.sky"), TEXT("Himmelslicht: Zustand, light.sky recapture | realtime 0|1"), [](const TArray<FString>& A, USlsEnvironment* E) {
+				ASkyLight* L = E->GetSkyLight();
+				USkyLightComponent* C = L ? L->GetLightComponent() : nullptr;
+				if (!C) { Say(TEXT("kein Himmelslicht"), FColor::Yellow); return; }
+				if (A.Num() && A[0] == TEXT("recapture")) C->RecaptureSky();
+				if (A.Num() > 1 && A[0] == TEXT("realtime")) { C->bRealTimeCapture = FCString::Atoi(*A[1]) != 0; C->MarkRenderStateDirty(); C->RecaptureSky(); }
+				Say(FString::Printf(TEXT("light.sky: Intensität %.2f, Echtzeit %d, beweglich %d, sichtbar %d, registriert %d, Quelle %d, unten schwarz %d"),
+					C->Intensity, C->bRealTimeCapture, C->Mobility == EComponentMobility::Movable, C->IsVisible(), C->IsRegistered(), int32(C->SourceType.GetValue()), C->bLowerHemisphereIsBlack));
+			});
+			Add(TEXT("light.gi"), TEXT("Globale Beleuchtung: light.gi 0 aus (nur Himmelslicht) | 1 Lumen (Standard)"), [](const TArray<FString>& A, USlsEnvironment*) {
+				IConsoleVariable* Gi = IConsoleManager::Get().FindConsoleVariable(TEXT("r.DynamicGlobalIlluminationMethod"));
+				IConsoleVariable* Refl = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ReflectionMethod"));
+				if (!Gi || !Refl) return;
+				if (A.Num())
+				{
+					const bool bLumen = FCString::Atoi(*A[0]) != 0;
+					Gi->Set(bLumen ? 1 : 0, ECVF_SetByConsole);
+					Refl->Set(bLumen ? 1 : 2, ECVF_SetByConsole); // Lumen reflections, else screen space
+				}
+				Say(FString::Printf(TEXT("light.gi = %d (%s)"), Gi->GetInt(), Gi->GetInt() == 1 ? TEXT("Lumen") : TEXT("aus")));
 			});
 			Factor(TEXT("sky.overcast"), TEXT("Bewölkung: 0 klar … 1 komplett bedeckt"), &USlsEnvironment::Overcast, 0, 1);
 			Factor(TEXT("sky.sun"), TEXT("Stärke des Sonnenlichts (Faktor, Standard 1)"), &USlsEnvironment::SunScale, 0, 5);

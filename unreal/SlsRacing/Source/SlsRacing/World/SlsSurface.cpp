@@ -17,6 +17,26 @@ namespace SlsSurface
 		return C && C->ComponentTags.Num() ? C->ComponentTags[0] : FName(TEXT("?"));
 	}
 
+	/** All static and road colliders under the ray (object query, so nothing blocks), top down, for the parity report. */
+	static FString AllHits(const UWorld* World, double X, double Z, double Top, const FCollisionQueryParams& Q)
+	{
+		TArray<FHitResult> Hits;
+		const FVector A(X * 100.0, Z * 100.0, Top * 100.0);
+		const FVector B = A - FVector(0, 0, (Limits::Above + Limits::Below) * 100.0);
+		FCollisionObjectQueryParams O;
+		O.AddObjectTypesToQuery(ECC_WorldStatic);
+		O.AddObjectTypesToQuery(ECC_SlsRoad);
+		World->LineTraceMultiByObjectType(Hits, A, B, O, Q);
+		FString Out;
+		for (const FHitResult& H : Hits)
+		{
+			const UPrimitiveComponent* C = H.GetComponent();
+			Out += FString::Printf(TEXT("%s%s@%.3f %s/%s"), Out.IsEmpty() ? TEXT("") : TEXT("; "), *WhatOf(H).ToString(),
+				H.bStartPenetrating ? Top : H.ImpactPoint.Z / 100.0, C && C->GetOwner() ? *C->GetOwner()->GetName() : TEXT("?"), C ? *C->GetName() : TEXT("?"));
+		}
+		return Out;
+	}
+
 	static bool Ray(const UWorld* World, double X, double Z, double Top, ECollisionChannel Channel, const FCollisionQueryParams& Q, double& OutY, FName& OutWhat)
 	{
 		FHitResult H;
@@ -293,18 +313,38 @@ namespace SlsSurface
 				const bool bOneNone = Got[K].IsSet() != Want[K].IsSet();
 				const double D = bBothNone ? 0 : bOneNone ? TNumericLimits<double>::Max() : FMath::Abs(Got[K].GetValue() - Want[K].GetValue());
 				if (D <= Tol) continue;
-				Out.Bad++;
-				if (bOneNone) Out.Missing++;
-				else Out.Worst = FMath::Max(Out.Worst, D);
-				Out.Points.Add(FVector(CX, Yd, CZ));
+				// Edge tie: with the probe moved a few millimetres Unreal gets the web value, so both engines see the same
+				// surfaces and only break the tie at an edge (road ribbon over bridge strip, kerb, hull side) differently.
+				bool bTie = false;
+				if (Out.TieShift > 0)
+					for (const FVector2D Off : {FVector2D(1, 0), FVector2D(-1, 0), FVector2D(0, 1), FVector2D(0, -1)})
+					{
+						const FCell T = Probe(World, CX + Off.X * Out.TieShift, CZ + Off.Y * Out.TieShift, Yd, Ignore);
+						const TOptional<double>& G = K ? T.Yc : T.Yw;
+						if (G.IsSet() == Want[K].IsSet() && (!G.IsSet() || FMath::Abs(G.GetValue() - Want[K].GetValue()) <= Tol)) { bTie = true; break; }
+					}
+				if (bTie) Out.Ties++;
+				else
+				{
+					Out.Bad++;
+					if (bOneNone) Out.Missing++;
+					else Out.Worst = FMath::Max(Out.Worst, D);
+					Out.Points.Add(FVector(CX, Yd, CZ));
+				}
 				FParity::FCellReport& Rep = Out.Report.AddDefaulted_GetRef();
+				Rep.bTie = bTie;
 				Rep.bChassis = K == 1;
 				Rep.Tile = FIntPoint(Tile->IX, Tile->IY);
 				Rep.X = CX; Rep.Z = CZ; Rep.Yd = Yd;
 				Rep.Unreal = Got[K]; Rep.Web = Want[K];
 				Rep.Hit = K ? S.Chassis : S.Wheel;
 				Rep.Dev = D;
-				if (Out.Examples.Num() < 20)
+				{
+					FCollisionQueryParams Q(SCENE_QUERY_STAT(SlsSurface), false);
+					for (const AActor* A : Ignore) Q.AddIgnoredActor(A);
+					Rep.Hits = AllHits(World, CX + 0.013, CZ + 0.007, Yd + Limits::Above, Q);
+				}
+				if (!bTie && Out.Examples.Num() < 20)
 					Out.Examples.Add(FString::Printf(TEXT("%s bei x %.2f z %.2f (Kachel %d_%d): Unreal %s (%s), Web %s"), K ? TEXT("Chassis") : TEXT("Rad"), CX, CZ, Tile->IX, Tile->IY,
 						Got[K].IsSet() ? *FString::Printf(TEXT("%.3f"), Got[K].GetValue()) : TEXT("nichts"), *(K ? S.Chassis : S.Wheel).ToString(),
 						Want[K].IsSet() ? *FString::Printf(TEXT("%.3f"), Want[K].GetValue()) : TEXT("nichts")));
